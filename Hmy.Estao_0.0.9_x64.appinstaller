@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AppInstaller Uri="https://hmygroup.github.io/Hmy.Estao/estao.appinstaller" Version="0.0.9.0" xmlns="http://schemas.microsoft.com/appx/appinstaller/2018">
+  <MainPackage Name="Hmy.Estao" Publisher="CN=hmygroup.onmicrosoft.com, O=hmygroup.onmicrosoft.com, OU=IT" Version="0.0.9.0" Uri="https://hmygroup.github.io/Hmy.Estao//Hmy.Estao_0.0.9_x64.msix" ProcessorArchitecture="x64" />
+  <UpdateSettings>
+    <OnLaunch HoursBetweenUpdateChecks="12" ShowPrompt="false" UpdateBlocksActivation="false" />
+    <AutomaticBackgroundTask />
+  </UpdateSettings>
+</AppInstaller>
+
