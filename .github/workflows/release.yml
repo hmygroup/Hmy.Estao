@@ -43,51 +43,6 @@ jobs:
         run: |
           dotnet publish src\Hmy.Estao.App -c Release -r win-x64 --self-contained true -o publish\msix
 
-      - name: Stage MSIX payload
-        shell: pwsh
-        env:
-          ESTAO_MSIX_PUBLISHER: ${{ secrets.ESTAO_MSIX_PUBLISHER }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:ESTAO_MSIX_PUBLISHER)) {
-            Write-Error "ESTAO_MSIX_PUBLISHER secret is not configured. It must match the Trusted Signing certificate subject."
-            exit 1
-          }
-
-          Copy-Item "src\Hmy.Estao.Packaging\Package.appxmanifest" "publish\msix\AppxManifest.xml"
-          Copy-Item -Recurse "src\Hmy.Estao.Packaging\Assets" "publish\msix\Assets"
-
-          $manifest = "publish\msix\AppxManifest.xml"
-          $document = [System.Xml.XmlDocument]::new()
-          $document.PreserveWhitespace = $true
-          $document.Load((Resolve-Path $manifest))
-          $namespaceManager = [System.Xml.XmlNamespaceManager]::new($document.NameTable)
-          $namespaceManager.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
-          $identity = $document.SelectSingleNode("/appx:Package/appx:Identity", $namespaceManager)
-          if (-not $identity) {
-            Write-Error "MSIX manifest Identity element not found."
-            exit 1
-          }
-          $identity.SetAttribute("Version", $env:PACKAGE_VERSION)
-          $identity.SetAttribute("Publisher", $env:ESTAO_MSIX_PUBLISHER)
-          $settings = [System.Xml.XmlWriterSettings]::new()
-          $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
-          $settings.Indent = $false
-          $writer = [System.Xml.XmlWriter]::Create((Resolve-Path $manifest), $settings)
-          $document.Save($writer)
-          $writer.Close()
-
-      - name: Create unsigned MSIX
-        shell: pwsh
-        run: |
-          $makeAppx = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\MakeAppx.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $makeAppx) {
-            Write-Error "MakeAppx.exe not found"
-            exit 1
-          }
-          $msixName = "Hmy.Estao_$env:VERSION`_x64.msix"
-          echo "MSIX_FILENAME=$msixName" >> $env:GITHUB_ENV
-          & $makeAppx pack /d publish\msix /p $msixName /l
-
       - name: Validate Azure login secrets
         shell: pwsh
         env:
@@ -115,6 +70,126 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Resolve MSIX publisher
+        shell: pwsh
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_RESOURCE_GROUP: ${{ secrets.AZURE_SIGNING_RESOURCE_GROUP }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
+          ESTAO_MSIX_PUBLISHER: ${{ secrets.ESTAO_MSIX_PUBLISHER }}
+        run: |
+          function Find-SubjectName($value) {
+            if ($null -eq $value -or $value -is [string]) {
+              return $null
+            }
+
+            if ($value -is [System.Collections.IEnumerable]) {
+              foreach ($item in $value) {
+                $found = Find-SubjectName $item
+                if ($found) {
+                  return $found
+                }
+              }
+            }
+
+            foreach ($property in $value.PSObject.Properties) {
+              if ($property.Name -ieq "subjectName" -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+                return [string]$property.Value
+              }
+
+              $found = Find-SubjectName $property.Value
+              if ($found) {
+                return $found
+              }
+            }
+
+            return $null
+          }
+
+          $publisher = $null
+          if (-not [string]::IsNullOrWhiteSpace($env:AZURE_SIGNING_RESOURCE_GROUP)) {
+            $profileId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$env:AZURE_SIGNING_RESOURCE_GROUP/providers/Microsoft.CodeSigning/codeSigningAccounts/$env:AZURE_SIGNING_ACCOUNT/certificateProfiles/$env:AZURE_SIGNING_CERT_PROFILE"
+            $profileJson = az resource show --ids $profileId -o json
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($profileJson)) {
+              $profile = $profileJson | ConvertFrom-Json
+              $publisher = Find-SubjectName $profile
+            }
+          } else {
+            $accountsJson = az resource list --resource-type "Microsoft.CodeSigning/codeSigningAccounts" --name $env:AZURE_SIGNING_ACCOUNT -o json
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($accountsJson)) {
+              $accounts = @($accountsJson | ConvertFrom-Json)
+              if ($accounts.Count -eq 1) {
+                $profileId = "$($accounts[0].id)/certificateProfiles/$env:AZURE_SIGNING_CERT_PROFILE"
+                $profileJson = az resource show --ids $profileId -o json
+                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($profileJson)) {
+                  $profile = $profileJson | ConvertFrom-Json
+                  $publisher = Find-SubjectName $profile
+                }
+              } elseif ($accounts.Count -gt 1) {
+                Write-Warning "Multiple Artifact Signing accounts named '$env:AZURE_SIGNING_ACCOUNT' were found; set AZURE_SIGNING_RESOURCE_GROUP or configure ESTAO_MSIX_PUBLISHER."
+              }
+            }
+          }
+
+          if ([string]::IsNullOrWhiteSpace($publisher)) {
+            $publisher = $env:ESTAO_MSIX_PUBLISHER
+            if ([string]::IsNullOrWhiteSpace($publisher)) {
+              Write-Error "Unable to resolve the Artifact Signing certificate subject, and ESTAO_MSIX_PUBLISHER is not configured."
+              exit 1
+            }
+
+            Write-Warning "Using ESTAO_MSIX_PUBLISHER. This value must exactly match the Artifact Signing certificate subject or MSIX signing fails with 0x8007000b."
+          }
+
+          "MSIX_PUBLISHER=$publisher" >> $env:GITHUB_ENV
+          Write-Host "Resolved MSIX publisher for package manifest."
+
+      - name: Stage MSIX payload
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER)) {
+            Write-Error "MSIX_PUBLISHER was not resolved from the Artifact Signing certificate profile."
+            exit 1
+          }
+
+          Copy-Item "src\Hmy.Estao.Packaging\Package.appxmanifest" "publish\msix\AppxManifest.xml"
+          Copy-Item -Recurse "src\Hmy.Estao.Packaging\Assets" "publish\msix\Assets"
+
+          $manifest = "publish\msix\AppxManifest.xml"
+          $document = [System.Xml.XmlDocument]::new()
+          $document.PreserveWhitespace = $true
+          $document.Load((Resolve-Path $manifest))
+          $namespaceManager = [System.Xml.XmlNamespaceManager]::new($document.NameTable)
+          $namespaceManager.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
+          $identity = $document.SelectSingleNode("/appx:Package/appx:Identity", $namespaceManager)
+          if (-not $identity) {
+            Write-Error "MSIX manifest Identity element not found."
+            exit 1
+          }
+          $identity.SetAttribute("Version", $env:PACKAGE_VERSION)
+          $identity.SetAttribute("Publisher", $env:MSIX_PUBLISHER)
+          $settings = [System.Xml.XmlWriterSettings]::new()
+          $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
+          $settings.Indent = $false
+          $writer = [System.Xml.XmlWriter]::Create((Resolve-Path $manifest), $settings)
+          $document.Save($writer)
+          $writer.Close()
+
+          Write-Host "MSIX manifest identity: Name=$($identity.GetAttribute("Name")); Version=$($identity.GetAttribute("Version"))"
+
+      - name: Create unsigned MSIX
+        shell: pwsh
+        run: |
+          $makeAppx = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\MakeAppx.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $makeAppx) {
+            Write-Error "MakeAppx.exe not found"
+            exit 1
+          }
+          $msixName = "Hmy.Estao_$env:VERSION`_x64.msix"
+          echo "MSIX_FILENAME=$msixName" >> $env:GITHUB_ENV
+          & $makeAppx pack /d publish\msix /p $msixName /l
+
       - name: Sign MSIX with Azure Artifact Signing
         uses: azure/artifact-signing-action@v2
         with:
@@ -134,7 +209,7 @@ jobs:
             -replace '\$\{ESTAO_PACKAGE_VERSION\}', $env:PACKAGE_VERSION `
             -replace '\$\{ESTAO_VERSION\}', $env:VERSION `
             -replace '\$\{ESTAO_APPINSTALLER_URI\}', "${{ secrets.ESTAO_APPINSTALLER_URI }}" `
-            -replace '\$\{ESTAO_MSIX_PUBLISHER\}', "${{ secrets.ESTAO_MSIX_PUBLISHER }}" `
+            -replace '\$\{ESTAO_MSIX_PUBLISHER\}', $env:MSIX_PUBLISHER `
             -replace '\$\{ESTAO_PACKAGE_URI\}', "${{ secrets.ESTAO_PACKAGE_URI }}"
           $appInstallerName = "Hmy.Estao_$env:VERSION`_x64.appinstaller"
           echo "APPINSTALLER_FILENAME=$appInstallerName" >> $env:GITHUB_ENV
