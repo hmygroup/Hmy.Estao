@@ -63,8 +63,28 @@ jobs:
           echo "MSIX_FILENAME=$msixName" >> $env:GITHUB_ENV
           & $makeAppx pack /d publish\msix /p $msixName /l
 
+      - name: Validate Azure login secrets
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ([string]::IsNullOrWhiteSpace($value)) {
+              Write-Error "$name secret is not configured."
+              exit 1
+            }
+            if ($value -notmatch $guidPattern) {
+              Write-Error "$name must be a GUID. Use the Azure application client ID, Entra directory tenant ID, and subscription ID."
+              exit 1
+            }
+          }
+
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
