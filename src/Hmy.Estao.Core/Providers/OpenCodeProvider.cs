@@ -7,7 +7,7 @@ using Hmy.Estao.Core.Security;
 
 namespace Hmy.Estao.Core.Providers;
 
-internal sealed class OpenCodeProvider(HttpClient httpClient, IBrowserCookieImporter cookieImporter) : IUsageProvider
+internal sealed class OpenCodeProvider(HttpClient httpClient, ICookieSecretStore cookieStore) : IUsageProvider
 {
     private const string WorkspacesFunction = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f";
     private const string SubscriptionFunction = "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4";
@@ -31,7 +31,7 @@ internal sealed class OpenCodeProvider(HttpClient httpClient, IBrowserCookieImpo
         var cookie = await ResolveCookieAsync(request, account).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(cookie))
         {
-            return UsageSnapshot.Failure(Id, "web", "OpenCode requires a manual cookie or opt-in Chrome/Edge cookie import.");
+            return UsageSnapshot.Failure(Id, "web", "OpenCode requires a saved or legacy manual cookie.");
         }
 
         var workspaceId = account?.WorkspaceId ?? request.Config.WorkspaceId;
@@ -57,19 +57,28 @@ internal sealed class OpenCodeProvider(HttpClient httpClient, IBrowserCookieImpo
             return null;
         }
 
-        var manual = account?.Secret ?? request.Config.CookieHeader;
-        if (!string.IsNullOrWhiteSpace(manual))
+        if (!string.IsNullOrWhiteSpace(account?.Secret))
         {
-            return manual.StartsWith("Cookie:", StringComparison.OrdinalIgnoreCase) ? manual[7..].Trim() : manual.Trim();
+            return NormalizeCookieHeader(account.Secret);
         }
 
-        if (source is CookieSource.Auto && request.AllowBrowserImport)
+        var storedCookie = await cookieStore.ReadCookieHeaderAsync(Id, request.CancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(storedCookie))
         {
-            var result = await cookieImporter.TryImportCookieHeaderAsync("opencode.ai", [], request.CancellationToken).ConfigureAwait(false);
-            return result.CookieHeader;
+            return NormalizeCookieHeader(storedCookie);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Config.CookieHeader))
+        {
+            return NormalizeCookieHeader(request.Config.CookieHeader);
         }
 
         return null;
+    }
+
+    private static string NormalizeCookieHeader(string cookie)
+    {
+        return cookie.StartsWith("Cookie:", StringComparison.OrdinalIgnoreCase) ? cookie[7..].Trim() : cookie.Trim();
     }
 
     private async Task<string?> FetchWorkspaceIdAsync(string cookie, CancellationToken cancellationToken)

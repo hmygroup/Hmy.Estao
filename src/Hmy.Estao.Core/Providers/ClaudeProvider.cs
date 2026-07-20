@@ -6,7 +6,7 @@ using Hmy.Estao.Core.Security;
 
 namespace Hmy.Estao.Core.Providers;
 
-internal sealed class ClaudeProvider(HttpClient httpClient, IBrowserCookieImporter cookieImporter) : IUsageProvider
+internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore cookieStore) : IUsageProvider
 {
     public string Id => "claude";
 
@@ -57,7 +57,7 @@ internal sealed class ClaudeProvider(HttpClient httpClient, IBrowserCookieImport
 
             if (source is ProviderSource.Web)
             {
-                return UsageSnapshot.Failure(Id, "web", "Claude cookie was not configured or importable.");
+                return UsageSnapshot.Failure(Id, "web", "Claude cookie was not saved or configured.");
             }
         }
 
@@ -89,15 +89,15 @@ internal sealed class ClaudeProvider(HttpClient httpClient, IBrowserCookieImport
             return account.Secret;
         }
 
+        var storedCookie = await cookieStore.ReadCookieHeaderAsync(Id, request.CancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(storedCookie))
+        {
+            return NormalizeCookieHeader(storedCookie);
+        }
+
         if (!string.IsNullOrWhiteSpace(request.Config.CookieHeader))
         {
             return NormalizeCookieHeader(request.Config.CookieHeader);
-        }
-
-        if (cookieSource is CookieSource.Auto && request.AllowBrowserImport)
-        {
-            var result = await cookieImporter.TryImportCookieHeaderAsync("claude.ai", ["sessionKey"], request.CancellationToken).ConfigureAwait(false);
-            return result.CookieHeader;
         }
 
         return null;

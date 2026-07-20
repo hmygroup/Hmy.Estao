@@ -8,9 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.2" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
-
+	<Target Name="pubre">
+		<Exec Command="dotnet publish -c Release -p:SelfContained=false -p:PublishSingleFile=true -r win-x64" />
+		<ItemGroup>
+			<PublishFiles Include="bin\Release\$(TargetFramework)\win-x64\publish\*" />
+		</ItemGroup>
+		<Copy SourceFiles="@(PublishFiles)" DestinationFolder="C:\_SHOFIANOVA" />
+	</Target>
 </Project>

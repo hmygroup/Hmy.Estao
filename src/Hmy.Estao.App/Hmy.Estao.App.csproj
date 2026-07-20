@@ -16,4 +16,12 @@
   <ItemGroup>
     <ProjectReference Include="..\Hmy.Estao.Core\Hmy.Estao.Core.csproj" />
   </ItemGroup>
+
+<Target Name="pubre">
+  	<Exec Command="dotnet publish -c Release -p:SelfContained=false -p:PublishSingleFile=true -r win-x64" />
+  	<ItemGroup>
+  		<PublishFiles Include="bin\Release\$(TargetFramework)\win-x64\publish\*" />
+  	</ItemGroup>
+  	<Copy SourceFiles="@(PublishFiles)" DestinationFolder="C:\_SHOFIANOVA" />
+  </Target>
 </Project>

@@ -38,5 +38,4 @@ public sealed record FetchRequest(
     Configuration.ProviderConfig Config,
     ProviderAccount? Account,
     Configuration.ProviderSource Source,
-    bool AllowBrowserImport,
     CancellationToken CancellationToken);

@@ -5,12 +5,12 @@ namespace Hmy.Estao.Core.Providers;
 public sealed class UsageProviderFactory
 {
     private readonly HttpClient _httpClient;
-    private readonly IBrowserCookieImporter _cookieImporter;
+    private readonly ICookieSecretStore _cookieStore;
 
-    public UsageProviderFactory(HttpClient? httpClient = null, IBrowserCookieImporter? cookieImporter = null)
+    public UsageProviderFactory(HttpClient? httpClient = null, ICookieSecretStore? cookieStore = null)
     {
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        _cookieImporter = cookieImporter ?? new BrowserCookieImporter();
+        _cookieStore = cookieStore ?? new SecureCookieStore();
     }
 
     public IUsageProvider Create(string id)
@@ -18,9 +18,9 @@ public sealed class UsageProviderFactory
         return Configuration.ProviderCatalog.NormalizeId(id) switch
         {
             "codex" => new CodexProvider(_httpClient),
-            "claude" => new ClaudeProvider(_httpClient, _cookieImporter),
+            "claude" => new ClaudeProvider(_httpClient, _cookieStore),
             "copilot" => new CopilotProvider(_httpClient),
-            "opencode" => new OpenCodeProvider(_httpClient, _cookieImporter),
+            "opencode" => new OpenCodeProvider(_httpClient, _cookieStore),
             var unknown => throw new NotSupportedException($"Provider '{unknown}' is not supported by Estao MVP.")
         };
     }

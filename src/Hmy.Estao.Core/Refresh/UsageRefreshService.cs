@@ -21,7 +21,7 @@ public sealed class UsageRefreshService
 
     public IReadOnlyList<UsageSnapshot> LastSnapshots => _lastSnapshots;
 
-    public async Task<IReadOnlyList<UsageSnapshot>> RefreshAsync(bool allowBrowserImport = false, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<UsageSnapshot>> RefreshAsync(CancellationToken cancellationToken = default)
     {
         if (!await _refreshGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
@@ -40,7 +40,7 @@ public sealed class UsageRefreshService
                 var provider = _providerFactory.Create(providerConfig.Id);
                 var accounts = provider.GetAccounts(providerConfig);
                 var selectedAccount = SelectAccount(providerConfig, accounts);
-                var request = new FetchRequest(providerConfig, selectedAccount, ProviderHelpers.ParseSource(providerConfig.Source), allowBrowserImport, cancellationToken);
+                var request = new FetchRequest(providerConfig, selectedAccount, ProviderHelpers.ParseSource(providerConfig.Source), cancellationToken);
 
                 try
                 {

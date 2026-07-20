@@ -77,8 +77,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Refresh now", null, async (_, _) => await RefreshAsync(allowBrowserImport: false).ConfigureAwait(false));
-        menu.Items.Add("Refresh and import Chrome/Edge cookies", null, async (_, _) => await RefreshAsync(allowBrowserImport: true).ConfigureAwait(false));
+        menu.Items.Add("Refresh now", null, async (_, _) => await RefreshAsync().ConfigureAwait(false));
         AddAccountMenu(menu);
         menu.Items.Add("Settings...", null, (_, _) => ShowSettings());
         menu.Items.Add(new ToolStripSeparator());
@@ -96,16 +95,16 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon.Text = snapshots.FirstOrDefault(snapshot => snapshot.Error is null)?.DisplayName ?? EstaoConstants.DisplayName;
     }
 
-    private async Task RefreshAsync(bool allowBrowserImport)
+    private async Task RefreshAsync()
     {
-        await _refreshService.RefreshAsync(allowBrowserImport).ConfigureAwait(false);
+        await _refreshService.RefreshAsync().ConfigureAwait(false);
     }
 
     private void ShowSettings()
     {
         using var form = new SettingsForm(_configStore);
         form.ShowDialog();
-        _ = RefreshAsync(allowBrowserImport: false);
+        _ = RefreshAsync();
     }
 
     private void AddAccountMenu(ContextMenuStrip menu)
@@ -154,7 +153,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         provider.ActiveAccountIndex = activeIndex;
         await _configStore.SaveAsync(config).ConfigureAwait(false);
-        await RefreshAsync(allowBrowserImport: false).ConfigureAwait(false);
+        await RefreshAsync().ConfigureAwait(false);
     }
 
     private static string Summary(UsageSnapshot snapshot)

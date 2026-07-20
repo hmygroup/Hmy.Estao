@@ -11,7 +11,7 @@ Estao is a Windows tray-first .NET 10 port of CodexBar's provider-usage concept 
 - Explicit config import only; Estao does not silently copy CodexBar config files.
 - Initial providers: Codex, Claude, GitHub Copilot, OpenCode.
 - CLI: `estao usage` and `estao config` commands.
-- Automatic browser cookie import is opt-in, user-triggered, Chrome/Edge-only, and falls back to manual cookies when Chromium app-bound encryption blocks decryption.
+- Cookie-based providers use saved manual cookies; cookies are stored locally with Windows DPAPI protection instead of reading Chrome/Edge browser databases.
 - Background target: hidden tray idle under 75 MB private memory, 0% sustained CPU, and adaptive 2-30 minute refreshes.
 
 ## Deferred
@@ -25,6 +25,17 @@ dotnet build
 dotnet test
 dotnet run --project src\Hmy.Estao.Cli -- usage --format json --pretty
 ```
+
+## Cookie setup
+
+For providers that require web cookies, save a cookie header once and Estao will reuse it for refreshes:
+
+```powershell
+Get-Clipboard | dotnet run --project src\Hmy.Estao.Cli -- config set-cookie --provider claude --stdin
+dotnet run --project src\Hmy.Estao.Cli -- config clear-cookie --provider claude
+```
+
+The saved cookie is encrypted for the current Windows user with DPAPI. Existing `cookieHeader` values in `config.json` are still read as a legacy fallback.
 
 ## Publish
 

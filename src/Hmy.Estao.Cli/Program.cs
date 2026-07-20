@@ -2,6 +2,7 @@ using Hmy.Estao.Core;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Formatting;
 using Hmy.Estao.Core.Refresh;
+using Hmy.Estao.Core.Security;
 
 return await Cli.RunAsync(args).ConfigureAwait(false);
 
@@ -34,7 +35,10 @@ internal static class Cli
         var pretty = args.Contains("--pretty", StringComparer.OrdinalIgnoreCase);
         var provider = Option(args, "--provider");
         var accountIndex = Option(args, "--account-index");
-        var allowBrowserImport = args.Contains("--allow-browser-import", StringComparer.OrdinalIgnoreCase);
+        if (args.Contains("--allow-browser-import", StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Automatic browser cookie import was removed. Use 'estao config set-cookie --provider <name> --stdin' to save a cookie securely.");
+        }
 
         var store = new ConfigStore();
         if (!string.IsNullOrWhiteSpace(provider) || !string.IsNullOrWhiteSpace(accountIndex))
@@ -59,7 +63,7 @@ internal static class Cli
         }
 
         var service = new UsageRefreshService(store);
-        var snapshots = await service.RefreshAsync(allowBrowserImport).ConfigureAwait(false);
+        var snapshots = await service.RefreshAsync().ConfigureAwait(false);
         Console.WriteLine(format.Equals("json", StringComparison.OrdinalIgnoreCase)
             ? UsageFormatter.ToJson(snapshots, pretty)
             : UsageFormatter.ToText(snapshots));
@@ -126,6 +130,35 @@ internal static class Cli
                 return 0;
             }
 
+            case "set-cookie":
+            {
+                var provider = RequireOption(args, "--provider");
+                var value = args.Contains("--stdin", StringComparer.OrdinalIgnoreCase)
+                    ? await Console.In.ReadToEndAsync().ConfigureAwait(false)
+                    : Option(args, "--cookie") ?? Option(args, "--value") ?? throw new InvalidOperationException("Use --stdin, --cookie, or --value.");
+                var config = await store.LoadAsync().ConfigureAwait(false);
+                var providerConfig = FindOrCreate(config, provider);
+                await new SecureCookieStore().SaveCookieHeaderAsync(providerConfig.Id, value).ConfigureAwait(false);
+                providerConfig.CookieSource = "manual";
+                providerConfig.CookieHeader = null;
+                providerConfig.Enabled ??= true;
+                await store.SaveAsync(config).ConfigureAwait(false);
+                Console.WriteLine($"Saved encrypted cookie for {ProviderCatalog.DisplayName(providerConfig.Id)}.");
+                return 0;
+            }
+
+            case "clear-cookie":
+            {
+                var provider = RequireOption(args, "--provider");
+                var config = await store.LoadAsync().ConfigureAwait(false);
+                var providerConfig = FindOrCreate(config, provider);
+                await new SecureCookieStore().ClearCookieHeaderAsync(providerConfig.Id).ConfigureAwait(false);
+                providerConfig.CookieHeader = null;
+                await store.SaveAsync(config).ConfigureAwait(false);
+                Console.WriteLine($"Cleared saved cookie for {ProviderCatalog.DisplayName(providerConfig.Id)}.");
+                return 0;
+            }
+
             case "import":
             {
                 var source = RequireOption(args, "--file");
@@ -179,7 +212,7 @@ internal static class Cli
     private static int Help()
     {
         Console.WriteLine($"{EstaoConstants.CliName} usage [--provider codex|claude|copilot|opencode] [--format text|json] [--pretty]");
-        Console.WriteLine($"{EstaoConstants.CliName} config validate|dump|enable|disable|set-api-key|import");
+        Console.WriteLine($"{EstaoConstants.CliName} config validate|dump|enable|disable|set-api-key|set-cookie|clear-cookie|import");
         return 0;
     }
 
