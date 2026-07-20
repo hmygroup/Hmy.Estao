@@ -9,6 +9,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>ai-setting.ico</ApplicationIcon>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+	<Version>alpha-0.0.1</Version>
+	<AssemblyVersion>alpha-0.0.1</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
