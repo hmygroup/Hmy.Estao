@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-test-pack:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      - name: Test
+        run: dotnet test -c Release --no-build
+
+      - name: Extract version from tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+          echo "Extracted version: $version"
+
+      - name: Publish app (self-contained)
+        run: |
+          dotnet publish src\Hmy.Estao.App -c Release -r win-x64 --self-contained true -o publish\msix
+
+      - name: Stage MSIX payload
+        shell: pwsh
+        run: |
+          Copy-Item "src\Hmy.Estao.Packaging\Package.appxmanifest" "publish\msix\AppxManifest.xml"
+          Copy-Item -Recurse "src\Hmy.Estao.Packaging\Assets" "publish\msix\Assets"
+          # Patch manifest version
+          $manifest = "publish\msix\AppxManifest.xml"
+          (Get-Content $manifest) -replace 'Version="[\d.]+"', "Version=""$env:VERSION.0""" | Set-Content $manifest
+
+      - name: Create unsigned MSIX
+        shell: pwsh
+        run: |
+          $makeAppx = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\MakeAppx.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $makeAppx) {
+            Write-Error "MakeAppx.exe not found"
+            exit 1
+          }
+          $msixName = "Hmy.Estao_$env:VERSION`_x64.msix"
+          echo "MSIX_FILENAME=$msixName" >> $env:GITHUB_ENV
+          & $makeAppx pack /d publish\msix /p $msixName /l
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign MSIX with Azure Code Signing
+        shell: pwsh
+        run: |
+          dotnet tool install -g AzureSignTool
+          AzureSignTool sign `
+            -kvu "${{ secrets.AZURE_SIGNING_ENDPOINT }}" `
+            -kvi "${{ secrets.AZURE_SIGNING_ACCOUNT }}" `
+            -kvs "${{ secrets.AZURE_SIGNING_CERT_PROFILE }}" `
+            -kvt "${{ secrets.AZURE_TENANT_ID }}" `
+            -tr "http://timestamp.digicert.com" `
+            -td "sha256" `
+            -v "$env:MSIX_FILENAME"
+
+      - name: Generate AppInstaller
+        shell: pwsh
+        run: |
+          $template = Get-Content "packaging\AppInstaller.template.xml" -Raw
+          $template = $template `
+            -replace '\$\{ESTAO_VERSION\}', $env:VERSION `
+            -replace '\$\{ESTAO_APPINSTALLER_URI\}', "${{ secrets.ESTAO_APPINSTALLER_URI }}" `
+            -replace '\$\{ESTAO_MSIX_PUBLISHER\}', "${{ secrets.ESTAO_MSIX_PUBLISHER }}" `
+            -replace '\$\{ESTAO_PACKAGE_URI\}', "${{ secrets.ESTAO_PACKAGE_URI }}"
+          $appInstallerName = "Hmy.Estao_$env:VERSION`_x64.appinstaller"
+          echo "APPINSTALLER_FILENAME=$appInstallerName" >> $env:GITHUB_ENV
+          Set-Content -Path $appInstallerName -Value $template
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Estao ${{ env.VERSION }}
+          body_path: ""
+          body: |
+            ## Estao ${{ env.VERSION }}
+
+            ### Installation
+            Download `${{ env.MSIX_FILENAME }}` and double-click to install.
+
+            ### App Installer (auto-update)
+            Point your browser to `https://hmygroup.github.io/Hmy.Estao/estao.appinstaller` to install with automatic update checks.
+          files: |
+            ${{ env.MSIX_FILENAME }}
+            ${{ env.APPINSTALLER_FILENAME }}
+          generate_release_notes: true
+
+      - name: Prepare GitHub Pages deploy
+        shell: pwsh
+        run: |
+          $deployDir = "gh-pages-deploy"
+          New-Item -ItemType Directory -Path $deployDir -Force | Out-Null
+          Copy-Item "$env:MSIX_FILENAME" $deployDir
+          Copy-Item "$env:APPINSTALLER_FILENAME" $deployDir
+          # Fixed-name AppInstaller so the URL never changes
+          Copy-Item "$env:APPINSTALLER_FILENAME" "$deployDir\estao.appinstaller"
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./gh-pages-deploy
+          keep_files: true
