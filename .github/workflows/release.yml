@@ -48,8 +48,8 @@ jobs:
           # Patch manifest version — explicit UTF-8 without BOM
           $manifest = "publish\msix\AppxManifest.xml"
           $content = Get-Content $manifest -Raw
-          $content = $content -replace 'Version="[\d.]+"', "Version=""$env:VERSION.0"""
-          [System.IO.File]::WriteAllText($manifest, $content)
+          $content = $content -creplace 'Version="[\d.]+"', "Version=""$env:VERSION.0"""
+          [System.IO.File]::WriteAllText($manifest, $content, [System.Text.UTF8Encoding]::new($false))
 
       - name: Create unsigned MSIX
         shell: pwsh
