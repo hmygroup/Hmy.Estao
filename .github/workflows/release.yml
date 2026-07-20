@@ -91,18 +91,16 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Sign MSIX with Azure Code Signing
-        shell: pwsh
-        run: |
-          dotnet tool install -g AzureSignTool
-          AzureSignTool sign `
-            -kvu "${{ secrets.AZURE_SIGNING_ENDPOINT }}" `
-            -kvi "${{ secrets.AZURE_SIGNING_ACCOUNT }}" `
-            -kvs "${{ secrets.AZURE_SIGNING_CERT_PROFILE }}" `
-            -kvt "${{ secrets.AZURE_TENANT_ID }}" `
-            -tr "http://timestamp.digicert.com" `
-            -td "sha256" `
-            -v "$env:MSIX_FILENAME"
+      - name: Sign MSIX with Azure Artifact Signing
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
+          files: ${{ github.workspace }}\${{ env.MSIX_FILENAME }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Generate AppInstaller
         shell: pwsh
