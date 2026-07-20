@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<AppInstaller Uri="${ESTAO_APPINSTALLER_URI}" Version="${ESTAO_VERSION}" xmlns="http://schemas.microsoft.com/appx/appinstaller/2018">
-  <MainPackage Name="Hmy.Estao" Publisher="${ESTAO_MSIX_PUBLISHER}" Version="${ESTAO_VERSION}" Uri="${ESTAO_PACKAGE_URI}/Hmy.Estao_${ESTAO_VERSION}_x64.msix" ProcessorArchitecture="x64" />
+<AppInstaller Uri="${ESTAO_APPINSTALLER_URI}" Version="${ESTAO_PACKAGE_VERSION}" xmlns="http://schemas.microsoft.com/appx/appinstaller/2018">
+  <MainPackage Name="Hmy.Estao" Publisher="${ESTAO_MSIX_PUBLISHER}" Version="${ESTAO_PACKAGE_VERSION}" Uri="${ESTAO_PACKAGE_URI}/Hmy.Estao_${ESTAO_VERSION}_x64.msix" ProcessorArchitecture="x64" />
   <UpdateSettings>
     <OnLaunch HoursBetweenUpdateChecks="12" ShowPrompt="false" UpdateBlocksActivation="false" />
     <AutomaticBackgroundTask />

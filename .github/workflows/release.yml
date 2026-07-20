@@ -34,7 +34,9 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $version = $tag -replace '^v', ''
+          $packageVersion = "$version.0"
           echo "VERSION=$version" >> $env:GITHUB_ENV
+          echo "PACKAGE_VERSION=$packageVersion" >> $env:GITHUB_ENV
           echo "Extracted version: $version"
 
       - name: Publish app (self-contained)
@@ -43,14 +45,36 @@ jobs:
 
       - name: Stage MSIX payload
         shell: pwsh
+        env:
+          ESTAO_MSIX_PUBLISHER: ${{ secrets.ESTAO_MSIX_PUBLISHER }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:ESTAO_MSIX_PUBLISHER)) {
+            Write-Error "ESTAO_MSIX_PUBLISHER secret is not configured. It must match the Trusted Signing certificate subject."
+            exit 1
+          }
+
           Copy-Item "src\Hmy.Estao.Packaging\Package.appxmanifest" "publish\msix\AppxManifest.xml"
           Copy-Item -Recurse "src\Hmy.Estao.Packaging\Assets" "publish\msix\Assets"
-          # Patch manifest version — explicit UTF-8 without BOM
+
           $manifest = "publish\msix\AppxManifest.xml"
-          $content = Get-Content $manifest -Raw
-          $content = $content -creplace 'Version="[\d.]+"', "Version=""$env:VERSION.0"""
-          [System.IO.File]::WriteAllText($manifest, $content, [System.Text.UTF8Encoding]::new($false))
+          $document = [System.Xml.XmlDocument]::new()
+          $document.PreserveWhitespace = $true
+          $document.Load((Resolve-Path $manifest))
+          $namespaceManager = [System.Xml.XmlNamespaceManager]::new($document.NameTable)
+          $namespaceManager.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
+          $identity = $document.SelectSingleNode("/appx:Package/appx:Identity", $namespaceManager)
+          if (-not $identity) {
+            Write-Error "MSIX manifest Identity element not found."
+            exit 1
+          }
+          $identity.SetAttribute("Version", $env:PACKAGE_VERSION)
+          $identity.SetAttribute("Publisher", $env:ESTAO_MSIX_PUBLISHER)
+          $settings = [System.Xml.XmlWriterSettings]::new()
+          $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
+          $settings.Indent = $false
+          $writer = [System.Xml.XmlWriter]::Create((Resolve-Path $manifest), $settings)
+          $document.Save($writer)
+          $writer.Close()
 
       - name: Create unsigned MSIX
         shell: pwsh
@@ -107,6 +131,7 @@ jobs:
         run: |
           $template = Get-Content "packaging\AppInstaller.template.xml" -Raw
           $template = $template `
+            -replace '\$\{ESTAO_PACKAGE_VERSION\}', $env:PACKAGE_VERSION `
             -replace '\$\{ESTAO_VERSION\}', $env:VERSION `
             -replace '\$\{ESTAO_APPINSTALLER_URI\}', "${{ secrets.ESTAO_APPINSTALLER_URI }}" `
             -replace '\$\{ESTAO_MSIX_PUBLISHER\}', "${{ secrets.ESTAO_MSIX_PUBLISHER }}" `
