@@ -10,14 +10,17 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly ConfigStore _configStore;
     private readonly ICookieSecretStore _cookieStore;
     private readonly ZarpaThemeManager _theme = new() { Preset = ZarpaThemePreset.Graphite };
-    private readonly Panel _providersHost = new() { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(22, 8, 22, 18) };
+    private readonly Panel _providersHost = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, AutoScroll = false, Padding = new Padding(22, 8, 22, 18) };
+    private readonly ZarpaSettingsScrollHost _providersViewport = new() { Dock = DockStyle.Fill };
     private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
+    private readonly Panel _appearanceSettings = new() { Dock = DockStyle.Top, Height = 104, Padding = new Padding(6, 8, 6, 10) };
     private readonly Label _providerCount = new() { AutoSize = true };
     private readonly ZarpaComboBox _themePicker = new() { LabelText = "Theme", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
     private readonly ZarpaButton _previewButton = new() { Text = "Preview", ButtonStyle = ZarpaButtonStyle.Secondary, Width = 92 };
     private readonly ZarpaButton _saveButton = new() { Text = "Save changes", ButtonStyle = ZarpaButtonStyle.Primary, Width = 126 };
     private readonly List<ProviderSettingsRow> _providerRows = [];
     private EstaoConfig _config = ConfigStore.CreateDefaultConfig();
+    private readonly IOAuthTokenStore _oauthTokenStore = new SecureOAuthTokenStore();
 
     private readonly Action<EstaoConfig>? _previewOverlay;
 
@@ -37,8 +40,11 @@ public sealed class SettingsForm : ZarpaModernForm
 
         var header = BuildHeader();
         var footer = BuildFooter();
+        BuildAppearanceSection();
         _providersHost.Controls.Add(_overlaySettings);
-        Controls.Add(_providersHost);
+        _providersHost.Controls.Add(_appearanceSettings);
+        _providersViewport.Content = _providersHost;
+        Controls.Add(_providersViewport);
         Controls.Add(footer);
         Controls.Add(header);
 
@@ -64,23 +70,14 @@ public sealed class SettingsForm : ZarpaModernForm
         var actions = new FlowLayoutPanel
         {
             Dock = DockStyle.Right,
-            Width = 510,
+            Width = 180,
             FlowDirection = FlowDirection.RightToLeft,
             Padding = new Padding(0, 10, 0, 0),
             WrapContents = false
         };
-        var oauth = new ZarpaButton { Text = "Sign in with OAuth", ButtonStyle = ZarpaButtonStyle.Secondary, Width = 150 };
-        oauth.Click += async (_, _) =>
-        {
-            using var form = new OAuthLoginForm(_configStore);
-            form.ShowDialog(this);
-            await LoadAsync().ConfigureAwait(true);
-        };
         var import = new ZarpaButton { Text = "Import config", ButtonStyle = ZarpaButtonStyle.Subtle, Width = 126 };
         import.Click += async (_, _) => await ImportAsync().ConfigureAwait(true);
-        actions.Controls.Add(oauth);
         actions.Controls.Add(import);
-        actions.Controls.Add(_themePicker);
 
         var title = new Label
         {
@@ -122,6 +119,23 @@ public sealed class SettingsForm : ZarpaModernForm
         return footer;
     }
 
+    private void BuildAppearanceSection()
+    {
+        var title = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = 24,
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            Text = "Appearance",
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        _themePicker.Dock = DockStyle.Top;
+        _themePicker.Width = 220;
+        _themePicker.Height = 76;
+        _appearanceSettings.Controls.Add(_themePicker);
+        _appearanceSettings.Controls.Add(title);
+    }
+
     private async Task LoadAsync()
     {
         _saveButton.Loading = true;
@@ -137,12 +151,13 @@ public sealed class SettingsForm : ZarpaModernForm
             for (var index = _config.Providers.Count - 1; index >= 0; index--)
             {
                 var model = new ProviderRow(_config.Providers[index], statuses[index]);
-                var row = new ProviderSettingsRow(model) { Dock = DockStyle.Top };
+                var row = new ProviderSettingsRow(model, SignInProviderAsync) { Dock = DockStyle.Top };
                 _providerRows.Insert(0, row);
                 _providersHost.Controls.Add(row);
                 _providersHost.Controls.SetChildIndex(row, 0);
             }
-            _providersHost.Controls.SetChildIndex(_overlaySettings, 0);
+            _providersHost.Controls.SetChildIndex(_appearanceSettings, 0);
+            _providersHost.Controls.SetChildIndex(_overlaySettings, 1);
 
             var enabled = _providerRows.Count(row => row.EnabledProvider);
             _providerCount.Text = $"{enabled} of {_providerRows.Count} enabled  ·  Credentials stay encrypted on this device";
@@ -194,6 +209,43 @@ public sealed class SettingsForm : ZarpaModernForm
         return string.IsNullOrWhiteSpace(provider.CookieHeader) ? "No cookie stored" : "Legacy credential saved";
     }
 
+    private async Task SignInProviderAsync(string providerId, IProgress<string> progress)
+    {
+        switch (ProviderCatalog.NormalizeId(providerId))
+        {
+            case "codex":
+                progress.Report("Opening Codex sign-in…");
+                OAuthLoginService.StartCodexLogin();
+                await EnableProviderAsync(providerId).ConfigureAwait(true);
+                progress.Report("Finish Codex sign-in in the terminal, then refresh usage.");
+                break;
+            case "claude":
+                progress.Report("Opening Claude Code sign-in…");
+                OAuthLoginService.StartClaudeLogin();
+                await EnableProviderAsync(providerId).ConfigureAwait(true);
+                progress.Report("Finish Claude sign-in in the terminal, then refresh usage.");
+                break;
+            case "copilot":
+                var login = await OAuthLoginService.SignInToCopilotAsync(progress).ConfigureAwait(true);
+                await _oauthTokenStore.SaveAsync("copilot", new OAuthToken(login.AccessToken, login.AccountLabel)).ConfigureAwait(true);
+                await EnableProviderAsync(providerId, "oauth").ConfigureAwait(true);
+                progress.Report("Copilot connected. Refresh usage now.");
+                break;
+        }
+
+        if (!IsDisposed)
+            BeginInvoke(new MethodInvoker(async () => await LoadAsync().ConfigureAwait(true)));
+    }
+
+    private async Task EnableProviderAsync(string providerId, string source = "auto")
+    {
+        var config = await _configStore.LoadAsync().ConfigureAwait(true);
+        var provider = config.Providers.First(item => ProviderCatalog.NormalizeId(item.Id) == ProviderCatalog.NormalizeId(providerId));
+        provider.Enabled = true;
+        provider.Source = source;
+        await _configStore.SaveAsync(config).ConfigureAwait(true);
+    }
+
     private async Task ImportAsync()
     {
         using var dialog = new OpenFileDialog { Filter = "JSON config (*.json)|*.json|All files (*.*)|*.*" };
@@ -208,7 +260,8 @@ public sealed class SettingsForm : ZarpaModernForm
         _providerRows.Clear();
         for (var index = _providersHost.Controls.Count - 1; index >= 0; index--)
         {
-            if (!ReferenceEquals(_providersHost.Controls[index], _overlaySettings))
+            if (!ReferenceEquals(_providersHost.Controls[index], _overlaySettings) &&
+                !ReferenceEquals(_providersHost.Controls[index], _appearanceSettings))
                 _providersHost.Controls[index].Dispose();
         }
     }
@@ -221,18 +274,22 @@ public sealed class SettingsForm : ZarpaModernForm
         private readonly ZarpaToggleSwitch _enabled;
         private readonly ZarpaButton _expand;
         private readonly Panel _details;
+        private readonly ProviderBrandIcon _providerIcon;
         private readonly ZarpaComboBox _source;
         private readonly ZarpaComboBox _cookieSource;
         private readonly ZarpaTextBox _cookieStatus;
         private readonly ZarpaTextBox _workspace;
         private readonly ZarpaTextBox _newCookie;
         private readonly ZarpaTextBox _apiKey;
+        private readonly Func<string, IProgress<string>, Task> _signInAction;
+        private readonly ProviderSignInButton? _signInButton;
         private readonly int _expandedHeight;
         private bool _expanded;
 
-        public ProviderSettingsRow(ProviderRow model)
+        public ProviderSettingsRow(ProviderRow model, Func<string, IProgress<string>, Task> signInAction)
         {
             _model = model;
+            _signInAction = signInAction;
             Height = CollapsedHeight;
             MinimumSize = new Size(480, CollapsedHeight);
             Padding = new Padding(0, 0, 0, 8);
@@ -252,7 +309,12 @@ public sealed class SettingsForm : ZarpaModernForm
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
             header.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-            var icon = new ProviderBrandIcon(model.ProviderId) { Dock = DockStyle.Fill, Margin = new Padding(2, 7, 6, 7) };
+            _providerIcon = new ProviderBrandIcon(model.ProviderId)
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(2, 7, 6, 7),
+                Status = model.Status
+            };
             var copy = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
             var title = new Label
             {
@@ -271,11 +333,22 @@ public sealed class SettingsForm : ZarpaModernForm
             copy.Controls.Add(_summary);
             copy.Controls.Add(title);
 
-            _expand = new ZarpaButton { Dock = DockStyle.Fill, Text = "⌄", ButtonStyle = ZarpaButtonStyle.Subtle, Margin = new Padding(3, 10, 3, 10) };
+            _expand = new ZarpaButton
+            {
+                Dock = DockStyle.Fill,
+                IconKey = "ic_fluent_chevron_down_24_regular",
+                ButtonStyle = ZarpaButtonStyle.Subtle,
+                Margin = new Padding(1, 12, 1, 12),
+                AccessibleName = "Expand provider settings"
+            };
             _expand.Click += (_, _) => ToggleExpanded();
             _enabled = new ZarpaToggleSwitch { Dock = DockStyle.Fill, Text = string.Empty, Checked = model.Enabled, Margin = new Padding(2, 10, 2, 10) };
-            _enabled.CheckedChanged += (_, _) => UpdateSummary();
-            header.Controls.Add(icon, 0, 0);
+            _enabled.CheckedChanged += (_, _) =>
+            {
+                _model.Enabled = _enabled.Checked;
+                UpdateSummary();
+            };
+            header.Controls.Add(_providerIcon, 0, 0);
             header.Controls.Add(copy, 1, 0);
             header.Controls.Add(_expand, 2, 0);
             header.Controls.Add(_enabled, 3, 0);
@@ -303,6 +376,19 @@ public sealed class SettingsForm : ZarpaModernForm
             _newCookie.PasswordChar = '●';
             _apiKey = TextField("API key / token", model.ApiKey, "Leave blank when authentication is automatic.");
             _apiKey.PasswordChar = '●';
+
+            if (SupportsOAuth(model.ProviderId))
+            {
+                _signInButton = new ProviderSignInButton(model.ProviderId)
+                {
+                    Text = "Sign in",
+                    ButtonStyle = ZarpaButtonStyle.Secondary,
+                    Width = 126,
+                    Height = 34,
+                    Margin = new Padding(6, 8, 6, 3)
+                };
+                _signInButton.Click += async (_, _) => await SignInAsync().ConfigureAwait(true);
+            }
 
             var providerFields = ProviderFields(model.ProviderId);
             var fieldRows = (providerFields.Count + 1) / 2;
@@ -347,23 +433,52 @@ public sealed class SettingsForm : ZarpaModernForm
         {
             _expanded = !_expanded;
             _details.Visible = _expanded;
-            _expand.Text = _expanded ? "⌃" : "⌄";
+            _expand.IconKey = _expanded
+                ? "ic_fluent_chevron_up_24_regular"
+                : "ic_fluent_chevron_down_24_regular";
+            _expand.AccessibleName = _expanded ? "Collapse provider settings" : "Expand provider settings";
             Height = _expanded ? _expandedHeight : CollapsedHeight;
             Parent?.PerformLayout();
         }
 
         private IReadOnlyList<Control> ProviderFields(string provider) => provider switch
         {
-            "codex" => [_source, _workspace],
-            "claude" => [_source, _cookieSource, _cookieStatus, _newCookie, _apiKey],
-            "copilot" => [_source, _workspace, _apiKey],
+            "codex" => WithSignIn([_source, _workspace]),
+            "claude" => WithSignIn([_source, _cookieSource, _cookieStatus, _newCookie, _apiKey]),
+            "copilot" => WithSignIn([_source, _workspace, _apiKey]),
             "opencode" => [_source, _cookieSource, _cookieStatus, _workspace, _newCookie],
             _ => [_source, _cookieSource, _cookieStatus, _workspace, _newCookie, _apiKey]
         };
 
+        private IReadOnlyList<Control> WithSignIn(IReadOnlyList<Control> fields) => _signInButton is null
+            ? fields
+            : [.. fields, _signInButton];
+
+        private async Task SignInAsync()
+        {
+            if (_signInButton is null) return;
+            _signInButton.Loading = true;
+            try
+            {
+                var progress = new Progress<string>(message => _summary.Text = message);
+                await _signInAction(_model.ProviderId, progress).ConfigureAwait(true);
+            }
+            catch (Exception exception)
+            {
+                _summary.Text = $"Sign-in failed: {exception.Message}";
+            }
+            finally
+            {
+                if (!_signInButton.IsDisposed) _signInButton.Loading = false;
+            }
+        }
+
+        private static bool SupportsOAuth(string provider) => provider is "codex" or "claude" or "copilot";
+
         private void UpdateSummary()
         {
             var state = _enabled.Checked ? "Enabled" : "Disabled";
+            _providerIcon.Status = _model.Status;
             _summary.Text = $"{state}  ·  {_model.CookieStatus}  ·  Source: {_model.Source}";
         }
 
@@ -393,12 +508,51 @@ public sealed class SettingsForm : ZarpaModernForm
 
     private sealed class ProviderBrandIcon(string provider) : Control
     {
+        private ProviderStatus status;
+
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public ProviderStatus Status
+        {
+            get => status;
+            set { status = value; Invalidate(); }
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
             var size = Math.Min(28, Math.Min(Width, Height));
+            var iconBounds = new Rectangle((Width - size) / 2, (Height - size) / 2, size, size);
+            ZarpaProviderIconCatalog.TryDraw(e.Graphics, provider, iconBounds, ForeColor);
+            var dotColor = status switch
+            {
+                ProviderStatus.Ready => Color.FromArgb(35, 193, 118),
+                ProviderStatus.NeedsSetup => Color.FromArgb(224, 157, 54),
+                _ => Color.FromArgb(120, 127, 140)
+            };
+            var dot = new Rectangle(iconBounds.Left - 2, iconBounds.Top - 2, 9, 9);
+            using var outline = new SolidBrush(BackColor);
+            using var dotBrush = new SolidBrush(dotColor);
+            e.Graphics.FillEllipse(outline, dot);
+            e.Graphics.FillEllipse(dotBrush, new Rectangle(dot.Left + 1, dot.Top + 1, dot.Width - 2, dot.Height - 2));
+        }
+    }
+
+    private enum ProviderStatus
+    {
+        Disabled,
+        NeedsSetup,
+        Ready
+    }
+
+    private sealed class ProviderSignInButton(string provider) : ZarpaButton
+    {
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            var size = Math.Min(18, Math.Min(Width, Height) - 10);
             ZarpaProviderIconCatalog.TryDraw(e.Graphics, provider,
-                new Rectangle((Width - size) / 2, (Height - size) / 2, size, size), ForeColor);
+                new Rectangle(9, (Height - size) / 2, size, size), ForeColor);
         }
     }
 
@@ -433,6 +587,14 @@ public sealed class SettingsForm : ZarpaModernForm
         public string NewCookieHeader { get; set; } = string.Empty;
         public string ApiKey { get; set; }
         public string WorkspaceOrHost { get; set; }
+        public ProviderStatus Status => !Enabled
+            ? ProviderStatus.Disabled
+            : IsConfigured ? ProviderStatus.Ready : ProviderStatus.NeedsSetup;
+
+        private bool IsConfigured => ProviderId == "codex" ||
+            !string.Equals(CookieStatus, "No cookie stored", StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrWhiteSpace(ApiKey) ||
+            ProviderId == "copilot" && !string.IsNullOrWhiteSpace(WorkspaceOrHost);
 
         public void Apply()
         {

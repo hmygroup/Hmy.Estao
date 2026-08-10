@@ -15,7 +15,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
 
     public TaskbarOverlaySettingsPanel()
     {
-        Height = 300;
+        Height = 360;
         Dock = DockStyle.Top;
         Padding = new Padding(6, 8, 6, 10);
 
@@ -31,9 +31,10 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         {
             Dock = DockStyle.Top,
             Height = 24,
-            Text = "Shown in the free area before the notification tray; it hides automatically when there is not enough room.",
+            Text = "Shown in the free taskbar area; hidden automatically when space is limited.",
             TextAlign = ContentAlignment.MiddleLeft,
-            AutoEllipsis = true
+            AutoEllipsis = true,
+            AutoSize = false
         };
         var header = new Panel { Dock = DockStyle.Top, Height = 49 };
         header.Controls.Add(_enabled);
@@ -41,7 +42,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         var options = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 38,
+            Height = 70,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             Padding = Padding.Empty,
@@ -55,20 +56,19 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         var rows = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 4,
+            ColumnCount = 2,
+            RowCount = 2,
             Margin = Padding.Empty,
             Padding = Padding.Empty
         };
-        rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        rows.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        rows.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
         rows.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
         rows.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         rows.Controls.Add(providersLabel, 0, 0);
+        rows.Controls.Add(controlsLabel, 1, 0);
         rows.Controls.Add(_providers, 0, 1);
-        rows.Controls.Add(controlsLabel, 0, 2);
-        rows.Controls.Add(_controls, 0, 3);
+        rows.Controls.Add(_controls, 1, 1);
 
         Controls.Add(rows);
         Controls.Add(options);
