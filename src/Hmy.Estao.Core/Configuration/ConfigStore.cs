@@ -83,6 +83,10 @@ public sealed class ConfigStore
         config.Theme = string.IsNullOrWhiteSpace(config.Theme) ? "Graphite" : config.Theme.Trim();
         config.Providers ??= [];
         config.TaskbarOverlay ??= new TaskbarOverlayConfig();
+        config.Refresh ??= new RefreshConfig();
+        config.Refresh.IntervalMinutes = RefreshIntervalCatalog.Minutes.Contains(config.Refresh.IntervalMinutes)
+            ? config.Refresh.IntervalMinutes
+            : 15;
         config.TaskbarOverlay.ProviderIds ??= [];
         config.TaskbarOverlay.Controls ??= [];
         config.TaskbarOverlay.DisplayMode = NormalizeOverlayValue(

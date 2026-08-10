@@ -18,6 +18,23 @@ public sealed class EstaoConfig
 
     [JsonPropertyName("taskbarOverlay")]
     public TaskbarOverlayConfig TaskbarOverlay { get; set; } = new();
+
+    [JsonPropertyName("refresh")]
+    public RefreshConfig Refresh { get; set; } = new();
+}
+
+public sealed class RefreshConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    [JsonPropertyName("intervalMinutes")]
+    public int IntervalMinutes { get; set; } = 15;
+}
+
+public static class RefreshIntervalCatalog
+{
+    public static readonly int[] Minutes = [1, 5, 10, 15, 30, 60];
 }
 
 public sealed class TaskbarOverlayConfig

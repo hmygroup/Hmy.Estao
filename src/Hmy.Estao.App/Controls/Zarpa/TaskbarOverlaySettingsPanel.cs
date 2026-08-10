@@ -70,6 +70,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         rows.Controls.Add(_providers, 0, 1);
         rows.Controls.Add(_controls, 1, 1);
 
+        Controls.Add(new ZarpaSettingsSectionSeparator());
         Controls.Add(rows);
         Controls.Add(options);
         Controls.Add(header);

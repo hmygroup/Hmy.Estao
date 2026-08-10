@@ -622,8 +622,10 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     private int ContentWidth => Math.Max(240, ClientSize.Width);
     private Color SurfaceColor => _activeTheme?.Surface ?? ZarpaPopoverPalette.SurfaceTop;
     private Color BorderColor => _activeTheme?.Border ?? Color.FromArgb(164, 164, 215);
-    private Color TextColor => _activeTheme?.Text ?? ZarpaPopoverPalette.Text;
-    private Color MutedColor => _activeTheme?.TextMuted ?? ZarpaPopoverPalette.TextMuted;
+    private Color TextColor => ZarpaPopoverPaint.EnsureContrast(
+        _activeTheme?.Text ?? ZarpaPopoverPalette.Text, SurfaceColor);
+    private Color MutedColor => ZarpaPopoverPaint.EnsureContrast(
+        _activeTheme?.TextMuted ?? ZarpaPopoverPalette.TextMuted, SurfaceColor, 3D);
 
     private void DisposeChildren()
     {

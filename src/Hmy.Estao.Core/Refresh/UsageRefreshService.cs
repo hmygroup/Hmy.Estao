@@ -170,13 +170,15 @@ public sealed class AdaptiveRefreshLoop : IDisposable
 {
     private readonly UsageRefreshService _service;
     private readonly Func<bool> _isPowerConstrained;
+    private readonly Func<TimeSpan>? _configuredDelay;
     private CancellationTokenSource? _cts;
     private DateTimeOffset? _lastInteraction;
 
-    public AdaptiveRefreshLoop(UsageRefreshService service, Func<bool>? isPowerConstrained = null)
+    public AdaptiveRefreshLoop(UsageRefreshService service, Func<bool>? isPowerConstrained = null, Func<TimeSpan>? configuredDelay = null)
     {
         _service = service;
         _isPowerConstrained = isPowerConstrained ?? (() => false);
+        _configuredDelay = configuredDelay;
     }
 
     public void MarkInteraction() => _lastInteraction = DateTimeOffset.UtcNow;
@@ -199,6 +201,12 @@ public sealed class AdaptiveRefreshLoop : IDisposable
         _cts = null;
     }
 
+    public void Restart()
+    {
+        Stop();
+        Start();
+    }
+
     public void Dispose() => Stop();
 
     private async Task RunAsync(CancellationToken cancellationToken)
@@ -206,7 +214,8 @@ public sealed class AdaptiveRefreshLoop : IDisposable
         await _service.RefreshAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         while (!cancellationToken.IsCancellationRequested)
         {
-            var delay = UsageRefreshService.AdaptiveDelay(DateTimeOffset.UtcNow, _lastInteraction, _isPowerConstrained());
+            var delay = _configuredDelay?.Invoke() ??
+                UsageRefreshService.AdaptiveDelay(DateTimeOffset.UtcNow, _lastInteraction, _isPowerConstrained());
             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             await _service.RefreshAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         }

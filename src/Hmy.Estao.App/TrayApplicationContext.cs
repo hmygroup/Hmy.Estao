@@ -32,7 +32,10 @@ public sealed class TrayApplicationContext : ApplicationContext
         _taskbarOverlay = new TaskbarUsageOverlay();
         _refreshService = serviceFactory(configStore);
         _refreshService.Refreshed += (_, snapshots) => PostMenuRebuild(snapshots);
-        _refreshLoop = new AdaptiveRefreshLoop(_refreshService, () => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline);
+        _refreshLoop = new AdaptiveRefreshLoop(
+            _refreshService,
+            () => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline,
+            ConfiguredRefreshDelay);
         _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _notifyIcon = new NotifyIcon
         {
@@ -131,6 +134,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         await _refreshService.RefreshAsync().ConfigureAwait(false);
     }
 
+    private TimeSpan ConfiguredRefreshDelay()
+    {
+        if (!_config.Refresh.Enabled) return TimeSpan.FromMinutes(1);
+        return TimeSpan.FromMinutes(Math.Clamp(_config.Refresh.IntervalMinutes, 1, 60));
+    }
+
     private void ShowSettings()
     {
         using var form = new SettingsForm(_configStore, previewOverlay: PreviewOverlay);
@@ -138,7 +147,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
         _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay());
-        _ = RefreshAsync();
+        _refreshLoop.Restart();
     }
 
     private void PreviewOverlay(EstaoConfig previewConfig)

@@ -42,6 +42,59 @@ internal static class ZarpaPopoverPaint
         using var brush = new SolidBrush(color);
         graphics.FillPath(brush, path);
     }
+
+    internal static Color EnsureContrast(Color foreground, Color background, double minimumRatio = 4.5D)
+    {
+        var effectiveForeground = Composite(foreground, background);
+        if (ContrastRatio(effectiveForeground, background) >= minimumRatio)
+            return effectiveForeground;
+
+        var black = Color.Black;
+        var white = Color.White;
+        return ContrastRatio(black, background) >= ContrastRatio(white, background) ? black : white;
+    }
+
+    internal static Color Blend(Color background, Color foreground, double amount)
+    {
+        var mix = Math.Clamp(amount, 0D, 1D);
+        return Color.FromArgb(
+            (int)Math.Round(background.R + (foreground.R - background.R) * mix),
+            (int)Math.Round(background.G + (foreground.G - background.G) * mix),
+            (int)Math.Round(background.B + (foreground.B - background.B) * mix));
+    }
+
+    private static Color Composite(Color foreground, Color background)
+    {
+        if (foreground.A == byte.MaxValue) return foreground;
+        var alpha = foreground.A / 255D;
+        return Color.FromArgb(
+            (int)Math.Round(background.R + (foreground.R - background.R) * alpha),
+            (int)Math.Round(background.G + (foreground.G - background.G) * alpha),
+            (int)Math.Round(background.B + (foreground.B - background.B) * alpha));
+    }
+
+    private static double ContrastRatio(Color first, Color second)
+    {
+        var firstLuminance = RelativeLuminance(first);
+        var secondLuminance = RelativeLuminance(second);
+        return (Math.Max(firstLuminance, secondLuminance) + 0.05D) /
+            (Math.Min(firstLuminance, secondLuminance) + 0.05D);
+    }
+
+    private static double RelativeLuminance(Color color)
+    {
+        static double Linearize(byte channel)
+        {
+            var value = channel / 255D;
+            return value <= 0.03928D
+                ? value / 12.92D
+                : Math.Pow((value + 0.055D) / 1.055D, 2.4D);
+        }
+
+        return 0.2126D * Linearize(color.R) +
+            0.7152D * Linearize(color.G) +
+            0.0722D * Linearize(color.B);
+    }
 }
 
 internal static class ZarpaProviderIconCatalog
@@ -492,9 +545,17 @@ internal sealed class ZarpaProviderTab : Control, IZarpaThemeAware
             ? new Rectangle(2, 0, Math.Max(1, Width - 5), Math.Max(1, Height - 1))
             : new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
         var accent = _theme?.Accent ?? ZarpaPopoverPalette.Accent;
+        var surface = _theme?.Surface ?? ZarpaPopoverPalette.SurfaceTop;
+        var selection = _theme?.Selection ?? accent;
         var muted = _theme?.TextMuted ?? ZarpaPopoverPalette.TextMuted;
-        if (_active) ZarpaPopoverPaint.FillRounded(e.Graphics, accent, bounds, veryCompact ? 9 : 13);
-        var text = _active ? Color.White : _available ? muted : Color.FromArgb(130, muted);
+        var selectedText = ZarpaPopoverPaint.EnsureContrast(selection, surface);
+        var text = _active
+            ? selectedText
+            : _available
+                ? ZarpaPopoverPaint.EnsureContrast(_theme?.Text ?? ZarpaPopoverPalette.Text, surface)
+                : ZarpaPopoverPaint.EnsureContrast(muted, surface, 3D);
+        if (_active)
+            ZarpaPopoverPaint.FillRounded(e.Graphics, selection, bounds, veryCompact ? 9 : 13);
         var compact = Height < 65;
         using var font = new Font("Segoe UI", veryCompact ? 8.5F : compact ? 9F : 12F);
         var textSize = TextRenderer.MeasureText(Provider, font, new Size(Width, Height),
@@ -506,7 +567,7 @@ internal sealed class ZarpaProviderTab : Control, IZarpaThemeAware
         var groupLeft = Math.Max(4, (Width - groupWidth) / 2);
         var iconTop = Math.Max(1, (contentHeight - iconSize) / 2);
         ZarpaProviderIconCatalog.TryDraw(e.Graphics, IconKey,
-            new Rectangle(groupLeft, iconTop, iconSize, iconSize), _theme?.Text);
+            new Rectangle(groupLeft, iconTop, iconSize, iconSize), text);
         TextRenderer.DrawText(e.Graphics, Provider, font,
             new Rectangle(groupLeft + iconSize + 4, 0, textWidth, contentHeight), text,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
@@ -516,7 +577,9 @@ internal sealed class ZarpaProviderTab : Control, IZarpaThemeAware
         var track = new Rectangle(trackInset, Height - trackHeight - (veryCompact ? 3 : 3),
             Math.Max(1, Width - trackInset * 2), trackHeight);
         ZarpaPopoverPaint.FillRounded(e.Graphics,
-            _active ? Color.FromArgb(120, 255, 255, 255) : _theme?.SurfaceRaised ?? Color.FromArgb(172, 172, 213), track, 4);
+            _active
+                ? ZarpaPopoverPaint.Blend(selection, selectedText, 0.28D)
+                : _theme?.SurfaceRaised ?? Color.FromArgb(172, 172, 213), track, 4);
         var meterWidth = (int)Math.Round(track.Width * _usagePercent / 100D);
         if (meterWidth > 0)
             ZarpaPopoverPaint.FillRounded(e.Graphics, _theme?.Success ?? Color.FromArgb(69, 169, 165),
