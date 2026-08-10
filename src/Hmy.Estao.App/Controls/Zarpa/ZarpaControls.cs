@@ -153,6 +153,217 @@ internal sealed class ZarpaBufferedPanel : Panel
     }
 }
 
+internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
+{
+    private ZarpaThemeTokens? _theme;
+    private Orientation _orientation = Orientation.Vertical;
+    private int _contentSize;
+    private int _viewportSize = 1;
+    private int _value;
+    private bool _hot;
+    private bool _dragging;
+    private int _dragOffset;
+
+    public ZarpaScrollBar()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.Selectable, true);
+        BackColor = ZarpaPopoverPalette.SurfaceTop;
+        Cursor = Cursors.Hand;
+        TabStop = true;
+        AccessibleRole = AccessibleRole.ScrollBar;
+        MinimumSize = new Size(8, 8);
+    }
+
+    public event EventHandler? ValueChanged;
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public Orientation Orientation
+    {
+        get => _orientation;
+        set
+        {
+            if (_orientation == value) return;
+            _orientation = value;
+            Invalidate();
+        }
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int ContentSize
+    {
+        get => _contentSize;
+        set { _contentSize = Math.Max(0, value); ClampValue(); Invalidate(); }
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int ViewportSize
+    {
+        get => _viewportSize;
+        set { _viewportSize = Math.Max(1, value); ClampValue(); Invalidate(); }
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int Value
+    {
+        get => _value;
+        set
+        {
+            var next = Math.Clamp(value, 0, MaximumValue);
+            if (_value == next) return;
+            _value = next;
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+            Invalidate();
+        }
+    }
+
+    public int MaximumValue => Math.Max(0, _contentSize - _viewportSize);
+
+    public void SetRange(int contentSize, int viewportSize)
+    {
+        _contentSize = Math.Max(0, contentSize);
+        _viewportSize = Math.Max(1, viewportSize);
+        ClampValue();
+        Invalidate();
+    }
+
+    public void ApplyTheme(ZarpaThemeTokens value)
+    {
+        _theme = value;
+        BackColor = value.Surface;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var track = new Rectangle(2, 2, Math.Max(1, Width - 4), Math.Max(1, Height - 4));
+        var trackColor = Color.FromArgb(55, _theme?.SurfaceRaised ?? ZarpaPopoverPalette.Track);
+        ZarpaPopoverPaint.FillRounded(e.Graphics, trackColor, track, Math.Min(track.Width, track.Height) / 2);
+
+        var thumb = ThumbBounds(track);
+        if (thumb.Width <= 0 || thumb.Height <= 0) return;
+        var thumbColor = _hot || _dragging
+            ? _theme?.Accent ?? ZarpaPopoverPalette.Accent
+            : Color.FromArgb(145, _theme?.TextMuted ?? ZarpaPopoverPalette.TextMuted);
+        ZarpaPopoverPaint.FillRounded(e.Graphics, thumbColor, thumb,
+            Math.Min(thumb.Width, thumb.Height) / 2);
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); _hot = true; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); if (!_dragging) { _hot = false; Invalidate(); } }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        Focus();
+        if (e.Button != MouseButtons.Left) return;
+        var thumb = ThumbBounds(TrackBounds());
+        var coordinate = _orientation == Orientation.Horizontal ? e.X : e.Y;
+        if (thumb.Contains(e.Location))
+        {
+            _dragging = true;
+            _dragOffset = coordinate - (_orientation == Orientation.Horizontal ? thumb.Left : thumb.Top);
+            Capture = true;
+            Invalidate();
+            return;
+        }
+
+        var direction = coordinate < (_orientation == Orientation.Horizontal ? thumb.Left : thumb.Top) ? -1 : 1;
+        Value += direction * Math.Max(1, _viewportSize);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!_dragging) return;
+        var track = TrackBounds();
+        var thumb = ThumbBounds(track);
+        var coordinate = _orientation == Orientation.Horizontal ? e.X : e.Y;
+        var trackLength = _orientation == Orientation.Horizontal ? track.Width : track.Height;
+        var thumbLength = _orientation == Orientation.Horizontal ? thumb.Width : thumb.Height;
+        var available = Math.Max(1, trackLength - thumbLength);
+        var position = Math.Clamp(coordinate - _dragOffset - (_orientation == Orientation.Horizontal ? track.Left : track.Top), 0, available);
+        Value = (int)Math.Round(position / (double)available * MaximumValue);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button != MouseButtons.Left) return;
+        _dragging = false;
+        Capture = false;
+        _hot = ClientRectangle.Contains(e.Location);
+        Invalidate();
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (!Enabled || e.Delta == 0) return;
+        Value -= Math.Sign(e.Delta) * Math.Max(1, _viewportSize / 5);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (!Enabled) return;
+        var line = Math.Max(1, _viewportSize / 10);
+        var page = Math.Max(1, _viewportSize - line);
+        switch (e.KeyCode)
+        {
+            case Keys.Up when _orientation == Orientation.Vertical:
+            case Keys.Left when _orientation == Orientation.Horizontal:
+                Value -= line;
+                e.Handled = true;
+                break;
+            case Keys.Down when _orientation == Orientation.Vertical:
+            case Keys.Right when _orientation == Orientation.Horizontal:
+                Value += line;
+                e.Handled = true;
+                break;
+            case Keys.PageUp:
+                Value -= page;
+                e.Handled = true;
+                break;
+            case Keys.PageDown:
+                Value += page;
+                e.Handled = true;
+                break;
+            case Keys.Home:
+                Value = 0;
+                e.Handled = true;
+                break;
+            case Keys.End:
+                Value = MaximumValue;
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private Rectangle TrackBounds() => new(2, 2, Math.Max(1, Width - 4), Math.Max(1, Height - 4));
+
+    private Rectangle ThumbBounds(Rectangle track)
+    {
+        var content = Math.Max(_contentSize, _viewportSize);
+        var trackLength = _orientation == Orientation.Horizontal ? track.Width : track.Height;
+        var minimum = _orientation == Orientation.Horizontal ? 28 : 24;
+        var thumbLength = Math.Clamp((int)Math.Round(trackLength * _viewportSize / (double)Math.Max(1, content)), minimum, trackLength);
+        var available = Math.Max(0, trackLength - thumbLength);
+        var offset = MaximumValue == 0 ? 0 : (int)Math.Round(available * _value / (double)MaximumValue);
+        return _orientation == Orientation.Horizontal
+            ? new Rectangle(track.Left + offset, track.Top, thumbLength, track.Height)
+            : new Rectangle(track.Left, track.Top + offset, track.Width, thumbLength);
+    }
+
+    private void ClampValue() => Value = Math.Min(_value, MaximumValue);
+}
+
 internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
 {
     private ZarpaThemeTokens? _theme;

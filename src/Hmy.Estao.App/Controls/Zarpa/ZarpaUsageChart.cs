@@ -1,4 +1,6 @@
 using System.Drawing.Drawing2D;
+using System.Diagnostics;
+using System.Drawing.Text;
 using Hmy.Estao.Core.Models;
 using ZarpaSuite.Controls;
 
@@ -14,30 +16,52 @@ internal sealed record ZarpaUsageChartSeries(string Label, Color Color, IReadOnl
 /// </summary>
 internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
 {
+    // A 1 ms WinForms timer wakes the UI thread hundreds of times during a
+    // single animation even though we only render at 60 FPS. Matching the
+    // target frame cadence removes that needless message pressure while
+    // keeping the animation visually identical.
+    private const int AnimationTimerIntervalMs = 16;
+    private const double TargetFrameIntervalMs = 1000D / 60D;
+    private const int AnimationDurationMs = 700;
     private readonly Font _titleFont = new("Segoe UI", 9.5F, FontStyle.Bold);
     private readonly Font _bodyFont = new("Segoe UI", 8F);
     private readonly Font _axisFont = new("Segoe UI", 7F);
+    private readonly Stopwatch _animationStopwatch = new();
+    private readonly System.Windows.Forms.Timer _animationTimer;
     private ZarpaThemeTokens? _theme;
     private IReadOnlyList<ZarpaUsageChartSeries> _series = [];
     private bool _preview;
     private Bitmap? _renderCache;
     private bool _cacheDirty = true;
+    private double _animationProgress = 1D;
+    private bool _animationRequested;
+    private bool _disposed;
+    private double _lastAnimationFrameMs;
+    private bool _mappedPointsDirty = true;
+    private Rectangle _mappedPlot;
+    private PointF[][] _mappedPoints = [];
 
     public ZarpaUsageChart()
     {
-        Height = 154;
-        MinimumSize = new Size(220, 120);
+        Height = 184;
+        MinimumSize = new Size(240, 145);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
             ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
         BackColor = ZarpaPopoverPalette.SurfaceTop;
         AccessibleName = "Local usage history";
         AccessibleRole = AccessibleRole.Graphic;
+
+        _animationTimer = new System.Windows.Forms.Timer { Interval = AnimationTimerIntervalMs };
+        _animationTimer.Tick += AnimationTimerOnTick;
     }
 
     public void SetData(IReadOnlyList<ZarpaUsageChartSeries> series, bool preview = false)
     {
         _series = series;
         _preview = preview;
+        _mappedPointsDirty = true;
+        _animationRequested = true;
+        StartAnimation();
         InvalidateCache();
     }
 
@@ -55,6 +79,9 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
             _titleFont.Dispose();
             _bodyFont.Dispose();
             _axisFont.Dispose();
+            _disposed = true;
+            StopAnimation();
+            _animationTimer.Dispose();
             _renderCache?.Dispose();
         }
 
@@ -63,7 +90,6 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
 
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e);
         if (Width <= 0 || Height <= 0) return;
         if (_cacheDirty || _renderCache is null || _renderCache.Size != ClientSize)
         {
@@ -75,12 +101,23 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         }
 
         e.Graphics.DrawImageUnscaled(_renderCache, Point.Empty);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        DrawAnimatedSeries(e.Graphics, GetPlotRectangle(), _animationProgress);
     }
 
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+        _mappedPointsDirty = true;
         InvalidateCache();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (_animationRequested)
+            StartAnimation();
     }
 
     private void InvalidateCache()
@@ -94,12 +131,15 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         graphics.Clear(_theme?.Surface ?? ZarpaPopoverPalette.SurfaceTop);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
 
         var surface = _theme?.SurfaceRaised ?? ZarpaPopoverPalette.SurfaceTop;
         var border = _theme?.Border ?? ZarpaPopoverPalette.Border;
         var text = _theme?.Text ?? ZarpaPopoverPalette.Text;
         var muted = _theme?.TextMuted ?? ZarpaPopoverPalette.TextMuted;
-        var plot = new Rectangle(12, 42, Math.Max(20, Width - 30), Math.Max(35, Height - 64));
+        // Reserve a clean axis gutter on the right so labels never sit on top
+        // of the curves when the widget is narrow.
+        var plot = GetPlotRectangle();
         var card = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
 
         ZarpaPopoverPaint.FillRounded(graphics, surface, card, 12);
@@ -107,36 +147,24 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         using (var path = ZarpaPopoverPaint.RoundedPath(card, 12))
             graphics.DrawPath(outline, path);
 
-        TextRenderer.DrawText(graphics, "Usage history", _titleFont,
-            new Rectangle(12, 7, 120, 22), text,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(graphics, _preview ? "Preview · local history" : "Stored locally · last 7 days", _bodyFont,
-            new Rectangle(12, 25, 150, 16), muted,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        DrawChartText(graphics, "Usage history", _titleFont,
+            new RectangleF(12, 7, 120, 22), text, StringAlignment.Near);
+        DrawChartText(graphics, _preview ? "Preview · local history" : "Stored locally · last 7 days", _bodyFont,
+            new RectangleF(12, 25, 150, 16), muted, StringAlignment.Near);
 
         DrawLegend(graphics, text, muted);
         DrawGrid(graphics, plot, border, muted);
 
-        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromDays(7);
-        foreach (var series in _series)
-        {
-            var points = series.Points
-                .Where(point => point.Timestamp >= cutoff)
-                .OrderBy(point => point.Timestamp)
-                .ToArray();
-            DrawSeries(graphics, plot, series.Color, points);
-        }
-
         if (_series.Count == 0 || _series.All(series => series.Points.Count == 0))
         {
-            TextRenderer.DrawText(graphics, "Collecting local usage data…", _bodyFont,
-                plot, muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            DrawChartText(graphics, "Collecting local usage data…", _bodyFont,
+                plot, muted, StringAlignment.Center);
         }
 
-        TextRenderer.DrawText(graphics, "7d ago", _bodyFont, new Rectangle(plot.Left, plot.Bottom + 5, 48, 15), muted,
-            TextFormatFlags.Left | TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(graphics, "now", _bodyFont, new Rectangle(plot.Right - 30, plot.Bottom + 5, 30, 15), muted,
-            TextFormatFlags.Right | TextFormatFlags.NoPadding);
+        DrawChartText(graphics, "7d ago", _bodyFont,
+            new RectangleF(plot.Left, plot.Bottom + 5, 48, 15), muted, StringAlignment.Near);
+        DrawChartText(graphics, "now", _bodyFont,
+            new RectangleF(plot.Right - 30, plot.Bottom + 5, 30, 15), muted, StringAlignment.Far);
     }
 
     private void DrawLegend(Graphics graphics, Color text, Color muted)
@@ -146,12 +174,25 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         {
             using var brush = new SolidBrush(series.Color);
             graphics.FillEllipse(brush, new Rectangle(x, 14, 6, 6));
-            TextRenderer.DrawText(graphics, series.Label, _bodyFont,
-                new Rectangle(x + 10, 8, 48, 18), text,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+            DrawChartText(graphics, series.Label, _bodyFont,
+                new RectangleF(x + 10, 8, 48, 18), text, StringAlignment.Near, true);
             x += 55;
             if (x >= Width - 25) break;
         }
+    }
+
+    private static void DrawChartText(Graphics graphics, string value, Font font,
+        RectangleF bounds, Color color, StringAlignment alignment, bool ellipsis = false)
+    {
+        using var brush = new SolidBrush(color);
+        using var format = new StringFormat(StringFormat.GenericTypographic)
+        {
+            Alignment = alignment,
+            LineAlignment = StringAlignment.Center,
+            FormatFlags = StringFormatFlags.NoWrap,
+            Trimming = ellipsis ? StringTrimming.EllipsisCharacter : StringTrimming.None
+        };
+        graphics.DrawString(value, font, brush, bounds, format);
     }
 
     private void DrawGrid(Graphics graphics, Rectangle plot, Color border, Color muted)
@@ -162,45 +203,117 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         {
             var y = plot.Bottom - (int)Math.Round(plot.Height * level);
             graphics.DrawLine(gridPen, plot.Left, y, plot.Right, y);
-            TextRenderer.DrawText(graphics, $"{level:P0}", _axisFont,
-                new Rectangle(plot.Right - 28, y - 10, 28, 16), muted,
-                TextFormatFlags.Right | TextFormatFlags.NoPadding);
+            DrawChartText(graphics, $"{level:P0}", _axisFont,
+                new RectangleF(plot.Right + 4, y - 10, Math.Max(20, Width - plot.Right - 4), 16),
+                muted, StringAlignment.Far);
         }
     }
 
-    private static void DrawSeries(Graphics graphics, Rectangle plot, Color color,
-        IReadOnlyList<ZarpaUsageChartPoint> points)
+    private void DrawAnimatedSeries(Graphics graphics, Rectangle plot, double progress)
     {
-        if (points.Count == 0) return;
+        if (progress <= 0D) return;
+
+        EnsureMappedPoints(plot);
+        for (var index = 0; index < _series.Count; index++)
+            DrawSeries(graphics, plot, _series[index].Color, _mappedPoints[index], progress);
+    }
+
+    private static void DrawSeries(Graphics graphics, Rectangle plot, Color color,
+        IReadOnlyList<PointF> mapped, double progress)
+    {
+        if (mapped.Count == 0) return;
+
+        var state = graphics.Save();
+        try
+        {
+            var clipWidth = plot.Width * (float)Math.Clamp(progress, 0D, 1D);
+            graphics.SetClip(new RectangleF(plot.Left, plot.Top, clipWidth, plot.Height), CombineMode.Intersect);
+
+            if (mapped.Count == 1)
+            {
+                using var dotBrush = new SolidBrush(color);
+                graphics.FillEllipse(dotBrush, new RectangleF(mapped[0].X - 3, mapped[0].Y - 3, 6, 6));
+                return;
+            }
+
+            using var linePath = SmoothPath(mapped);
+            using var fillPath = (GraphicsPath)linePath.Clone();
+            fillPath.AddLine(mapped[^1].X, plot.Bottom, mapped[0].X, plot.Bottom);
+            fillPath.CloseFigure();
+            using (var fill = new LinearGradientBrush(plot, Color.FromArgb(92, color), Color.FromArgb(8, color), 90F))
+                graphics.FillPath(fill, fillPath);
+            using (var pen = new Pen(color, 1.8F))
+                graphics.DrawPath(pen, linePath);
+
+            using var brush = new SolidBrush(color);
+            foreach (var point in mapped)
+                graphics.FillEllipse(brush, new RectangleF(point.X - 2.5F, point.Y - 2.5F, 5F, 5F));
+        }
+        finally
+        {
+            graphics.Restore(state);
+        }
+    }
+
+    private void EnsureMappedPoints(Rectangle plot)
+    {
+        if (!_mappedPointsDirty && _mappedPlot == plot && _mappedPoints.Length == _series.Count)
+            return;
 
         var rangeStart = DateTimeOffset.UtcNow - TimeSpan.FromDays(7);
         var range = TimeSpan.FromDays(7).TotalSeconds;
-        var mapped = points.Select(point =>
-        {
-            var x = plot.Left + (float)Math.Clamp((point.Timestamp - rangeStart).TotalSeconds / range, 0D, 1D) * plot.Width;
-            var y = plot.Bottom - (float)Math.Clamp(point.Value, 0D, 1D) * plot.Height;
-            return new PointF(x, y);
-        }).ToArray();
+        _mappedPoints = _series.Select(series => series.Points
+            .Where(point => point.Timestamp >= rangeStart)
+            .OrderBy(point => point.Timestamp)
+            .Select(point =>
+            {
+                var x = plot.Left + (float)Math.Clamp((point.Timestamp - rangeStart).TotalSeconds / range, 0D, 1D) * plot.Width;
+                var y = plot.Bottom - (float)Math.Clamp(point.Value, 0D, 1D) * plot.Height;
+                return new PointF(x, y);
+            })
+            .ToArray())
+            .ToArray();
+        _mappedPlot = plot;
+        _mappedPointsDirty = false;
+    }
 
-        if (mapped.Length == 1)
+    private Rectangle GetPlotRectangle() => new(
+        12, 42, Math.Max(20, Width - 52), Math.Max(35, Height - 67));
+
+    private void StartAnimation()
+    {
+        if (_disposed || !IsHandleCreated) return;
+
+        _animationRequested = false;
+        _animationProgress = 0D;
+        _animationStopwatch.Restart();
+        _lastAnimationFrameMs = -TargetFrameIntervalMs;
+        _animationTimer.Start();
+    }
+
+    private void StopAnimation()
+    {
+        _animationTimer.Stop();
+    }
+
+    private void AnimationTimerOnTick(object? sender, EventArgs e)
+    {
+        if (_disposed || !IsHandleCreated)
         {
-            using var dotBrush = new SolidBrush(color);
-            graphics.FillEllipse(dotBrush, new RectangleF(mapped[0].X - 3, mapped[0].Y - 3, 6, 6));
+            StopAnimation();
             return;
         }
 
-        using var linePath = SmoothPath(mapped);
-        using var fillPath = (GraphicsPath)linePath.Clone();
-        fillPath.AddLine(mapped[^1].X, plot.Bottom, mapped[0].X, plot.Bottom);
-        fillPath.CloseFigure();
-        using (var fill = new LinearGradientBrush(plot, Color.FromArgb(92, color), Color.FromArgb(8, color), 90F))
-            graphics.FillPath(fill, fillPath);
-        using (var pen = new Pen(color, 1.8F))
-            graphics.DrawPath(pen, linePath);
+        var elapsedMs = _animationStopwatch.Elapsed.TotalMilliseconds;
+        if (elapsedMs - _lastAnimationFrameMs < TargetFrameIntervalMs)
+            return;
 
-        using var brush = new SolidBrush(color);
-        foreach (var point in mapped)
-            graphics.FillEllipse(brush, new RectangleF(point.X - 2.5F, point.Y - 2.5F, 5F, 5F));
+        _lastAnimationFrameMs = elapsedMs;
+        _animationProgress = Math.Clamp(elapsedMs / AnimationDurationMs, 0D, 1D);
+        Invalidate(GetPlotRectangle(), false);
+
+        if (_animationProgress >= 1D)
+            StopAnimation();
     }
 
     private static GraphicsPath SmoothPath(IReadOnlyList<PointF> points)

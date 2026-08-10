@@ -7,7 +7,7 @@ namespace Hmy.Estao.App.Controls.Zarpa;
 
 internal sealed class UsagePopover : Form
 {
-    private const int WidgetWidth = 430;
+    private const int WidgetWidth = 470;
     private const int WidgetHeight = 720;
     private readonly Func<Task> _refresh;
     private readonly Action _showSettings;
@@ -16,6 +16,7 @@ internal sealed class UsagePopover : Form
     private readonly TableLayoutPanel _tabs = new();
     private readonly Panel _tabSpacer = new() { Dock = DockStyle.Top, Height = 6 };
     private readonly ZarpaUsageContent _content = new();
+    private readonly ZarpaScrollBar _scrollBar = new() { Orientation = Orientation.Vertical, Dock = DockStyle.Right, Width = 9 };
     private readonly ZarpaThemeManager _theme;
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
     private IReadOnlyList<UsageHistoryPoint> _history = [];
@@ -40,6 +41,9 @@ internal sealed class UsagePopover : Form
         // The application is already SystemAware. Scaling this owner-drawn widget a
         // second time makes its children wider than the fixed popover window.
         AutoScaleMode = AutoScaleMode.None;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+        DoubleBuffered = true;
         BackColor = ZarpaPopoverPalette.SurfaceTop;
         ClientSize = new Size(WidgetWidth, WidgetHeight);
         FormBorderStyle = FormBorderStyle.None;
@@ -71,14 +75,19 @@ internal sealed class UsagePopover : Form
         _content.SettingsRequested += (_, _) => { Close(); _showSettings(); };
         _content.RefreshRequested += async (_, _) => await RefreshFromUiAsync().ConfigureAwait(true);
         _content.QuitRequested += (_, _) => { Close(); _quit(); };
+        _content.ScrollChanged += (_, _) => SyncScrollBarFromContent();
+        _content.Resize += (_, _) => UpdateScrollBar();
+        _scrollBar.ValueChanged += (_, _) => _content.ScrollTo(_scrollBar.Value);
 
         _surface.Controls.Add(_content);
+        _surface.Controls.Add(_scrollBar);
         _surface.Controls.Add(_tabSpacer);
         _surface.Controls.Add(_tabs);
         Controls.Add(_surface);
         _theme.ThemeChanged += (_, _) => ApplyContainerTheme();
         _theme.Attach(this);
         ApplyContainerTheme();
+        UpdateScrollBar();
         KeyDown += (_, args) =>
         {
             if (args.KeyCode != Keys.Escape) return;
@@ -89,6 +98,8 @@ internal sealed class UsagePopover : Form
         Deactivate += (_, _) => { if (_allowDeactivateClose && !IsDisposed) Close(); };
         UpdateSnapshots(snapshots);
     }
+
+    protected override bool ShowWithoutActivation => true;
 
     protected override void Dispose(bool disposing)
     {
@@ -120,7 +131,6 @@ internal sealed class UsagePopover : Form
             Math.Clamp(anchor.X - width / 2, working.Left, working.Right - width),
             Math.Clamp(anchor.Y - height, working.Top, working.Bottom - height));
         Show();
-        Activate();
     }
 
     public void UpdateSnapshots(IReadOnlyList<UsageSnapshot> snapshots, IReadOnlyList<UsageHistoryPoint>? history = null)
@@ -137,20 +147,29 @@ internal sealed class UsagePopover : Form
                 !string.Equals(item.Provider, _selectedProvider, StringComparison.OrdinalIgnoreCase)))
             _selectedProvider = snapshots.FirstOrDefault()?.Provider;
 
-        RebuildTabs();
+        var providers = ProviderIds();
+        var existingProviders = _tabs.Controls.Cast<ZarpaProviderTab>()
+            .Select(tab => (string?)tab.Tag)
+            .ToArray();
+        if (!providers.SequenceEqual(existingProviders, StringComparer.OrdinalIgnoreCase))
+            RebuildTabs(providers);
+        else
+            UpdateTabVisuals();
         ShowSelectedSnapshot();
     }
 
-    private void RebuildTabs()
+    private string[] ProviderIds() => ProviderCatalog.InitialProviderIds
+        .Concat(_snapshots.Select(item => ProviderCatalog.NormalizeId(item.Provider)))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    private void RebuildTabs(string[]? providerIds = null)
     {
         _tabs.SuspendLayout();
         try
         {
             DisposeChildren(_tabs);
-            var providers = ProviderCatalog.InitialProviderIds
-                .Concat(_snapshots.Select(item => ProviderCatalog.NormalizeId(item.Provider)))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            var providers = providerIds ?? ProviderIds();
             _tabs.ColumnStyles.Clear();
             _tabs.ColumnCount = providers.Length;
             foreach (var _ in providers)
@@ -184,6 +203,18 @@ internal sealed class UsagePopover : Form
         }
     }
 
+    private void UpdateTabVisuals()
+    {
+        foreach (ZarpaProviderTab tab in _tabs.Controls)
+        {
+            var provider = (string?)tab.Tag;
+            var snapshot = FindSnapshot(provider);
+            tab.Active = string.Equals(provider, _selectedProvider, StringComparison.OrdinalIgnoreCase);
+            tab.Available = snapshot is not null && snapshot.Error is null;
+            tab.UsagePercent = PercentUsed(snapshot);
+        }
+    }
+
     private void SelectProvider(string provider)
     {
         _selectedProvider = provider;
@@ -195,6 +226,24 @@ internal sealed class UsagePopover : Form
     private void ShowSelectedSnapshot()
     {
         _content.Display(FindSnapshot(_selectedProvider), _selectedProvider, _history);
+        UpdateScrollBar();
+    }
+
+    private void UpdateScrollBar()
+    {
+        if (_scrollBar.IsDisposed || _content.IsDisposed) return;
+        var contentHeight = _content.ContentHeight;
+        var viewportHeight = Math.Max(1, _content.ClientSize.Height);
+        _scrollBar.SetRange(contentHeight, viewportHeight);
+        _scrollBar.Enabled = contentHeight > viewportHeight + 1;
+        if (!_scrollBar.Enabled) _scrollBar.Value = 0;
+    }
+
+    private void SyncScrollBarFromContent()
+    {
+        if (_scrollBar.IsDisposed) return;
+        _scrollBar.Value = _content.ScrollOffset;
+        UpdateScrollBar();
     }
 
     private static void DisposeChildren(Control parent)
@@ -228,12 +277,17 @@ internal sealed class UsagePopover : Form
     {
         _tabs.BackColor = _theme.Theme.Surface;
         _tabSpacer.BackColor = _theme.Theme.Surface;
+        _surface.ApplyTheme(_theme.Theme);
+        _content.ApplyTheme(_theme.Theme);
+        _scrollBar.ApplyTheme(_theme.Theme);
     }
 
 }
 
 internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBoundary
 {
+    private readonly ZarpaBufferedPanel _canvas = new();
+    private int _scrollOffset;
     private readonly Font _headingFont = new("Segoe UI", 15F, FontStyle.Bold);
     private readonly Font _sectionFont = new("Segoe UI", 12F, FontStyle.Bold);
     private readonly Font _bodyFont = new("Segoe UI", 10.5F);
@@ -250,8 +304,17 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
             ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor |
             ControlStyles.UserPaint, true);
-        AutoScroll = true;
+        AutoScroll = false;
+        HScroll = false;
+        VScroll = false;
         BackColor = ZarpaPopoverPalette.SurfaceTop;
+        _canvas.BackColor = BackColor;
+        _canvas.Location = Point.Empty;
+        _canvas.Size = new Size(Math.Max(1, ClientSize.Width), Math.Max(1, ClientSize.Height));
+        _canvas.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        Controls.Add(_canvas);
+        Resize += (_, _) => ResizeCanvas();
+        _canvas.MouseWheel += OnCanvasMouseWheel;
         _progressTheme.Theme.Canvas = ZarpaPopoverPalette.SurfaceTop;
         _progressTheme.Theme.SurfaceRaised = ZarpaPopoverPalette.Track;
         _progressTheme.Theme.Accent = ZarpaPopoverPalette.Meter;
@@ -260,11 +323,27 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     public event EventHandler? SettingsRequested;
     public event EventHandler? RefreshRequested;
     public event EventHandler? QuitRequested;
+    public event EventHandler? ScrollChanged;
+
+    public int ContentHeight => Math.Max(ClientSize.Height, _canvas.Height);
+    public int ScrollOffset => _scrollOffset;
+
+    public void ScrollTo(int value)
+    {
+        var maximum = Math.Max(0, ContentHeight - ClientSize.Height);
+        var next = Math.Clamp(value, 0, maximum);
+        if (_scrollOffset == next) return;
+        _scrollOffset = next;
+        _canvas.Top = -_scrollOffset;
+        ScrollChanged?.Invoke(this, EventArgs.Empty);
+        Invalidate();
+    }
 
     public void ApplyTheme(ZarpaThemeTokens value)
     {
         _activeTheme = value;
         BackColor = value.Surface;
+        _canvas.BackColor = value.Surface;
         _progressTheme.Theme.Canvas = value.Surface;
         _progressTheme.Theme.SurfaceRaised = value.SurfaceRaised;
         _progressTheme.Theme.Accent = value.Warning;
@@ -277,8 +356,6 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         _snapshot = snapshot;
         _provider = provider;
         if (history is not null) _history = history;
-        var wasVisible = Visible;
-        if (wasVisible) Visible = false;
         SuspendLayout();
         try
         {
@@ -310,19 +387,19 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             }
             else
             {
-                foreach (var window in snapshot.Windows)
-                    y = AddWindow(window, y);
-            }
+            foreach (var window in snapshot.Windows)
+                y = AddWindow(window, y);
 
             var chartProvider = ProviderCatalog.NormalizeId(provider ?? snapshot?.Provider ?? "codex");
-            var hasLocalHistory = _history.Any(point =>
-                string.Equals(point.Provider, chartProvider, StringComparison.OrdinalIgnoreCase));
-            if ((snapshot is not null && snapshot.Error is null && snapshot.Windows.Count > 0) || hasLocalHistory)
+            var providerHistory = _history.Where(point =>
+                string.Equals(point.Provider, chartProvider, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if ((snapshot is not null && snapshot.Error is null && snapshot.Windows.Count > 0) || providerHistory.Length > 0)
             {
                 AddSeparator(y);
                 y += 10;
                 AddUsageChart(snapshot, provider, y);
-                y += 169;
+                y += 199;
+            }
             }
 
             if (snapshot?.Credits is not null)
@@ -367,19 +444,20 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             y += 34;
             AddAction("Quit", string.Empty, y, (_, _) => QuitRequested?.Invoke(this, EventArgs.Empty));
             y += 39;
-            AutoScrollMinSize = new Size(0, y);
+            _canvas.Size = new Size(Math.Max(1, ContentWidth), Math.Max(y, ClientSize.Height));
+            _scrollOffset = Math.Clamp(_scrollOffset, 0, Math.Max(0, _canvas.Height - ClientSize.Height));
+            _canvas.Top = -_scrollOffset;
         }
         finally
         {
             ResumeLayout(true);
-            if (wasVisible) Visible = true;
         }
     }
 
     public void SetRefreshing(bool value)
     {
         _refreshing = value;
-        foreach (Control control in Controls)
+        foreach (Control control in _canvas.Controls)
             if (control is ZarpaReferenceAction action && action.Text is "Refresh usage" or "Refreshing…")
             {
                 action.Text = value ? "Refreshing…" : "Refresh usage";
@@ -411,49 +489,39 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             _activeTheme?.Information ?? Color.FromArgb(30, 157, 190),
             _activeTheme?.Success ?? Color.FromArgb(69, 169, 165)
         };
-        var windows = new List<(string Id, string Title)>();
-        if (snapshot is not null)
-        {
-            windows.AddRange(snapshot.Windows.Select(window => (window.Id, window.Title)));
-        }
-
+        var windows = snapshot?.Windows.Select(window => (window.Id, window.Title)).ToList() ?? [];
         foreach (var group in _history
                      .Where(point => string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase))
                      .GroupBy(point => point.Window, StringComparer.OrdinalIgnoreCase))
         {
             if (windows.All(window => !string.Equals(window.Id, group.Key, StringComparison.OrdinalIgnoreCase)))
-            {
                 windows.Add((group.Key, WindowTitle(group.Key)));
-            }
         }
+
         var providerHistory = _history.Where(point =>
-            string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase));
+            string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase)).ToArray();
         var preview = providerHistory.Select(point => point.Timestamp).Distinct().Count() < 2;
         var series = windows.Take(palette.Length).Select((window, index) =>
         {
-            var points = _history
-                .Where(point => string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase) &&
-                                string.Equals(point.Window, window.Id, StringComparison.OrdinalIgnoreCase))
+            var points = providerHistory
+                .Where(point => string.Equals(point.Window, window.Id, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(point => point.Timestamp)
                 .Select(point => new ZarpaUsageChartPoint(point.Timestamp, point.PercentUsed))
                 .ToArray();
-            if (points.Length < 2 && preview)
-            {
-                points = MockPoints(index);
-            }
-
+            if (points.Length < 2 && preview) points = MockPoints(index);
             return new ZarpaUsageChartSeries(window.Title, palette[index], points);
         }).ToArray();
 
         var chart = new ZarpaUsageChart
         {
             Location = new Point(0, y),
-            Size = new Size(ContentWidth, 154),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            Size = new Size(ContentWidth, 184),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            BackColor = SurfaceColor
         };
         chart.SetData(series, preview);
         if (_activeTheme is not null) chart.ApplyTheme(_activeTheme);
-        Controls.Add(chart);
+        AddContentControl(chart);
     }
 
     private static string WindowTitle(string id) => id.Trim().ToLowerInvariant() switch
@@ -501,13 +569,13 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             Value = value
         };
         _progressTheme.Attach(progress);
-        Controls.Add(progress);
+        AddContentControl(progress);
         return progress;
     }
 
     private void AddSeparator(int y)
     {
-        Controls.Add(new Panel
+        AddContentControl(new Panel
         {
             BackColor = BorderColor,
             Location = new Point(0, y),
@@ -531,13 +599,13 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         };
         action.Click += click;
         if (_activeTheme is not null) action.ApplyTheme(_activeTheme);
-        Controls.Add(action);
+        AddContentControl(action);
     }
 
     private void AddText(string text, Font font, Color color, int x, int y, int width, int height,
         ContentAlignment alignment = ContentAlignment.MiddleLeft)
     {
-        Controls.Add(new Label
+        AddContentControl(new Label
         {
             AutoEllipsis = true,
             BackColor = SurfaceColor,
@@ -551,7 +619,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         });
     }
 
-    private int ContentWidth => Math.Max(240, ClientSize.Width - (VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 2));
+    private int ContentWidth => Math.Max(240, ClientSize.Width);
     private Color SurfaceColor => _activeTheme?.Surface ?? ZarpaPopoverPalette.SurfaceTop;
     private Color BorderColor => _activeTheme?.Border ?? Color.FromArgb(164, 164, 215);
     private Color TextColor => _activeTheme?.Text ?? ZarpaPopoverPalette.Text;
@@ -559,7 +627,32 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
 
     private void DisposeChildren()
     {
-        while (Controls.Count > 0) Controls[0].Dispose();
+        while (_canvas.Controls.Count > 0) _canvas.Controls[0].Dispose();
+    }
+
+    private void ResizeCanvas()
+    {
+        if (_canvas.IsDisposed) return;
+        _canvas.Width = Math.Max(1, ClientSize.Width);
+        _scrollOffset = Math.Clamp(_scrollOffset, 0, Math.Max(0, _canvas.Height - ClientSize.Height));
+        _canvas.Top = -_scrollOffset;
+    }
+
+    private void AddContentControl(Control control)
+    {
+        _canvas.Controls.Add(control);
+        WireMouseWheel(control);
+    }
+
+    private void WireMouseWheel(Control control)
+    {
+        control.MouseWheel += OnCanvasMouseWheel;
+        foreach (Control child in control.Controls) WireMouseWheel(child);
+    }
+
+    private void OnCanvasMouseWheel(object? sender, MouseEventArgs e)
+    {
+        if (e.Delta != 0) ScrollTo(_scrollOffset - Math.Sign(e.Delta) * 48);
     }
 
     private static string UpdatedText(DateTimeOffset updated)
