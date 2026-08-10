@@ -65,6 +65,12 @@ public sealed class ConfigStore
         {
             Version = 1,
             Theme = "Graphite",
+            TaskbarOverlay = new TaskbarOverlayConfig
+            {
+                Enabled = true,
+                ProviderIds = [],
+                Controls = TaskbarOverlayControlCatalog.Default.ToList()
+            },
             Providers = ProviderCatalog.InitialProviderIds
                 .Select(id => new ProviderConfig { Id = id, Enabled = id == "codex", Source = "auto", CookieSource = "auto" })
                 .ToList()
@@ -76,6 +82,21 @@ public sealed class ConfigStore
         config.Version = config.Version <= 0 ? 1 : config.Version;
         config.Theme = string.IsNullOrWhiteSpace(config.Theme) ? "Graphite" : config.Theme.Trim();
         config.Providers ??= [];
+        config.TaskbarOverlay ??= new TaskbarOverlayConfig();
+        config.TaskbarOverlay.ProviderIds ??= [];
+        config.TaskbarOverlay.Controls ??= [];
+        config.TaskbarOverlay.ProviderIds = config.TaskbarOverlay.ProviderIds
+            .Select(ProviderCatalog.NormalizeId)
+            .Where(ProviderCatalog.IsSupported)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        config.TaskbarOverlay.Controls = config.TaskbarOverlay.Controls
+            .Select(control => control.Trim())
+            .Where(control => TaskbarOverlayControlCatalog.All.Contains(control, StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (config.TaskbarOverlay.Controls.Count == 0)
+            config.TaskbarOverlay.Controls = TaskbarOverlayControlCatalog.Default.ToList();
 
         foreach (var provider in config.Providers)
         {

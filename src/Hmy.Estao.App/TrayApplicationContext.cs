@@ -18,6 +18,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly AdaptiveRefreshLoop _refreshLoop;
     private readonly NotifyIcon _notifyIcon;
     private readonly ZarpaThemeManager _zarpaTheme = new() { Preset = ZarpaThemePreset.Graphite };
+    private readonly TaskbarUsageOverlay _taskbarOverlay;
     private readonly SynchronizationContext _uiContext;
     private EstaoConfig _config;
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
@@ -28,6 +29,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _configStore = configStore;
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
+        _taskbarOverlay = new TaskbarUsageOverlay(_zarpaTheme.Preset);
         _refreshService = serviceFactory(configStore);
         _refreshService.Refreshed += (_, snapshots) => PostMenuRebuild(snapshots);
         _refreshLoop = new AdaptiveRefreshLoop(_refreshService, () => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline);
@@ -56,6 +58,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _refreshLoop.Dispose();
             _notifyIcon.Dispose();
+            _taskbarOverlay.Dispose();
             _zarpaTheme.Dispose();
         }
 
@@ -71,6 +74,8 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _snapshots = snapshots;
         if (_popover is { IsDisposed: false }) _popover.UpdateSnapshots(snapshots, _refreshService.History);
+        _taskbarOverlay.SetTheme(_zarpaTheme.Preset);
+        _taskbarOverlay.Update(snapshots, _refreshService.History, _config.TaskbarOverlay);
 
         var menu = new ZarpaContextMenu();
         menu.ApplyTheme(_zarpaTheme.Theme);
@@ -133,6 +138,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         form.ShowDialog();
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
+        _taskbarOverlay.SetTheme(_zarpaTheme.Preset);
+        _taskbarOverlay.Update(_snapshots, _refreshService.History, _config.TaskbarOverlay);
         _ = RefreshAsync();
     }
 

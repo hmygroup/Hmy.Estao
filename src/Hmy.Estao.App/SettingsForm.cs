@@ -11,6 +11,7 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly ICookieSecretStore _cookieStore;
     private readonly ZarpaThemeManager _theme = new() { Preset = ZarpaThemePreset.Graphite };
     private readonly Panel _providersHost = new() { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(22, 8, 22, 18) };
+    private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
     private readonly Label _providerCount = new() { AutoSize = true };
     private readonly ZarpaComboBox _themePicker = new() { LabelText = "Theme", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
     private readonly ZarpaButton _saveButton = new() { Text = "Save changes", ButtonStyle = ZarpaButtonStyle.Primary, Width = 126 };
@@ -32,6 +33,7 @@ public sealed class SettingsForm : ZarpaModernForm
 
         var header = BuildHeader();
         var footer = BuildFooter();
+        _providersHost.Controls.Add(_overlaySettings);
         Controls.Add(_providersHost);
         Controls.Add(footer);
         Controls.Add(header);
@@ -120,6 +122,7 @@ public sealed class SettingsForm : ZarpaModernForm
         try
         {
             _config = await _configStore.LoadAsync().ConfigureAwait(true);
+            _overlaySettings.LoadConfig(_config);
             var selectedTheme = ZarpaThemePreferences.Parse(_config.Theme).ToString();
             _themePicker.SelectedIndex = Math.Max(0, _themePicker.Items.IndexOf(selectedTheme));
             var statuses = await Task.WhenAll(_config.Providers.Select(CookieStatusAsync)).ConfigureAwait(true);
@@ -133,6 +136,7 @@ public sealed class SettingsForm : ZarpaModernForm
                 _providersHost.Controls.Add(row);
                 _providersHost.Controls.SetChildIndex(row, 0);
             }
+            _providersHost.Controls.SetChildIndex(_overlaySettings, 0);
 
             var enabled = _providerRows.Count(row => row.EnabledProvider);
             _providerCount.Text = $"{enabled} of {_providerRows.Count} enabled  ·  Credentials stay encrypted on this device";
@@ -158,6 +162,7 @@ public sealed class SettingsForm : ZarpaModernForm
                 }
             }
 
+            _overlaySettings.Apply(_config.TaskbarOverlay);
             _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
             await _configStore.SaveAsync(_config).ConfigureAwait(true);
             DialogResult = DialogResult.OK;
@@ -186,8 +191,13 @@ public sealed class SettingsForm : ZarpaModernForm
 
     private void DisposeProviderRows()
     {
+        foreach (var row in _providerRows) row.Dispose();
         _providerRows.Clear();
-        while (_providersHost.Controls.Count > 0) _providersHost.Controls[0].Dispose();
+        for (var index = _providersHost.Controls.Count - 1; index >= 0; index--)
+        {
+            if (!ReferenceEquals(_providersHost.Controls[index], _overlaySettings))
+                _providersHost.Controls[index].Dispose();
+        }
     }
 
     private sealed class ProviderSettingsRow : Panel

@@ -15,6 +15,40 @@ public sealed class EstaoConfig
 
     [JsonPropertyName("providers")]
     public List<ProviderConfig> Providers { get; set; } = [];
+
+    [JsonPropertyName("taskbarOverlay")]
+    public TaskbarOverlayConfig TaskbarOverlay { get; set; } = new();
+}
+
+public sealed class TaskbarOverlayConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    // Empty means "all enabled providers". Keeping that as the default makes
+    // newly added providers visible without requiring a config migration.
+    [JsonPropertyName("providerIds")]
+    public List<string> ProviderIds { get; set; } = [];
+
+    [JsonPropertyName("controls")]
+    public List<string> Controls { get; set; } = TaskbarOverlayControlCatalog.Default.ToList();
+}
+
+public static class TaskbarOverlayControlCatalog
+{
+    public static readonly string[] All = ["percentage", "bar", "pie", "chart", "usedTotal", "reset"];
+    public static readonly string[] Default = ["percentage", "bar", "pie", "chart"];
+
+    public static string DisplayName(string id) => id switch
+    {
+        "percentage" => "Percentage",
+        "bar" => "Usage bar",
+        "pie" => "Donut",
+        "chart" => "Mini chart",
+        "usedTotal" => "Used / total",
+        "reset" => "Reset time",
+        _ => id
+    };
 }
 
 public sealed class ProviderConfig

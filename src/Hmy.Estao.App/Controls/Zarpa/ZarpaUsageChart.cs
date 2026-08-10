@@ -16,12 +16,10 @@ internal sealed record ZarpaUsageChartSeries(string Label, Color Color, IReadOnl
 /// </summary>
 internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
 {
-    // A 1 ms WinForms timer wakes the UI thread hundreds of times during a
-    // single animation even though we only render at 60 FPS. Matching the
-    // target frame cadence removes that needless message pressure while
-    // keeping the animation visually identical.
+    // Keep the timer close to the display cadence. The Stopwatch still owns
+    // the animation clock, so delayed UI ticks catch up instead of slowing
+    // down the animation.
     private const int AnimationTimerIntervalMs = 16;
-    private const double TargetFrameIntervalMs = 1000D / 60D;
     private const int AnimationDurationMs = 700;
     private readonly Font _titleFont = new("Segoe UI", 9.5F, FontStyle.Bold);
     private readonly Font _bodyFont = new("Segoe UI", 8F);
@@ -33,13 +31,15 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
     private bool _preview;
     private Bitmap? _renderCache;
     private bool _cacheDirty = true;
+    private bool _seriesCacheDirty = true;
     private double _animationProgress = 1D;
     private bool _animationRequested;
     private bool _disposed;
-    private double _lastAnimationFrameMs;
     private bool _mappedPointsDirty = true;
     private Rectangle _mappedPlot;
     private PointF[][] _mappedPoints = [];
+    private Bitmap? _seriesCache;
+    private Rectangle _seriesCachePlot;
 
     public ZarpaUsageChart()
     {
@@ -83,6 +83,7 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
             StopAnimation();
             _animationTimer.Dispose();
             _renderCache?.Dispose();
+            _seriesCache?.Dispose();
         }
 
         base.Dispose(disposing);
@@ -100,6 +101,7 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
             _cacheDirty = false;
         }
 
+        EnsureSeriesCache(GetPlotRectangle());
         e.Graphics.DrawImageUnscaled(_renderCache, Point.Empty);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
@@ -123,6 +125,7 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
     private void InvalidateCache()
     {
         _cacheDirty = true;
+        _seriesCacheDirty = true;
         Invalidate();
     }
 
@@ -213,46 +216,67 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
     {
         if (progress <= 0D) return;
 
-        EnsureMappedPoints(plot);
-        for (var index = 0; index < _series.Count; index++)
-            DrawSeries(graphics, plot, _series[index].Color, _mappedPoints[index], progress);
-    }
-
-    private static void DrawSeries(Graphics graphics, Rectangle plot, Color color,
-        IReadOnlyList<PointF> mapped, double progress)
-    {
-        if (mapped.Count == 0) return;
+        if (_seriesCache is null) return;
 
         var state = graphics.Save();
         try
         {
             var clipWidth = plot.Width * (float)Math.Clamp(progress, 0D, 1D);
             graphics.SetClip(new RectangleF(plot.Left, plot.Top, clipWidth, plot.Height), CombineMode.Intersect);
-
-            if (mapped.Count == 1)
-            {
-                using var dotBrush = new SolidBrush(color);
-                graphics.FillEllipse(dotBrush, new RectangleF(mapped[0].X - 3, mapped[0].Y - 3, 6, 6));
-                return;
-            }
-
-            using var linePath = SmoothPath(mapped);
-            using var fillPath = (GraphicsPath)linePath.Clone();
-            fillPath.AddLine(mapped[^1].X, plot.Bottom, mapped[0].X, plot.Bottom);
-            fillPath.CloseFigure();
-            using (var fill = new LinearGradientBrush(plot, Color.FromArgb(92, color), Color.FromArgb(8, color), 90F))
-                graphics.FillPath(fill, fillPath);
-            using (var pen = new Pen(color, 1.8F))
-                graphics.DrawPath(pen, linePath);
-
-            using var brush = new SolidBrush(color);
-            foreach (var point in mapped)
-                graphics.FillEllipse(brush, new RectangleF(point.X - 2.5F, point.Y - 2.5F, 5F, 5F));
+            graphics.DrawImageUnscaled(_seriesCache, Point.Empty);
         }
         finally
         {
             graphics.Restore(state);
         }
+    }
+
+    private void EnsureSeriesCache(Rectangle plot)
+    {
+        if (!_seriesCacheDirty && _seriesCache is not null &&
+            _seriesCache.Size == ClientSize && _seriesCachePlot == plot)
+            return;
+
+        _seriesCache?.Dispose();
+        _seriesCache = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        _seriesCachePlot = plot;
+
+        using var graphics = Graphics.FromImage(_seriesCache);
+        graphics.Clear(Color.Transparent);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+        EnsureMappedPoints(plot);
+        for (var index = 0; index < _series.Count; index++)
+            DrawSeries(graphics, plot, _series[index].Color, _mappedPoints[index]);
+
+        _seriesCacheDirty = false;
+    }
+
+    private static void DrawSeries(Graphics graphics, Rectangle plot, Color color,
+        IReadOnlyList<PointF> mapped)
+    {
+        if (mapped.Count == 0) return;
+
+        if (mapped.Count == 1)
+        {
+            using var dotBrush = new SolidBrush(color);
+            graphics.FillEllipse(dotBrush, new RectangleF(mapped[0].X - 3, mapped[0].Y - 3, 6, 6));
+            return;
+        }
+
+        using var linePath = SmoothPath(mapped);
+        using var fillPath = (GraphicsPath)linePath.Clone();
+        fillPath.AddLine(mapped[^1].X, plot.Bottom, mapped[0].X, plot.Bottom);
+        fillPath.CloseFigure();
+        using (var fill = new LinearGradientBrush(plot, Color.FromArgb(92, color), Color.FromArgb(8, color), 90F))
+            graphics.FillPath(fill, fillPath);
+        using (var pen = new Pen(color, 1.8F))
+            graphics.DrawPath(pen, linePath);
+
+        using var brush = new SolidBrush(color);
+        foreach (var point in mapped)
+            graphics.FillEllipse(brush, new RectangleF(point.X - 2.5F, point.Y - 2.5F, 5F, 5F));
     }
 
     private void EnsureMappedPoints(Rectangle plot)
@@ -287,7 +311,6 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         _animationRequested = false;
         _animationProgress = 0D;
         _animationStopwatch.Restart();
-        _lastAnimationFrameMs = -TargetFrameIntervalMs;
         _animationTimer.Start();
     }
 
@@ -305,10 +328,6 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         }
 
         var elapsedMs = _animationStopwatch.Elapsed.TotalMilliseconds;
-        if (elapsedMs - _lastAnimationFrameMs < TargetFrameIntervalMs)
-            return;
-
-        _lastAnimationFrameMs = elapsedMs;
         _animationProgress = Math.Clamp(elapsedMs / AnimationDurationMs, 0D, 1D);
         Invalidate(GetPlotRectangle(), false);
 
