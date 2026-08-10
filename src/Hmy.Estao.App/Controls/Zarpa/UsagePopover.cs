@@ -86,8 +86,6 @@ internal sealed class UsagePopover : Form
         UpdateSnapshots(snapshots);
     }
 
-    protected override bool ShowWithoutActivation => true;
-
     protected override void Dispose(bool disposing)
     {
         if (disposing) _theme.Dispose();
@@ -116,6 +114,7 @@ internal sealed class UsagePopover : Form
             Math.Clamp(anchor.X - width / 2, working.Left, working.Right - width),
             Math.Clamp(anchor.Y - height, working.Top, working.Bottom - height));
         Show();
+        Activate();
     }
 
     public void UpdateSnapshots(IReadOnlyList<UsageSnapshot> snapshots)
