@@ -156,6 +156,7 @@ internal sealed class ZarpaBufferedPanel : Panel
 internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
 {
     private ZarpaThemeTokens? _theme;
+    private Size _regionSize;
 
     public ZarpaReferenceSurface()
     {
@@ -167,6 +168,8 @@ internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+        if (_regionSize == ClientSize) return;
+        _regionSize = ClientSize;
         using var path = ZarpaPopoverPaint.RoundedPath(new Rectangle(0, 0, Width, Height), 22);
         Region = new Region(path);
     }

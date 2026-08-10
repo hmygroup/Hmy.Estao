@@ -32,6 +32,17 @@ public sealed record UsageSnapshot(
     }
 }
 
+/// <summary>
+/// A locally persisted usage sample. This is deliberately independent from the
+/// provider API response so the usage chart can be rendered from the computer's
+/// own history when a provider is offline.
+/// </summary>
+public sealed record UsageHistoryPoint(
+    string Provider,
+    string Window,
+    DateTimeOffset Timestamp,
+    double PercentUsed);
+
 public sealed record ProviderAccount(string Id, string Label, string? Secret = null, string? HomePath = null, string? WorkspaceId = null);
 
 public sealed record FetchRequest(

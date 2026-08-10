@@ -18,19 +18,23 @@ internal sealed class UsagePopover : Form
     private readonly ZarpaUsageContent _content = new();
     private readonly ZarpaThemeManager _theme;
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
+    private IReadOnlyList<UsageHistoryPoint> _history = [];
     private string? _selectedProvider;
     private bool _allowDeactivateClose;
+    private Size _regionSize;
 
     public UsagePopover(
         IReadOnlyList<UsageSnapshot> snapshots,
         Func<Task> refresh,
         Action showSettings,
         Action quit,
-        ZarpaThemePreset themePreset)
+        ZarpaThemePreset themePreset,
+        IReadOnlyList<UsageHistoryPoint>? history = null)
     {
         _refresh = refresh;
         _showSettings = showSettings;
         _quit = quit;
+        _history = history ?? [];
         _theme = new ZarpaThemeManager { Preset = themePreset };
 
         // The application is already SystemAware. Scaling this owner-drawn widget a
@@ -96,6 +100,8 @@ internal sealed class UsagePopover : Form
     {
         base.OnResize(e);
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+        if (_regionSize == ClientSize) return;
+        _regionSize = ClientSize;
 
         using var path = ZarpaPopoverPaint.RoundedPath(
             new Rectangle(Point.Empty, ClientSize), 18);
@@ -117,15 +123,16 @@ internal sealed class UsagePopover : Form
         Activate();
     }
 
-    public void UpdateSnapshots(IReadOnlyList<UsageSnapshot> snapshots)
+    public void UpdateSnapshots(IReadOnlyList<UsageSnapshot> snapshots, IReadOnlyList<UsageHistoryPoint>? history = null)
     {
         if (InvokeRequired)
         {
-            BeginInvoke(() => UpdateSnapshots(snapshots));
+            BeginInvoke(() => UpdateSnapshots(snapshots, history));
             return;
         }
 
         _snapshots = snapshots;
+        if (history is not null) _history = history;
         if (_selectedProvider is null || snapshots.All(item =>
                 !string.Equals(item.Provider, _selectedProvider, StringComparison.OrdinalIgnoreCase)))
             _selectedProvider = snapshots.FirstOrDefault()?.Provider;
@@ -187,7 +194,7 @@ internal sealed class UsagePopover : Form
 
     private void ShowSelectedSnapshot()
     {
-        _content.Display(FindSnapshot(_selectedProvider), _selectedProvider);
+        _content.Display(FindSnapshot(_selectedProvider), _selectedProvider, _history);
     }
 
     private static void DisposeChildren(Control parent)
@@ -236,6 +243,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     private bool _refreshing;
     private UsageSnapshot? _snapshot;
     private string? _provider;
+    private IReadOnlyList<UsageHistoryPoint> _history = [];
 
     public ZarpaUsageContent()
     {
@@ -260,14 +268,17 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         _progressTheme.Theme.Canvas = value.Surface;
         _progressTheme.Theme.SurfaceRaised = value.SurfaceRaised;
         _progressTheme.Theme.Accent = value.Warning;
-        if (_provider is not null || _snapshot is not null) Display(_snapshot, _provider);
+        if (_provider is not null || _snapshot is not null) Display(_snapshot, _provider, _history);
         else Invalidate();
     }
 
-    public void Display(UsageSnapshot? snapshot, string? provider)
+    public void Display(UsageSnapshot? snapshot, string? provider, IReadOnlyList<UsageHistoryPoint>? history = null)
     {
         _snapshot = snapshot;
         _provider = provider;
+        if (history is not null) _history = history;
+        var wasVisible = Visible;
+        if (wasVisible) Visible = false;
         SuspendLayout();
         try
         {
@@ -301,6 +312,17 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             {
                 foreach (var window in snapshot.Windows)
                     y = AddWindow(window, y);
+            }
+
+            var chartProvider = ProviderCatalog.NormalizeId(provider ?? snapshot?.Provider ?? "codex");
+            var hasLocalHistory = _history.Any(point =>
+                string.Equals(point.Provider, chartProvider, StringComparison.OrdinalIgnoreCase));
+            if ((snapshot is not null && snapshot.Error is null && snapshot.Windows.Count > 0) || hasLocalHistory)
+            {
+                AddSeparator(y);
+                y += 10;
+                AddUsageChart(snapshot, provider, y);
+                y += 169;
             }
 
             if (snapshot?.Credits is not null)
@@ -350,6 +372,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         finally
         {
             ResumeLayout(true);
+            if (wasVisible) Visible = true;
         }
     }
 
@@ -376,6 +399,82 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             _mutedFont.Dispose();
         }
         base.Dispose(disposing);
+    }
+
+    private void AddUsageChart(UsageSnapshot? snapshot, string? provider, int y)
+    {
+        var providerId = ProviderCatalog.NormalizeId(provider ?? snapshot?.Provider ?? "codex");
+        var palette = new[]
+        {
+            _activeTheme?.Accent ?? ZarpaPopoverPalette.Accent,
+            _activeTheme?.Warning ?? ZarpaPopoverPalette.Meter,
+            _activeTheme?.Information ?? Color.FromArgb(30, 157, 190),
+            _activeTheme?.Success ?? Color.FromArgb(69, 169, 165)
+        };
+        var windows = new List<(string Id, string Title)>();
+        if (snapshot is not null)
+        {
+            windows.AddRange(snapshot.Windows.Select(window => (window.Id, window.Title)));
+        }
+
+        foreach (var group in _history
+                     .Where(point => string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase))
+                     .GroupBy(point => point.Window, StringComparer.OrdinalIgnoreCase))
+        {
+            if (windows.All(window => !string.Equals(window.Id, group.Key, StringComparison.OrdinalIgnoreCase)))
+            {
+                windows.Add((group.Key, WindowTitle(group.Key)));
+            }
+        }
+        var providerHistory = _history.Where(point =>
+            string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase));
+        var preview = providerHistory.Select(point => point.Timestamp).Distinct().Count() < 2;
+        var series = windows.Take(palette.Length).Select((window, index) =>
+        {
+            var points = _history
+                .Where(point => string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase) &&
+                                string.Equals(point.Window, window.Id, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(point => point.Timestamp)
+                .Select(point => new ZarpaUsageChartPoint(point.Timestamp, point.PercentUsed))
+                .ToArray();
+            if (points.Length < 2 && preview)
+            {
+                points = MockPoints(index);
+            }
+
+            return new ZarpaUsageChartSeries(window.Title, palette[index], points);
+        }).ToArray();
+
+        var chart = new ZarpaUsageChart
+        {
+            Location = new Point(0, y),
+            Size = new Size(ContentWidth, 154),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        };
+        chart.SetData(series, preview);
+        if (_activeTheme is not null) chart.ApplyTheme(_activeTheme);
+        Controls.Add(chart);
+    }
+
+    private static string WindowTitle(string id) => id.Trim().ToLowerInvariant() switch
+    {
+        "session" or "primary" or "five_hour" => "Session",
+        "weekly" or "secondary" => "Weekly",
+        "premium" or "premium_interactions" => "Premium",
+        "chat" => "Chat",
+        _ => id
+    };
+
+    private static ZarpaUsageChartPoint[] MockPoints(int seriesIndex)
+    {
+        var values = seriesIndex switch
+        {
+            1 => new[] { .08D, .12D, .16D, .22D, .27D, .31D, .36D },
+            _ => new[] { .18D, .24D, .21D, .39D, .34D, .52D, .47D }
+        };
+        var now = DateTimeOffset.UtcNow;
+        return values.Select((value, index) =>
+            new ZarpaUsageChartPoint(now.AddDays(index - (values.Length - 1)), value)).ToArray();
     }
 
     private int AddWindow(RateWindow window, int y)

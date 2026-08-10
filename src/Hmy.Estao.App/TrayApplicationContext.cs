@@ -19,13 +19,15 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _notifyIcon;
     private readonly ZarpaThemeManager _zarpaTheme = new() { Preset = ZarpaThemePreset.Graphite };
     private readonly SynchronizationContext _uiContext;
+    private EstaoConfig _config;
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
     private UsagePopover? _popover;
 
     public TrayApplicationContext(ConfigStore configStore, Func<ConfigStore, UsageRefreshService> serviceFactory)
     {
         _configStore = configStore;
-        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_configStore.LoadAsync().GetAwaiter().GetResult().Theme);
+        _config = _configStore.LoadAsync().GetAwaiter().GetResult();
+        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
         _refreshService = serviceFactory(configStore);
         _refreshService.Refreshed += (_, snapshots) => PostMenuRebuild(snapshots);
         _refreshLoop = new AdaptiveRefreshLoop(_refreshService, () => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline);
@@ -68,7 +70,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private void RebuildMenu(IReadOnlyList<UsageSnapshot> snapshots)
     {
         _snapshots = snapshots;
-        if (_popover is { IsDisposed: false }) _popover.UpdateSnapshots(snapshots);
+        if (_popover is { IsDisposed: false }) _popover.UpdateSnapshots(snapshots, _refreshService.History);
 
         var menu = new ZarpaContextMenu();
         menu.ApplyTheme(_zarpaTheme.Theme);
@@ -114,7 +116,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        _popover = new UsagePopover(_snapshots, RefreshAsync, ShowSettings, ExitThread, _zarpaTheme.Preset);
+        _popover = new UsagePopover(_snapshots, RefreshAsync, ShowSettings, ExitThread, _zarpaTheme.Preset,
+            _refreshService.History);
         _popover.FormClosed += (_, _) => _popover = null;
         _popover.ShowAt(Cursor.Position);
     }
@@ -128,13 +131,14 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         using var form = new SettingsForm(_configStore);
         form.ShowDialog();
-        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_configStore.LoadAsync().GetAwaiter().GetResult().Theme);
+        _config = _configStore.LoadAsync().GetAwaiter().GetResult();
+        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
         _ = RefreshAsync();
     }
 
     private void AddAccountMenu(ContextMenuStrip menu)
     {
-        var config = _configStore.LoadAsync().GetAwaiter().GetResult();
+        var config = _config;
         var accountsRoot = new ZarpaMenuItem("Accounts", "ic_fluent_people_24_regular", null);
         foreach (var providerConfig in config.Providers.Where(provider => provider.Enabled == true && ProviderCatalog.IsSupported(provider.Id)))
         {
@@ -178,6 +182,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         provider.ActiveAccountIndex = activeIndex;
         await _configStore.SaveAsync(config).ConfigureAwait(false);
+        _config = config;
         await RefreshAsync().ConfigureAwait(false);
     }
 

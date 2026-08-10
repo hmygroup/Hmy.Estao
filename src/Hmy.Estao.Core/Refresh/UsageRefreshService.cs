@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Models;
 using Hmy.Estao.Core.Providers;
@@ -8,18 +9,24 @@ public sealed class UsageRefreshService
 {
     private readonly ConfigStore _configStore;
     private readonly UsageProviderFactory _providerFactory;
+    private readonly UsageHistoryStore _historyStore;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private IReadOnlyList<UsageSnapshot> _lastSnapshots = [];
+    private IReadOnlyList<UsageHistoryPoint> _history = [];
+    private bool _historyLoaded;
 
     public UsageRefreshService(ConfigStore configStore, UsageProviderFactory? providerFactory = null)
     {
         _configStore = configStore;
         _providerFactory = providerFactory ?? new UsageProviderFactory();
+        _historyStore = new UsageHistoryStore(configStore.Path);
     }
 
     public event EventHandler<IReadOnlyList<UsageSnapshot>>? Refreshed;
 
     public IReadOnlyList<UsageSnapshot> LastSnapshots => _lastSnapshots;
+
+    public IReadOnlyList<UsageHistoryPoint> History => _history;
 
     public async Task<IReadOnlyList<UsageSnapshot>> RefreshAsync(CancellationToken cancellationToken = default)
     {
@@ -30,39 +37,84 @@ public sealed class UsageRefreshService
 
         try
         {
-            var config = await _configStore.LoadAsync(cancellationToken).ConfigureAwait(false);
-            var enabledProviders = config.Providers.Where(provider => provider.Enabled == true && ProviderCatalog.IsSupported(provider.Id)).ToList();
-            var snapshots = new List<UsageSnapshot>();
-
-            foreach (var providerConfig in enabledProviders)
+            if (!_historyLoaded)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var provider = _providerFactory.Create(providerConfig.Id);
-                var accounts = provider.GetAccounts(providerConfig);
-                var selectedAccount = SelectAccount(providerConfig, accounts);
-                var request = new FetchRequest(providerConfig, selectedAccount, ProviderHelpers.ParseSource(providerConfig.Source), cancellationToken);
-
                 try
                 {
-                    snapshots.Add(await provider.FetchAsync(request).ConfigureAwait(false));
+                    _history = await _historyStore.LoadAsync(cancellationToken).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (IOException)
                 {
-                    throw;
+                    _history = [];
                 }
-                catch (Exception ex)
+                catch (UnauthorizedAccessException)
                 {
-                    snapshots.Add(UsageSnapshot.Failure(provider.Id, providerConfig.Source ?? "auto", ex.Message));
+                    _history = [];
                 }
+                catch (JsonException)
+                {
+                    _history = [];
+                }
+
+                _historyLoaded = true;
             }
 
+            var config = await _configStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+            var enabledProviders = config.Providers.Where(provider => provider.Enabled == true && ProviderCatalog.IsSupported(provider.Id)).ToList();
+            cancellationToken.ThrowIfCancellationRequested();
+            // Provider requests are independent. Fetching them concurrently keeps
+            // startup and manual refresh bounded by the slowest provider instead
+            // of the sum of every provider's network latency.
+            var snapshots = (await Task.WhenAll(enabledProviders.Select(providerConfig =>
+                    FetchProviderAsync(providerConfig, cancellationToken)))
+                .ConfigureAwait(false)).ToList();
+
             _lastSnapshots = snapshots;
+            try
+            {
+                _history = await _historyStore.AppendAsync(snapshots, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (IOException)
+            {
+                // A read-only profile must not prevent current provider usage from rendering.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // A read-only profile must not prevent current provider usage from rendering.
+            }
+            catch (JsonException)
+            {
+                // A malformed local history file must not prevent current provider usage from rendering.
+            }
             Refreshed?.Invoke(this, snapshots);
             return snapshots;
         }
         finally
         {
             _refreshGate.Release();
+        }
+    }
+
+    private async Task<UsageSnapshot> FetchProviderAsync(ProviderConfig providerConfig, CancellationToken cancellationToken)
+    {
+        var provider = _providerFactory.Create(providerConfig.Id);
+        var accounts = provider.GetAccounts(providerConfig);
+        var selectedAccount = SelectAccount(providerConfig, accounts);
+        var request = new FetchRequest(providerConfig, selectedAccount,
+            ProviderHelpers.ParseSource(providerConfig.Source), cancellationToken);
+
+        try
+        {
+            return await provider.FetchAsync(request).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return UsageSnapshot.Failure(provider.Id, providerConfig.Source ?? "auto", ex.Message);
         }
     }
 
