@@ -19,10 +19,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="..\..\..\TestRibbon\Zarpa.Controls\Assets\FluentIcons\FluentSystemIcons-Regular.ttf" Link="Assets\FluentIcons\FluentSystemIcons-Regular.ttf">
+    <EmbeddedResource Include="Assets\FluentIcons\FluentSystemIcons-Regular.ttf">
       <LogicalName>TestRibbon.Assets.FluentSystemIcons-Regular.ttf</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\..\..\TestRibbon\Zarpa.Controls\Assets\FluentIcons\FluentSystemIcons-Regular.json" Link="Assets\FluentIcons\FluentSystemIcons-Regular.json">
+    <EmbeddedResource Include="Assets\FluentIcons\FluentSystemIcons-Regular.json">
       <LogicalName>TestRibbon.Assets.FluentSystemIcons-Regular.json</LogicalName>
     </EmbeddedResource>
   </ItemGroup>

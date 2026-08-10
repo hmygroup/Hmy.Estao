@@ -2,56 +2,34 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches:
+      - master
   pull_request:
-    branches: [master]
+    branches:
+      - master
+
+permissions:
+  contents: read
 
 jobs:
-  build-test-pack:
+  build-test:
+    name: Build and test
     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Setup .NET
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore Hmy.Estao.slnx
 
       - name: Build
-        run: dotnet build -c Release --no-restore
+        run: dotnet build Hmy.Estao.slnx -c Release --no-restore
 
       - name: Test
-        run: dotnet test -c Release --no-build
-
-      - name: Publish app (self-contained)
-        run: |
-          dotnet publish src\Hmy.Estao.App -c Release -r win-x64 --self-contained true -o publish\msix
-
-      - name: Stage MSIX payload
-        shell: pwsh
-        run: |
-          Copy-Item "src\Hmy.Estao.Packaging\Package.appxmanifest" "publish\msix\AppxManifest.xml"
-          Copy-Item -Recurse "src\Hmy.Estao.Packaging\Assets" "publish\msix\Assets"
-
-      - name: Create unsigned MSIX
-        shell: pwsh
-        run: |
-          $makeAppx = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\MakeAppx.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $makeAppx) {
-            Write-Error "MakeAppx.exe not found"
-            exit 1
-          }
-          Write-Host "Using MakeAppx: $makeAppx"
-          & $makeAppx pack /d publish\msix /p Estao-unsigned.msix /l
-          Write-Host "MSIX created:"
-          Get-Item Estao-unsigned.msix | Select-Object Length, FullName
-
-      - name: Upload unsigned MSIX
-        uses: actions/upload-artifact@v4
-        with:
-          name: Estao-unsigned-${{ github.sha }}
-          path: Estao-unsigned.msix
-          retention-days: 7
+        run: dotnet test tests\Hmy.Estao.Tests\Hmy.Estao.Tests.csproj -c Release --no-build --no-restore

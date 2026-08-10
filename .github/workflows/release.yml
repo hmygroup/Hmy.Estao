@@ -1,251 +1,133 @@
-name: Release
+name: Release ZIP
 
 on:
   push:
-    tags: ['v*']
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v prefix (for example 1.2.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
-  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
-  build-test-pack:
+  build-test-release:
+    name: Build, test and release
     runs-on: windows-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Setup .NET
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
+      - name: Resolve release metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'push') {
+            $tag = '${{ github.ref_name }}'
+          } else {
+            $tag = 'v${{ inputs.version }}'
+          }
+
+          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$') {
+            throw "Release tag '$tag' must use semantic versioning, for example v1.2.0 or v1.2.0-beta.1."
+          }
+
+          $version = $Matches.version
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          "release_tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore Hmy.Estao.slnx
 
       - name: Build
-        run: dotnet build -c Release --no-restore
+        run: dotnet build Hmy.Estao.slnx -c Release --no-restore
 
       - name: Test
-        run: dotnet test -c Release --no-build
+        run: dotnet test tests\Hmy.Estao.Tests\Hmy.Estao.Tests.csproj -c Release --no-build --no-restore
 
-      - name: Extract version from tag
+      - name: Publish Windows application
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          $version = $tag -replace '^v', ''
-          $packageVersion = "$version.0"
-          echo "VERSION=$version" >> $env:GITHUB_ENV
-          echo "PACKAGE_VERSION=$packageVersion" >> $env:GITHUB_ENV
-          echo "Extracted version: $version"
+          dotnet publish src\Hmy.Estao.App\Hmy.Estao.App.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -p:Version=$env:VERSION `
+            -o artifacts\publish-app
 
-      - name: Publish app (self-contained)
-        run: |
-          dotnet publish src\Hmy.Estao.App -c Release -r win-x64 --self-contained true -o publish\msix
-
-      - name: Validate Azure login secrets
+      - name: Publish CLI
         shell: pwsh
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
-          $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID')) {
-            $value = [Environment]::GetEnvironmentVariable($name)
-            if ([string]::IsNullOrWhiteSpace($value)) {
-              Write-Error "$name secret is not configured."
-              exit 1
-            }
-            if ($value -notmatch $guidPattern) {
-              Write-Error "$name must be a GUID. Use the Azure application client ID, Entra directory tenant ID, and subscription ID."
-              exit 1
-            }
-          }
+          dotnet publish src\Hmy.Estao.Cli\Hmy.Estao.Cli.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -p:Version=$env:VERSION `
+            -o artifacts\publish-cli
 
-      - name: Azure Login
-        uses: azure/login@v3
+      - name: Create release ZIP
+        shell: pwsh
+        run: |
+          $packageName = "Hmy.Estao-$env:VERSION-win-x64"
+          $packageDir = Join-Path 'artifacts' $packageName
+          $zipPath = Join-Path 'artifacts' "$packageName.zip"
+
+          New-Item -ItemType Directory -Force -Path "$packageDir\App", "$packageDir\Cli", "$packageDir\Licenses" | Out-Null
+          Copy-Item 'artifacts\publish-app\*' "$packageDir\App" -Recurse
+          Copy-Item 'artifacts\publish-cli\*' "$packageDir\Cli" -Recurse
+          Copy-Item 'README.md' $packageDir
+          Copy-Item 'src\Hmy.Estao.App\Assets\ProviderIcons\LICENSE-CodexBar.txt' "$packageDir\Licenses"
+          Copy-Item 'src\Zarpa.Controls.Net10\Assets\FluentIcons\LICENSE.txt' "$packageDir\Licenses\LICENSE-FluentSystemIcons.txt"
+          Copy-Item 'src\Zarpa.Controls.Net10\Assets\FluentIcons\NOTICE.txt' "$packageDir\Licenses\NOTICE-FluentSystemIcons.txt"
+          Set-Content -Path "$packageDir\VERSION.txt" -Value $env:VERSION -Encoding utf8NoBOM
+
+          Compress-Archive -Path "$packageDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
+          "ZIP_PATH=$zipPath" >> $env:GITHUB_ENV
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          name: Hmy.Estao-${{ steps.metadata.outputs.version }}-win-x64
+          path: ${{ env.ZIP_PATH }}
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Resolve MSIX publisher
+      - name: Create GitHub release
         shell: pwsh
         env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_SIGNING_RESOURCE_GROUP: ${{ secrets.AZURE_SIGNING_RESOURCE_GROUP }}
-          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          AZURE_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
-          ESTAO_MSIX_PUBLISHER: ${{ secrets.ESTAO_MSIX_PUBLISHER }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          function Find-SubjectName($value) {
-            if ($null -eq $value -or $value -is [string]) {
-              return $null
-            }
-
-            if ($value -is [System.Collections.IEnumerable]) {
-              foreach ($item in $value) {
-                $found = Find-SubjectName $item
-                if ($found) {
-                  return $found
-                }
-              }
-            }
-
-            foreach ($property in $value.PSObject.Properties) {
-              if ($property.Name -ieq "subjectName" -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
-                return [string]$property.Value
-              }
-
-              $found = Find-SubjectName $property.Value
-              if ($found) {
-                return $found
-              }
-            }
-
-            return $null
-          }
-
-          $publisher = $null
-          if (-not [string]::IsNullOrWhiteSpace($env:AZURE_SIGNING_RESOURCE_GROUP)) {
-            $profileId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$env:AZURE_SIGNING_RESOURCE_GROUP/providers/Microsoft.CodeSigning/codeSigningAccounts/$env:AZURE_SIGNING_ACCOUNT/certificateProfiles/$env:AZURE_SIGNING_CERT_PROFILE"
-            $profileJson = az resource show --ids $profileId -o json
-            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($profileJson)) {
-              $profile = $profileJson | ConvertFrom-Json
-              $publisher = Find-SubjectName $profile
-            }
+          gh release view $env:RELEASE_TAG --repo '${{ github.repository }}' *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG $env:ZIP_PATH --clobber --repo '${{ github.repository }}'
           } else {
-            $accountsJson = az resource list --resource-type "Microsoft.CodeSigning/codeSigningAccounts" --name $env:AZURE_SIGNING_ACCOUNT -o json
-            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($accountsJson)) {
-              $accounts = @($accountsJson | ConvertFrom-Json)
-              if ($accounts.Count -eq 1) {
-                $profileId = "$($accounts[0].id)/certificateProfiles/$env:AZURE_SIGNING_CERT_PROFILE"
-                $profileJson = az resource show --ids $profileId -o json
-                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($profileJson)) {
-                  $profile = $profileJson | ConvertFrom-Json
-                  $publisher = Find-SubjectName $profile
-                }
-              } elseif ($accounts.Count -gt 1) {
-                Write-Warning "Multiple Artifact Signing accounts named '$env:AZURE_SIGNING_ACCOUNT' were found; set AZURE_SIGNING_RESOURCE_GROUP or configure ESTAO_MSIX_PUBLISHER."
-              }
-            }
+            gh release create $env:RELEASE_TAG $env:ZIP_PATH `
+              --repo '${{ github.repository }}' `
+              --target '${{ github.sha }}' `
+              --title "Estao $env:VERSION" `
+              --generate-notes
           }
-
-          if ([string]::IsNullOrWhiteSpace($publisher)) {
-            $publisher = $env:ESTAO_MSIX_PUBLISHER
-            if ([string]::IsNullOrWhiteSpace($publisher)) {
-              Write-Error "Unable to resolve the Artifact Signing certificate subject, and ESTAO_MSIX_PUBLISHER is not configured."
-              exit 1
-            }
-
-            Write-Warning "Using ESTAO_MSIX_PUBLISHER. This value must exactly match the Artifact Signing certificate subject or MSIX signing fails with 0x8007000b."
-          }
-
-          "MSIX_PUBLISHER=$publisher" >> $env:GITHUB_ENV
-          Write-Host "Resolved MSIX publisher for package manifest."
-
-      - name: Stage MSIX payload
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER)) {
-            Write-Error "MSIX_PUBLISHER was not resolved from the Artifact Signing certificate profile."
-            exit 1
-          }
-
-          Copy-Item "src\Hmy.Estao.Packaging\Package.appxmanifest" "publish\msix\AppxManifest.xml"
-          Copy-Item -Recurse "src\Hmy.Estao.Packaging\Assets" "publish\msix\Assets"
-
-          $manifest = "publish\msix\AppxManifest.xml"
-          $document = [System.Xml.XmlDocument]::new()
-          $document.PreserveWhitespace = $true
-          $document.Load((Resolve-Path $manifest))
-          $namespaceManager = [System.Xml.XmlNamespaceManager]::new($document.NameTable)
-          $namespaceManager.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
-          $identity = $document.SelectSingleNode("/appx:Package/appx:Identity", $namespaceManager)
-          if (-not $identity) {
-            Write-Error "MSIX manifest Identity element not found."
-            exit 1
-          }
-          $identity.SetAttribute("Version", $env:PACKAGE_VERSION)
-          $identity.SetAttribute("Publisher", $env:MSIX_PUBLISHER)
-          $settings = [System.Xml.XmlWriterSettings]::new()
-          $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
-          $settings.Indent = $false
-          $writer = [System.Xml.XmlWriter]::Create((Resolve-Path $manifest), $settings)
-          $document.Save($writer)
-          $writer.Close()
-
-          Write-Host "MSIX manifest identity: Name=$($identity.GetAttribute("Name")); Version=$($identity.GetAttribute("Version"))"
-
-      - name: Create unsigned MSIX
-        shell: pwsh
-        run: |
-          $makeAppx = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\MakeAppx.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $makeAppx) {
-            Write-Error "MakeAppx.exe not found"
-            exit 1
-          }
-          $msixName = "Hmy.Estao_$env:VERSION`_x64.msix"
-          echo "MSIX_FILENAME=$msixName" >> $env:GITHUB_ENV
-          & $makeAppx pack /d publish\msix /p $msixName /l
-
-      - name: Sign MSIX with Azure Artifact Signing
-        uses: azure/artifact-signing-action@v2
-        with:
-          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
-          files: ${{ github.workspace }}\${{ env.MSIX_FILENAME }}
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-
-      - name: Generate AppInstaller
-        shell: pwsh
-        run: |
-          $template = Get-Content "packaging\AppInstaller.template.xml" -Raw
-          $template = $template `
-            -replace '\$\{ESTAO_PACKAGE_VERSION\}', $env:PACKAGE_VERSION `
-            -replace '\$\{ESTAO_VERSION\}', $env:VERSION `
-            -replace '\$\{ESTAO_APPINSTALLER_URI\}', "${{ secrets.ESTAO_APPINSTALLER_URI }}" `
-            -replace '\$\{ESTAO_MSIX_PUBLISHER\}', $env:MSIX_PUBLISHER `
-            -replace '\$\{ESTAO_PACKAGE_URI\}', "${{ secrets.ESTAO_PACKAGE_URI }}"
-          $appInstallerName = "Hmy.Estao_$env:VERSION`_x64.appinstaller"
-          echo "APPINSTALLER_FILENAME=$appInstallerName" >> $env:GITHUB_ENV
-          Set-Content -Path $appInstallerName -Value $template
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Estao ${{ env.VERSION }}
-          body_path: ""
-          body: |
-            ## Estao ${{ env.VERSION }}
-
-            ### Installation
-            Download `${{ env.MSIX_FILENAME }}` and double-click to install.
-
-            ### App Installer (auto-update)
-            Point your browser to `https://hmygroup.github.io/Hmy.Estao/estao.appinstaller` to install with automatic update checks.
-          files: |
-            ${{ env.MSIX_FILENAME }}
-            ${{ env.APPINSTALLER_FILENAME }}
-          generate_release_notes: true
-
-      - name: Prepare GitHub Pages deploy
-        shell: pwsh
-        run: |
-          $deployDir = "gh-pages-deploy"
-          New-Item -ItemType Directory -Path $deployDir -Force | Out-Null
-          Copy-Item "$env:MSIX_FILENAME" $deployDir
-          Copy-Item "$env:APPINSTALLER_FILENAME" $deployDir
-          # Fixed-name AppInstaller so the URL never changes
-          Copy-Item "$env:APPINSTALLER_FILENAME" "$deployDir\estao.appinstaller"
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./gh-pages-deploy
-          keep_files: true
