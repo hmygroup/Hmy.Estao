@@ -8,7 +8,13 @@ namespace Hmy.Estao.App.Controls.Zarpa;
 
 internal sealed record ZarpaUsageChartPoint(DateTimeOffset Timestamp, double Value);
 
-internal sealed record ZarpaUsageChartSeries(string Label, Color Color, IReadOnlyList<ZarpaUsageChartPoint> Points);
+/// <summary>
+/// A drawable line on <see cref="ZarpaUsageChart"/>. Set <paramref name="IsTarget"/>
+/// to render this as a dashed daily-pacing reference line instead of a filled
+/// usage curve (no area fill, no point markers, no legend/dot chip).
+/// </summary>
+internal sealed record ZarpaUsageChartSeries(
+    string Label, Color Color, IReadOnlyList<ZarpaUsageChartPoint> Points, bool IsTarget = false);
 
 /// <summary>
 /// Compact, double-buffered usage graph. It only receives locally persisted
@@ -152,8 +158,11 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
 
         DrawChartText(graphics, "Usage history", _titleFont,
             new RectangleF(12, 7, 120, 22), text, StringAlignment.Near);
-        DrawChartText(graphics, _preview ? "Preview · local history" : "Stored locally · last 7 days", _bodyFont,
-            new RectangleF(12, 25, 150, 16), muted, StringAlignment.Near);
+        var subtitle = _preview ? "Preview · local history" : "Stored locally · last 7 days";
+        if (_series.Any(series => series.IsTarget))
+            subtitle += " · - - daily target";
+        DrawChartText(graphics, subtitle, _bodyFont,
+            new RectangleF(12, 25, 220, 16), muted, StringAlignment.Near);
 
         DrawLegend(graphics, text, muted);
         DrawGrid(graphics, plot, border, muted);
@@ -173,7 +182,7 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
     private void DrawLegend(Graphics graphics, Color text, Color muted)
     {
         var x = Math.Max(155, Width - 164);
-        foreach (var series in _series.Take(3))
+        foreach (var series in _series.Where(series => !series.IsTarget).Take(3))
         {
             using var brush = new SolidBrush(series.Color);
             graphics.FillEllipse(brush, new Rectangle(x, 14, 6, 6));
@@ -248,24 +257,33 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
 
         EnsureMappedPoints(plot);
         for (var index = 0; index < _series.Count; index++)
-            DrawSeries(graphics, plot, _series[index].Color, _mappedPoints[index]);
+            DrawSeries(graphics, plot, _series[index].Color, _mappedPoints[index], _series[index].IsTarget);
 
         _seriesCacheDirty = false;
     }
 
     private static void DrawSeries(Graphics graphics, Rectangle plot, Color color,
-        IReadOnlyList<PointF> mapped)
+        IReadOnlyList<PointF> mapped, bool isTarget = false)
     {
         if (mapped.Count == 0) return;
 
         if (mapped.Count == 1)
         {
+            if (isTarget) return;
             using var dotBrush = new SolidBrush(color);
             graphics.FillEllipse(dotBrush, new RectangleF(mapped[0].X - 3, mapped[0].Y - 3, 6, 6));
             return;
         }
 
         using var linePath = SmoothPath(mapped);
+
+        if (isTarget)
+        {
+            using var targetPen = new Pen(color, 1.6F) { DashStyle = DashStyle.Dash };
+            graphics.DrawPath(targetPen, linePath);
+            return;
+        }
+
         using var fillPath = (GraphicsPath)linePath.Clone();
         fillPath.AddLine(mapped[^1].X, plot.Bottom, mapped[0].X, plot.Bottom);
         fillPath.CloseFigure();

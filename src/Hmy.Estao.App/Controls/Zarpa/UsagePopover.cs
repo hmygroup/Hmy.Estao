@@ -30,7 +30,8 @@ internal sealed class UsagePopover : Form
         Action showSettings,
         Action quit,
         ZarpaThemePreset themePreset,
-        IReadOnlyList<UsageHistoryPoint>? history = null)
+        IReadOnlyList<UsageHistoryPoint>? history = null,
+        PacingConfig? pacing = null)
     {
         _refresh = refresh;
         _showSettings = showSettings;
@@ -72,6 +73,7 @@ internal sealed class UsagePopover : Form
 
         _content.Dock = DockStyle.Fill;
         _content.Margin = Padding.Empty;
+        _content.Pacing = pacing ?? new PacingConfig();
         _content.SettingsRequested += (_, _) => { Close(); _showSettings(); };
         _content.RefreshRequested += async (_, _) => await RefreshFromUiAsync().ConfigureAwait(true);
         _content.QuitRequested += (_, _) => { Close(); _quit(); };
@@ -155,6 +157,18 @@ internal sealed class UsagePopover : Form
             RebuildTabs(providers);
         else
             UpdateTabVisuals();
+        ShowSelectedSnapshot();
+    }
+
+    public void UpdatePacing(PacingConfig pacing)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => UpdatePacing(pacing));
+            return;
+        }
+
+        _content.Pacing = pacing;
         ShowSelectedSnapshot();
     }
 
@@ -298,6 +312,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     private UsageSnapshot? _snapshot;
     private string? _provider;
     private IReadOnlyList<UsageHistoryPoint> _history = [];
+    private PacingConfig _pacing = new();
 
     public ZarpaUsageContent()
     {
@@ -327,6 +342,18 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
 
     public int ContentHeight => Math.Max(ClientSize.Height, _canvas.Height);
     public int ScrollOffset => _scrollOffset;
+
+    [System.ComponentModel.Browsable(false)]
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public PacingConfig Pacing
+    {
+        get => _pacing;
+        set
+        {
+            _pacing = value;
+            if (_provider is not null || _snapshot is not null) Display(_snapshot, _provider, _history);
+        }
+    }
 
     public void ScrollTo(int value)
     {
@@ -512,6 +539,14 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             return new ZarpaUsageChartSeries(window.Title, palette[index], points);
         }).ToArray();
 
+        var targetLines = _pacing.Enabled && _pacing.DailyTargetPercent > 0 && !preview
+            ? series
+                .Select(item => BuildTargetSeries(item, _pacing.DailyTargetPercent))
+                .Where(item => item is not null)
+                .Select(item => item!)
+                .ToArray()
+            : [];
+
         var chart = new ZarpaUsageChart
         {
             Location = new Point(0, y),
@@ -519,9 +554,30 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             BackColor = SurfaceColor
         };
-        chart.SetData(series, preview);
+        chart.SetData([.. series, .. targetLines], preview);
         if (_activeTheme is not null) chart.ApplyTheme(_activeTheme);
         AddContentControl(chart);
+    }
+
+    /// <summary>
+    /// Builds the dashed daily-pacing reference line for one window's series,
+    /// using its own history points to detect the last reset (if any) within
+    /// the visible 7-day range.
+    /// </summary>
+    private static ZarpaUsageChartSeries? BuildTargetSeries(ZarpaUsageChartSeries series, double dailyTargetPercent)
+    {
+        if (series.Points.Count == 0) return null;
+
+        var now = DateTimeOffset.UtcNow;
+        var rangeStart = now - TimeSpan.FromDays(7);
+        var points = series.Points
+            .Select(point => new PacingPoint(point.Timestamp, point.Value))
+            .ToArray();
+        var result = PacingCalculator.Compute(points, dailyTargetPercent, rangeStart, now);
+        if (result is null) return null;
+
+        var line = result.TargetLine.Select(point => new ZarpaUsageChartPoint(point.Timestamp, point.Value)).ToArray();
+        return new ZarpaUsageChartSeries(series.Label, series.Color, line, IsTarget: true);
     }
 
     private static string WindowTitle(string id) => id.Trim().ToLowerInvariant() switch

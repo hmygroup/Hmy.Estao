@@ -87,6 +87,10 @@ public sealed class ConfigStore
         config.Refresh.IntervalMinutes = RefreshIntervalCatalog.Minutes.Contains(config.Refresh.IntervalMinutes)
             ? config.Refresh.IntervalMinutes
             : 15;
+        config.Pacing ??= new PacingConfig();
+        config.Pacing.DailyTargetPercent = Math.Clamp(
+            config.Pacing.DailyTargetPercent <= 0 ? 15D : config.Pacing.DailyTargetPercent,
+            PacingCatalog.MinDailyTargetPercent, PacingCatalog.MaxDailyTargetPercent);
         config.TaskbarOverlay.ProviderIds ??= [];
         config.TaskbarOverlay.Controls ??= [];
         config.TaskbarOverlay.DisplayMode = NormalizeOverlayValue(

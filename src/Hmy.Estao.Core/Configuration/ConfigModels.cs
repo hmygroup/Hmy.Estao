@@ -21,6 +21,9 @@ public sealed class EstaoConfig
 
     [JsonPropertyName("refresh")]
     public RefreshConfig Refresh { get; set; } = new();
+
+    [JsonPropertyName("pacing")]
+    public PacingConfig Pacing { get; set; } = new();
 }
 
 public sealed class RefreshConfig
@@ -35,6 +38,30 @@ public sealed class RefreshConfig
 public static class RefreshIntervalCatalog
 {
     public static readonly int[] Minutes = [1, 5, 10, 15, 30, 60];
+}
+
+/// <summary>
+/// Daily usage pacing: a self-imposed "budget" of how much of a rate-limit
+/// window the user wants to burn per day, so Estao can draw a target line on
+/// the usage chart and warn once per day when the real usage curve is above it.
+/// </summary>
+public sealed class PacingConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    [JsonPropertyName("dailyTargetPercent")]
+    public double DailyTargetPercent { get; set; } = 15D;
+
+    [JsonPropertyName("notifyOnExceed")]
+    public bool NotifyOnExceed { get; set; } = true;
+}
+
+public static class PacingCatalog
+{
+    public const double MinDailyTargetPercent = 1D;
+    public const double MaxDailyTargetPercent = 100D;
+    public static readonly double[] Presets = [5, 10, 15, 20, 25, 30, 50];
 }
 
 public sealed class TaskbarOverlayConfig

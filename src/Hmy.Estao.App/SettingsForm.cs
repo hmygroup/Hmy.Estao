@@ -14,6 +14,7 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly ZarpaSettingsScrollHost _providersViewport = new() { Dock = DockStyle.Fill };
     private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
     private readonly RefreshSettingsPanel _refreshSettings = new();
+    private readonly PacingSettingsPanel _pacingSettings = new();
     private readonly Panel _appearanceSettings = new() { Dock = DockStyle.Top, Height = 104, Padding = new Padding(6, 8, 6, 10) };
     private readonly Label _providerCount = new() { AutoSize = true };
     private readonly ZarpaComboBox _themePicker = new() { LabelText = "Theme", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
@@ -44,6 +45,7 @@ public sealed class SettingsForm : ZarpaModernForm
         BuildAppearanceSection();
         _providersHost.Controls.Add(_overlaySettings);
         _providersHost.Controls.Add(_refreshSettings);
+        _providersHost.Controls.Add(_pacingSettings);
         _providersHost.Controls.Add(_appearanceSettings);
         _providersViewport.Content = _providersHost;
         Controls.Add(_providersViewport);
@@ -147,6 +149,7 @@ public sealed class SettingsForm : ZarpaModernForm
             _config = await _configStore.LoadAsync().ConfigureAwait(true);
             _overlaySettings.LoadConfig(_config);
             _refreshSettings.LoadConfig(_config);
+            _pacingSettings.LoadConfig(_config);
             var selectedTheme = ZarpaThemePreferences.Parse(_config.Theme).ToString();
             _themePicker.SelectedIndex = Math.Max(0, _themePicker.Items.IndexOf(selectedTheme));
             var statuses = await Task.WhenAll(_config.Providers.Select(CookieStatusAsync)).ConfigureAwait(true);
@@ -162,7 +165,8 @@ public sealed class SettingsForm : ZarpaModernForm
             }
             _providersHost.Controls.SetChildIndex(_appearanceSettings, 0);
             _providersHost.Controls.SetChildIndex(_refreshSettings, 1);
-            _providersHost.Controls.SetChildIndex(_overlaySettings, 2);
+            _providersHost.Controls.SetChildIndex(_pacingSettings, 2);
+            _providersHost.Controls.SetChildIndex(_overlaySettings, 3);
 
             var enabled = _providerRows.Count(row => row.EnabledProvider);
             _providerCount.Text = $"{enabled} of {_providerRows.Count} enabled  ·  Credentials stay encrypted on this device";
@@ -190,6 +194,7 @@ public sealed class SettingsForm : ZarpaModernForm
 
             _overlaySettings.Apply(_config.TaskbarOverlay);
             _refreshSettings.Apply(_config.Refresh);
+            _pacingSettings.Apply(_config.Pacing);
             _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
             await _configStore.SaveAsync(_config).ConfigureAwait(true);
             DialogResult = DialogResult.OK;
@@ -268,6 +273,7 @@ public sealed class SettingsForm : ZarpaModernForm
         {
             if (!ReferenceEquals(_providersHost.Controls[index], _overlaySettings) &&
                 !ReferenceEquals(_providersHost.Controls[index], _refreshSettings) &&
+                !ReferenceEquals(_providersHost.Controls[index], _pacingSettings) &&
                 !ReferenceEquals(_providersHost.Controls[index], _appearanceSettings))
                 _providersHost.Controls[index].Dispose();
         }
