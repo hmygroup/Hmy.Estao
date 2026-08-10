@@ -386,7 +386,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         AddProgress(percent, y + 29);
         AddText(window.PercentUsed is null ? "Usage unavailable" : $"{percent}% used", _bodyFont,
             TextColor, 0, y + 41, width / 2, 23);
-        AddText(ResetText(window.ResetAt), _mutedFont, MutedColor,
+        AddText(window.ResetAt is null ? "Reset time unavailable" : ResetText(window.ResetAt), _mutedFont, MutedColor,
             width / 2, y + 41, width - width / 2, 23,
             ContentAlignment.MiddleRight);
         return y + 72;

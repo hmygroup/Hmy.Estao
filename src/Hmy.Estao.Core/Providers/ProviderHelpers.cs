@@ -115,13 +115,46 @@ internal static partial class ProviderHelpers
 
     public static DateTimeOffset? ResetFrom(JsonElement element)
     {
-        var text = FirstString(element, "resetAt", "reset_at", "resetsAt", "resets_at", "endTime", "end_time");
+        var text = FirstString(element, "resetAt", "reset_at", "resetsAt", "resets_at",
+            "resetDate", "reset_date", "quotaResetDate", "quota_reset_date", "endTime", "end_time");
         if (DateTimeOffset.TryParse(text, out var parsed))
         {
             return parsed;
         }
 
-        var seconds = FirstNumber(element, "resetInSec", "reset_in_seconds", "resetSeconds", "secondsUntilReset");
+        if (double.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var textTimestamp))
+        {
+            try
+            {
+                return textTimestamp > 100_000_000_000D
+                    ? DateTimeOffset.FromUnixTimeMilliseconds((long)textTimestamp)
+                    : DateTimeOffset.FromUnixTimeSeconds((long)textTimestamp);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Ignore malformed timestamps and try the numeric JSON fields below.
+            }
+        }
+
+        var timestamp = FirstNumber(element, "resetAt", "reset_at", "resetsAt", "resets_at",
+            "resetTimestamp", "reset_timestamp");
+        if (timestamp is not null)
+        {
+            try
+            {
+                return timestamp.Value > 100_000_000_000D
+                    ? DateTimeOffset.FromUnixTimeMilliseconds((long)timestamp.Value)
+                    : DateTimeOffset.FromUnixTimeSeconds((long)timestamp.Value);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Ignore malformed timestamps and try relative reset fields below.
+            }
+        }
+
+        var seconds = FirstNumber(element, "resetInSec", "reset_in_seconds", "resetSeconds",
+            "reset_after_seconds", "secondsUntilReset");
         return seconds is null ? null : DateTimeOffset.UtcNow.AddSeconds(Math.Max(0, seconds.Value));
     }
 

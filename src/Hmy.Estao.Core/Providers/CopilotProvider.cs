@@ -72,19 +72,102 @@ internal sealed class CopilotProvider : IUsageProvider
     private static UsageSnapshot SnapshotFromJson(JsonElement root, string? accountLabel, string source)
     {
         var windows = new List<RateWindow>();
-        if (ProviderHelpers.FindProperty(root, "premiumInteractions", "premium_interactions") is { } premium)
+        var globalReset = ProviderHelpers.ResetFrom(root);
+
+        // The current copilot_internal/user response uses quota_snapshots and a
+        // top-level quota_reset_date (the same shape consumed by VS Code).
+        if (ProviderHelpers.FindProperty(root, "quota_snapshots") is { } snapshots)
         {
-            windows.Add(new RateWindow("premium", "Premium", ProviderHelpers.PercentUsedFrom(premium), null));
+            AddQuotaSnapshot(windows, snapshots, "premium_interactions", "Premium", globalReset);
+            AddQuotaSnapshot(windows, snapshots, "chat", "Chat", globalReset);
         }
 
-        if (ProviderHelpers.FindProperty(root, "chat") is { } chat)
+        // Older GitHub web responses expose quotas.remaining/limits and resetDate.
+        if (windows.Count == 0 && ProviderHelpers.FindProperty(root, "quotas") is { } quotas)
         {
-            windows.Add(new RateWindow("chat", "Chat", ProviderHelpers.PercentUsedFrom(chat), null));
+            var remaining = ProviderHelpers.FindProperty(quotas, "remaining");
+            var limits = ProviderHelpers.FindProperty(quotas, "limits");
+            var reset = ProviderHelpers.ResetFrom(quotas) ?? globalReset;
+            AddLegacyQuota(windows, "premium", "Premium", remaining, limits, reset,
+                ["premiumInteractionsPercentage", "premium_interactions_percentage"],
+                ["premiumInteractions", "premium_interactions"]);
+            AddLegacyQuota(windows, "chat", "Chat", remaining, limits, reset,
+                ["chatPercentage"], ["chat"]);
+        }
+
+        // Keep compatibility with responses that place the quota objects at the
+        // root rather than under quota_snapshots.
+        if (windows.Count == 0)
+        {
+            AddQuotaObject(windows, root, "premiumInteractions", "premium_interactions", "Premium", globalReset);
+            AddQuotaObject(windows, root, "chat", "chat", "Chat", globalReset);
         }
 
         var account = ProviderHelpers.FirstString(root, "login", "email", "username") ?? accountLabel;
-        var plan = ProviderHelpers.FirstString(root, "copilotPlan", "plan");
+        var plan = ProviderHelpers.FirstString(root, "copilotPlan", "plan", "licenseType");
         return new UsageSnapshot("copilot", ProviderCatalog.DisplayName("copilot"), source, DateTimeOffset.UtcNow, windows, account, plan);
+    }
+
+    private static void AddQuotaSnapshot(List<RateWindow> windows, JsonElement snapshots,
+        string propertyName, string title, DateTimeOffset? globalReset)
+    {
+        if (ProviderHelpers.FindProperty(snapshots, propertyName) is not { } quota ||
+            quota.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        var percent = ProviderHelpers.PercentUsedFrom(quota);
+        var hasValues = ProviderHelpers.FirstNumber(quota, "entitlement", "remaining", "percent_remaining") is not null;
+        if (percent is not null || hasValues)
+        {
+            windows.Add(new RateWindow(propertyName, title, percent, ProviderHelpers.ResetFrom(quota) ?? globalReset));
+        }
+    }
+
+    private static void AddQuotaObject(List<RateWindow> windows, JsonElement root,
+        string camelName, string snakeName, string title, DateTimeOffset? globalReset)
+    {
+        var quota = ProviderHelpers.FindProperty(root, camelName, snakeName);
+        if (quota is null || quota.Value.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        var value = quota.Value;
+        windows.Add(new RateWindow(camelName, title, ProviderHelpers.PercentUsedFrom(value),
+            ProviderHelpers.ResetFrom(value) ?? globalReset));
+    }
+
+    private static void AddLegacyQuota(List<RateWindow> windows, string id, string title,
+        JsonElement? remaining, JsonElement? limits, DateTimeOffset? reset,
+        string[] percentageNames, string[] valueNames)
+    {
+        if (remaining is null)
+        {
+            return;
+        }
+
+        var remainingElement = remaining.Value;
+        var percentRemaining = ProviderHelpers.FirstNumber(remainingElement, percentageNames);
+        double? percentUsed = percentRemaining is not null
+            ? 1D - ProviderHelpers.NormalizePercent(percentRemaining.Value)
+            : null;
+
+        if (percentUsed is null && limits is not null)
+        {
+            var remainingValue = ProviderHelpers.FirstNumber(remainingElement, valueNames);
+            var limitValue = ProviderHelpers.FirstNumber(limits.Value, valueNames);
+            if (remainingValue is not null && limitValue is > 0)
+            {
+                percentUsed = Math.Clamp(1D - remainingValue.Value / limitValue.Value, 0D, 1D);
+            }
+        }
+
+        if (percentUsed is not null || ProviderHelpers.FirstNumber(remainingElement, valueNames) is not null)
+        {
+            windows.Add(new RateWindow(id, title, percentUsed, reset));
+        }
     }
 
     private static string? NormalizeEnterpriseHost(string? host)
