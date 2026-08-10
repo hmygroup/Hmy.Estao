@@ -3,6 +3,7 @@
     <Project Path="src/Hmy.Estao.App/Hmy.Estao.App.csproj" />
     <Project Path="src/Hmy.Estao.Cli/Hmy.Estao.Cli.csproj" />
     <Project Path="src/Hmy.Estao.Core/Hmy.Estao.Core.csproj" />
+    <Project Path="src/Zarpa.Controls.Net10/Zarpa.Controls.Net10.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Hmy.Estao.Tests/Hmy.Estao.Tests.csproj" />

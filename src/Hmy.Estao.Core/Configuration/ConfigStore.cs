@@ -64,8 +64,9 @@ public sealed class ConfigStore
         return new EstaoConfig
         {
             Version = 1,
+            Theme = "Graphite",
             Providers = ProviderCatalog.InitialProviderIds
-                .Select(id => new ProviderConfig { Id = id, Enabled = false })
+                .Select(id => new ProviderConfig { Id = id, Enabled = id == "codex", Source = "auto", CookieSource = "auto" })
                 .ToList()
         };
     }
@@ -73,6 +74,7 @@ public sealed class ConfigStore
     public static EstaoConfig Normalize(EstaoConfig config)
     {
         config.Version = config.Version <= 0 ? 1 : config.Version;
+        config.Theme = string.IsNullOrWhiteSpace(config.Theme) ? "Graphite" : config.Theme.Trim();
         config.Providers ??= [];
 
         foreach (var provider in config.Providers)

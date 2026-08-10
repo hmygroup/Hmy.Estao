@@ -11,7 +11,7 @@ public sealed class ConfigStoreTests
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "config.json");
         var config = await new ConfigStore(path).LoadAsync();
 
-        Assert.Contains(config.Providers, provider => provider.Id == "codex" && provider.Enabled == false);
+        Assert.Contains(config.Providers, provider => provider.Id == "codex" && provider.Enabled == true);
         Assert.Contains(config.Providers, provider => provider.Id == "claude");
     }
 
@@ -22,6 +22,7 @@ public sealed class ConfigStoreTests
         var store = new ConfigStore(path);
         await store.SaveAsync(new EstaoConfig
         {
+            Theme = "NordFrost",
             Providers =
             [
                 new ProviderConfig
@@ -36,6 +37,7 @@ public sealed class ConfigStoreTests
         });
 
         var loaded = await store.LoadAsync();
+        Assert.Equal("NordFrost", loaded.Theme);
         var copilot = Assert.Single(loaded.Providers, provider => provider.Id == "copilot");
         Assert.Equal("secret", copilot.ApiKey);
         Assert.Equal("github.example.com", copilot.EnterpriseHost);

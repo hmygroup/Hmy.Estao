@@ -2,11 +2,21 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Models;
+using Hmy.Estao.Core.Security;
 
 namespace Hmy.Estao.Core.Providers;
 
-internal sealed class CopilotProvider(HttpClient httpClient) : IUsageProvider
+internal sealed class CopilotProvider : IUsageProvider
 {
+    private readonly HttpClient _httpClient;
+    private readonly IOAuthTokenStore _oauthTokenStore;
+
+    public CopilotProvider(HttpClient httpClient, IOAuthTokenStore? oauthTokenStore = null)
+    {
+        _httpClient = httpClient;
+        _oauthTokenStore = oauthTokenStore ?? new SecureOAuthTokenStore();
+    }
+
     public string Id => "copilot";
 
     public IReadOnlyList<ProviderAccount> GetAccounts(ProviderConfig config)
@@ -24,9 +34,18 @@ internal sealed class CopilotProvider(HttpClient httpClient) : IUsageProvider
     {
         var account = request.Account ?? GetAccounts(request.Config).FirstOrDefault();
         var token = account?.Secret ?? request.Config.ApiKey;
+        var source = "api";
+        if (string.IsNullOrWhiteSpace(token) && request.Source is ProviderSource.Auto or ProviderSource.OAuth)
+        {
+            var oauth = await _oauthTokenStore.ReadAsync(Id, request.CancellationToken).ConfigureAwait(false);
+            token = oauth?.AccessToken;
+            account ??= oauth is null ? null : new ProviderAccount("oauth", oauth.AccountLabel ?? "GitHub OAuth", token);
+            source = "oauth";
+        }
         if (string.IsNullOrWhiteSpace(token))
         {
-            return UsageSnapshot.Failure(Id, "api", "Copilot requires a GitHub OAuth token. Use settings or `estao config set-api-key --provider copilot --stdin`.");
+            return UsageSnapshot.Failure(Id, source,
+                "Copilot is not connected. In Settings, choose Sign in with OAuth and complete the GitHub device flow.");
         }
 
         var host = NormalizeEnterpriseHost(request.Config.EnterpriseHost);
@@ -39,7 +58,7 @@ internal sealed class CopilotProvider(HttpClient httpClient) : IUsageProvider
         httpRequest.Headers.TryAddWithoutValidation("Editor-Plugin-Version", "copilot-chat/0.26.7");
         httpRequest.Headers.TryAddWithoutValidation("X-Github-Api-Version", "2025-04-01");
 
-        using var response = await httpClient.SendAsync(httpRequest, request.CancellationToken).ConfigureAwait(false);
+        using var response = await _httpClient.SendAsync(httpRequest, request.CancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             return UsageSnapshot.Failure(Id, "api", $"Copilot usage API returned {(int)response.StatusCode}.");
@@ -47,10 +66,10 @@ internal sealed class CopilotProvider(HttpClient httpClient) : IUsageProvider
 
         await using var stream = await response.Content.ReadAsStreamAsync(request.CancellationToken).ConfigureAwait(false);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: request.CancellationToken).ConfigureAwait(false);
-        return SnapshotFromJson(document.RootElement, account?.Label);
+        return SnapshotFromJson(document.RootElement, account?.Label, source);
     }
 
-    private static UsageSnapshot SnapshotFromJson(JsonElement root, string? accountLabel)
+    private static UsageSnapshot SnapshotFromJson(JsonElement root, string? accountLabel, string source)
     {
         var windows = new List<RateWindow>();
         if (ProviderHelpers.FindProperty(root, "premiumInteractions", "premium_interactions") is { } premium)
@@ -65,7 +84,7 @@ internal sealed class CopilotProvider(HttpClient httpClient) : IUsageProvider
 
         var account = ProviderHelpers.FirstString(root, "login", "email", "username") ?? accountLabel;
         var plan = ProviderHelpers.FirstString(root, "copilotPlan", "plan");
-        return new UsageSnapshot("copilot", ProviderCatalog.DisplayName("copilot"), "api", DateTimeOffset.UtcNow, windows, account, plan);
+        return new UsageSnapshot("copilot", ProviderCatalog.DisplayName("copilot"), source, DateTimeOffset.UtcNow, windows, account, plan);
     }
 
     private static string? NormalizeEnterpriseHost(string? host)

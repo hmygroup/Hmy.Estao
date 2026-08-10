@@ -4,7 +4,9 @@ using Hmy.Estao.Core.Formatting;
 using Hmy.Estao.Core.Models;
 using Hmy.Estao.Core.Providers;
 using Hmy.Estao.Core.Refresh;
+using Hmy.Estao.App.Controls.Zarpa;
 using Microsoft.Win32;
+using ZarpaSuite.Controls;
 
 namespace Hmy.Estao.App;
 
@@ -15,11 +17,15 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly UsageProviderFactory _providerFactory = new();
     private readonly AdaptiveRefreshLoop _refreshLoop;
     private readonly NotifyIcon _notifyIcon;
+    private readonly ZarpaThemeManager _zarpaTheme = new() { Preset = ZarpaThemePreset.Graphite };
     private readonly SynchronizationContext _uiContext;
+    private IReadOnlyList<UsageSnapshot> _snapshots = [];
+    private UsagePopover? _popover;
 
     public TrayApplicationContext(ConfigStore configStore, Func<ConfigStore, UsageRefreshService> serviceFactory)
     {
         _configStore = configStore;
+        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_configStore.LoadAsync().GetAwaiter().GetResult().Theme);
         _refreshService = serviceFactory(configStore);
         _refreshService.Refreshed += (_, snapshots) => PostMenuRebuild(snapshots);
         _refreshLoop = new AdaptiveRefreshLoop(_refreshService, () => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline);
@@ -35,7 +41,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             if (args.Button == MouseButtons.Left)
             {
                 _refreshLoop.MarkInteraction();
-                _notifyIcon.ContextMenuStrip?.Show(Cursor.Position);
+                ShowUsagePopover();
             }
         };
         RebuildMenu([]);
@@ -48,6 +54,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _refreshLoop.Dispose();
             _notifyIcon.Dispose();
+            _zarpaTheme.Dispose();
         }
 
         base.Dispose(disposing);
@@ -60,7 +67,11 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void RebuildMenu(IReadOnlyList<UsageSnapshot> snapshots)
     {
-        var menu = new ContextMenuStrip();
+        _snapshots = snapshots;
+        if (_popover is { IsDisposed: false }) _popover.UpdateSnapshots(snapshots);
+
+        var menu = new ZarpaContextMenu();
+        menu.ApplyTheme(_zarpaTheme.Theme);
         menu.Opening += (_, _) => _refreshLoop.MarkInteraction();
         if (snapshots.Count == 0)
         {
@@ -70,16 +81,16 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             foreach (var snapshot in snapshots)
             {
-                var item = new ToolStripMenuItem(Summary(snapshot));
+                var item = new ZarpaMenuItem(Summary(snapshot), ProviderIcon(snapshot.Provider), null);
                 item.Enabled = false;
                 menu.Items.Add(item);
             }
         }
 
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Refresh now", null, async (_, _) => await RefreshAsync().ConfigureAwait(false));
+        menu.Items.Add(new ZarpaMenuItem("Refresh now", "ic_fluent_arrow_sync_24_regular", async (_, _) => await RefreshAsync().ConfigureAwait(false)));
         AddAccountMenu(menu);
-        menu.Items.Add("Settings...", null, (_, _) => ShowSettings());
+        menu.Items.Add(new ZarpaMenuItem("Settings...", "ic_fluent_settings_24_regular", (_, _) => ShowSettings()));
         menu.Items.Add(new ToolStripSeparator());
         var startup = new ToolStripMenuItem("Launch at sign-in") { Checked = StartupRegistration.IsEnabled() };
         startup.Click += (_, _) =>
@@ -88,11 +99,24 @@ public sealed class TrayApplicationContext : ApplicationContext
             startup.Checked = StartupRegistration.IsEnabled();
         };
         menu.Items.Add(startup);
-        menu.Items.Add("Quit", null, (_, _) => ExitThread());
+        menu.Items.Add(new ZarpaMenuItem("Quit", "ic_fluent_dismiss_circle_24_regular", (_, _) => ExitThread()) { Tone = ZarpaMenuItemTone.Danger });
 
         _notifyIcon.ContextMenuStrip?.Dispose();
         _notifyIcon.ContextMenuStrip = menu;
         _notifyIcon.Text = snapshots.FirstOrDefault(snapshot => snapshot.Error is null)?.DisplayName ?? EstaoConstants.DisplayName;
+    }
+
+    private void ShowUsagePopover()
+    {
+        if (_popover is { IsDisposed: false, Visible: true })
+        {
+            _popover.Close();
+            return;
+        }
+
+        _popover = new UsagePopover(_snapshots, RefreshAsync, ShowSettings, ExitThread, _zarpaTheme.Preset);
+        _popover.FormClosed += (_, _) => _popover = null;
+        _popover.ShowAt(Cursor.Position);
     }
 
     private async Task RefreshAsync()
@@ -104,13 +128,14 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         using var form = new SettingsForm(_configStore);
         form.ShowDialog();
+        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_configStore.LoadAsync().GetAwaiter().GetResult().Theme);
         _ = RefreshAsync();
     }
 
     private void AddAccountMenu(ContextMenuStrip menu)
     {
         var config = _configStore.LoadAsync().GetAwaiter().GetResult();
-        var accountsRoot = new ToolStripMenuItem("Accounts");
+        var accountsRoot = new ZarpaMenuItem("Accounts", "ic_fluent_people_24_regular", null);
         foreach (var providerConfig in config.Providers.Where(provider => provider.Enabled == true && ProviderCatalog.IsSupported(provider.Id)))
         {
             var provider = _providerFactory.Create(providerConfig.Id);
@@ -120,12 +145,12 @@ public sealed class TrayApplicationContext : ApplicationContext
                 continue;
             }
 
-            var providerItem = new ToolStripMenuItem(ProviderCatalog.DisplayName(providerConfig.Id));
+            var providerItem = new ZarpaMenuItem(ProviderCatalog.DisplayName(providerConfig.Id), ProviderIcon(providerConfig.Id), null);
             var activeIndex = providerConfig.ActiveAccountIndex ?? providerConfig.TokenAccounts?.ActiveIndex ?? 0;
             for (var index = 0; index < accounts.Count; index++)
             {
                 var capturedIndex = index;
-                var accountItem = new ToolStripMenuItem(accounts[index].Label)
+                var accountItem = new ZarpaMenuItem(accounts[index].Label, "ic_fluent_person_24_regular", null)
                 {
                     Checked = capturedIndex == activeIndex
                 };
@@ -172,6 +197,16 @@ public sealed class TrayApplicationContext : ApplicationContext
         var account = string.IsNullOrWhiteSpace(snapshot.Account) ? string.Empty : $" - {snapshot.Account}";
         return $"{snapshot.DisplayName}: {primary.PercentRemaining.Value:P0} left{account}";
     }
+
+    private static string ProviderIcon(string provider) => ProviderCatalog.NormalizeId(provider) switch
+    {
+        "codex" => "ic_fluent_bot_24_regular",
+        "claude" => "ic_fluent_sparkle_24_regular",
+        "copilot" => "ic_fluent_people_24_regular",
+        "opencode" => "ic_fluent_code_24_regular",
+        _ => "ic_fluent_apps_24_regular"
+    };
+
 }
 
 internal static class StartupRegistration

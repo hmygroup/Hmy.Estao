@@ -15,6 +15,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Hmy.Estao.Core\Hmy.Estao.Core.csproj" />
+    <ProjectReference Include="..\Zarpa.Controls.Net10\Zarpa.Controls.Net10.csproj" />
+    <PackageReference Include="Svg" Version="3.4.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\ProviderIcons\*.svg"
+                      LogicalName="Hmy.Estao.ProviderIcons.%(Filename)%(Extension)" />
   </ItemGroup>
 
 <Target Name="pubre">

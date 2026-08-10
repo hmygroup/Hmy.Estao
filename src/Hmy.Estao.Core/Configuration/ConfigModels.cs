@@ -7,6 +7,9 @@ public sealed class EstaoConfig
     [JsonPropertyName("version")]
     public int Version { get; set; } = 1;
 
+    [JsonPropertyName("theme")]
+    public string Theme { get; set; } = "Graphite";
+
     [JsonPropertyName("hooks")]
     public object? Hooks { get; set; }
 
