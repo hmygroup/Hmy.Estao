@@ -14,14 +14,18 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
     private readonly Label _providerCount = new() { AutoSize = true };
     private readonly ZarpaComboBox _themePicker = new() { LabelText = "Theme", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+    private readonly ZarpaButton _previewButton = new() { Text = "Preview", ButtonStyle = ZarpaButtonStyle.Secondary, Width = 92 };
     private readonly ZarpaButton _saveButton = new() { Text = "Save changes", ButtonStyle = ZarpaButtonStyle.Primary, Width = 126 };
     private readonly List<ProviderSettingsRow> _providerRows = [];
     private EstaoConfig _config = ConfigStore.CreateDefaultConfig();
 
-    public SettingsForm(ConfigStore configStore, ICookieSecretStore? cookieStore = null)
+    private readonly Action<EstaoConfig>? _previewOverlay;
+
+    public SettingsForm(ConfigStore configStore, ICookieSecretStore? cookieStore = null, Action<EstaoConfig>? previewOverlay = null)
     {
         _configStore = configStore;
         _cookieStore = cookieStore ?? new SecureCookieStore();
+        _previewOverlay = previewOverlay;
 
         Text = "Estao Settings";
         ContextText = "Providers";
@@ -38,6 +42,7 @@ public sealed class SettingsForm : ZarpaModernForm
         Controls.Add(footer);
         Controls.Add(header);
 
+        _previewButton.Click += (_, _) => PreviewOverlay();
         _saveButton.Click += async (_, _) => await SaveAsync().ConfigureAwait(true);
         foreach (var preset in ZarpaThemePreferences.Available) _themePicker.Items.Add(preset.ToString());
         _themePicker.SelectedIndexChanged += (_, _) =>
@@ -104,12 +109,13 @@ public sealed class SettingsForm : ZarpaModernForm
         var actions = new FlowLayoutPanel
         {
             Dock = DockStyle.Right,
-            Width = 250,
+            Width = 360,
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false
         };
         var cancel = new ZarpaButton { Text = "Cancel", ButtonStyle = ZarpaButtonStyle.Subtle, Width = 100 };
         cancel.Click += (_, _) => Close();
+        actions.Controls.Add(_previewButton);
         actions.Controls.Add(_saveButton);
         actions.Controls.Add(cancel);
         footer.Controls.Add(actions);
@@ -172,6 +178,13 @@ public sealed class SettingsForm : ZarpaModernForm
         {
             if (!IsDisposed) _saveButton.Loading = false;
         }
+    }
+
+    private void PreviewOverlay()
+    {
+        foreach (var row in _providerRows) row.Apply();
+        _overlaySettings.Apply(_config.TaskbarOverlay);
+        _previewOverlay?.Invoke(_config);
     }
 
     private async Task<string> CookieStatusAsync(ProviderConfig provider)

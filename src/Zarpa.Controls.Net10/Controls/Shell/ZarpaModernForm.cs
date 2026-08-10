@@ -114,13 +114,20 @@ namespace ZarpaSuite.Controls
             base.OnPaint(e);
             if (!modernChrome) return;
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            Rectangle header = new Rectangle(0, 0, ClientSize.Width, ChromeHeight);
-            using (SolidBrush brush = new SolidBrush(theme.Surface)) e.Graphics.FillRectangle(brush, header);
-            using (Pen borderPen = new Pen(theme.Border))
+            Rectangle frame = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
+            using (GraphicsPath framePath = ZarpaPaint.RoundedPath(frame, S(Math.Max(6, theme.GroupCornerRadius))))
             {
-                borderPen.Width = dpiScale.Stroke(theme.BorderThickness);
-                e.Graphics.DrawRectangle(borderPen, 0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1));
-                e.Graphics.DrawLine(borderPen, 0, ChromeHeight - 1, Width, ChromeHeight - 1);
+                GraphicsState state = e.Graphics.Save();
+                e.Graphics.SetClip(framePath, CombineMode.Intersect);
+                Rectangle header = new Rectangle(0, 0, ClientSize.Width, ChromeHeight);
+                using (SolidBrush brush = new SolidBrush(theme.Surface)) e.Graphics.FillRectangle(brush, header);
+                using (Pen borderPen = new Pen(theme.Border))
+                {
+                    borderPen.Width = dpiScale.Stroke(theme.BorderThickness);
+                    e.Graphics.DrawPath(borderPen, framePath);
+                    e.Graphics.DrawLine(borderPen, 0, ChromeHeight - 1, Width, ChromeHeight - 1);
+                }
+                e.Graphics.Restore(state);
             }
 
             Rectangle iconBounds = new Rectangle(S(14), (ChromeHeight - S(22)) / 2, S(22), S(22));
@@ -254,8 +261,23 @@ namespace ZarpaSuite.Controls
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
+            ApplyWindowsCorners();
             ApplyDpiScale(ZarpaDpiScale.FromControl(this));
         }
+
+        private void ApplyWindowsCorners()
+        {
+            try
+            {
+                int preference = 2; // DWMWCP_ROUND; Windows 10 simply ignores it.
+                DwmSetWindowAttribute(Handle, 33, ref preference, sizeof(int)); // DWMWA_WINDOW_CORNER_PREFERENCE
+            }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
+        }
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr handle, int attribute, ref int value, int valueSize);
 
         internal void ApplyDpiForTest(int dpi)
         {

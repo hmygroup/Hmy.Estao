@@ -29,7 +29,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _configStore = configStore;
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
-        _taskbarOverlay = new TaskbarUsageOverlay(_zarpaTheme.Preset);
+        _taskbarOverlay = new TaskbarUsageOverlay();
         _refreshService = serviceFactory(configStore);
         _refreshService.Refreshed += (_, snapshots) => PostMenuRebuild(snapshots);
         _refreshLoop = new AdaptiveRefreshLoop(_refreshService, () => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline);
@@ -74,8 +74,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _snapshots = snapshots;
         if (_popover is { IsDisposed: false }) _popover.UpdateSnapshots(snapshots, _refreshService.History);
-        _taskbarOverlay.SetTheme(_zarpaTheme.Preset);
-        _taskbarOverlay.Update(snapshots, _refreshService.History, _config.TaskbarOverlay);
+        _taskbarOverlay.Update(snapshots, _refreshService.History, OverlayConfigForDisplay());
 
         var menu = new ZarpaContextMenu();
         menu.ApplyTheme(_zarpaTheme.Theme);
@@ -134,13 +133,40 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowSettings()
     {
-        using var form = new SettingsForm(_configStore);
+        using var form = new SettingsForm(_configStore, previewOverlay: PreviewOverlay);
         form.ShowDialog();
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
-        _taskbarOverlay.SetTheme(_zarpaTheme.Preset);
-        _taskbarOverlay.Update(_snapshots, _refreshService.History, _config.TaskbarOverlay);
+        _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay());
         _ = RefreshAsync();
+    }
+
+    private void PreviewOverlay(EstaoConfig previewConfig)
+    {
+        _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay(previewConfig));
+    }
+
+    private TaskbarOverlayConfig OverlayConfigForDisplay(EstaoConfig? source = null)
+    {
+        var config = source ?? _config;
+        var configured = new TaskbarOverlayConfig
+        {
+            Enabled = config.TaskbarOverlay.Enabled,
+            ProviderIds = config.TaskbarOverlay.ProviderIds.ToList(),
+            Controls = config.TaskbarOverlay.Controls.ToList(),
+            DisplayMode = config.TaskbarOverlay.DisplayMode,
+            Size = config.TaskbarOverlay.Size
+        };
+        if (configured.ProviderIds.Count == 0)
+        {
+            configured.ProviderIds = config.Providers
+                .Where(provider => provider.Enabled == true && ProviderCatalog.IsSupported(provider.Id))
+                .Select(provider => ProviderCatalog.NormalizeId(provider.Id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        return configured;
     }
 
     private void AddAccountMenu(ContextMenuStrip menu)

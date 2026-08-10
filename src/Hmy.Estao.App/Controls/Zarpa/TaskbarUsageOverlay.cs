@@ -1,9 +1,9 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Models;
-using ZarpaSuite.Controls;
 
 namespace Hmy.Estao.App.Controls.Zarpa;
 
@@ -14,29 +14,37 @@ namespace Hmy.Estao.App.Controls.Zarpa;
 /// </summary>
 internal sealed class TaskbarUsageOverlay : Form
 {
-    private const int DefaultSegmentWidth = 138;
-    private const int OverlayHeight = 54;
-    private const int TaskbarReservedLeft = 180;
+    private const int DefaultSegmentWidth = 86;
+    private const int CompactOverlayHeight = 32;
+    private const int StandardOverlayHeight = 38;
+    private const int TaskbarReservedLeft = 120;
     private const int TaskbarGap = 6;
     private const int WmNcHitTest = 0x0084;
     private const int HtTransparent = -1;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpShowWindow = 0x0040;
+    private static readonly IntPtr HwndTopmost = new(-1);
 
-    private readonly ZarpaThemeManager _theme;
+    private WindowsTaskbarPalette _palette;
+    private readonly System.Windows.Forms.Timer _placementTimer;
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
     private IReadOnlyList<UsageHistoryPoint> _history = [];
     private TaskbarOverlayConfig _config = new();
     private Rectangle _regionBounds;
 
-    public TaskbarUsageOverlay(ZarpaThemePreset themePreset)
+    public TaskbarUsageOverlay()
     {
-        _theme = new ZarpaThemeManager { Preset = themePreset };
-        _theme.ThemeChanged += (_, _) => Invalidate();
+        _palette = WindowsTaskbarPalette.Read();
+        SystemEvents.UserPreferenceChanged += OnWindowsPreferenceChanged;
+        _placementTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        _placementTimer.Tick += (_, _) => RefreshPlacement();
+        _placementTimer.Start();
 
         AutoScaleMode = AutoScaleMode.None;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
             ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
         DoubleBuffered = true;
-        ClientSize = new Size(420, OverlayHeight);
+        ClientSize = new Size(180, StandardOverlayHeight);
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         ShowIcon = false;
@@ -46,8 +54,6 @@ internal sealed class TaskbarUsageOverlay : Form
     }
 
     protected override bool ShowWithoutActivation => true;
-
-    public void SetTheme(ZarpaThemePreset preset) => _theme.Preset = preset;
 
     public void Update(
         IReadOnlyList<UsageSnapshot> snapshots,
@@ -63,21 +69,18 @@ internal sealed class TaskbarUsageOverlay : Form
         _snapshots = snapshots;
         _history = history;
         _config = CloneConfig(config);
-        var visible = VisibleSnapshots();
-        if (!_config.Enabled || visible.Count == 0 || !TryPlace(visible.Count, out var placement))
-        {
-            Hide();
-            return;
-        }
-
-        Bounds = placement;
+        RefreshPlacement();
         Invalidate();
-        if (!Visible) Show();
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _theme.Dispose();
+        if (disposing)
+        {
+            SystemEvents.UserPreferenceChanged -= OnWindowsPreferenceChanged;
+            _placementTimer.Stop();
+            _placementTimer.Dispose();
+        }
         base.Dispose(disposing);
     }
 
@@ -92,17 +95,26 @@ internal sealed class TaskbarUsageOverlay : Form
         previousRegion?.Dispose();
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ApplyWindowsCorners();
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+        e.Graphics.SmoothingMode = SmoothingMode.HighQuality;
+        e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
+        e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        e.Graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-        var theme = _theme.Theme;
+        var theme = _palette;
         var card = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
-        ZarpaPopoverPaint.FillRounded(e.Graphics, theme.Surface, card, 11);
+        ZarpaPopoverPaint.FillRounded(e.Graphics, theme.Surface, card, 8);
         using (var outline = new Pen(theme.Border, 1F))
-        using (var path = ZarpaPopoverPaint.RoundedPath(card, 11))
+        using (var path = ZarpaPopoverPaint.RoundedPath(card, 8))
             e.Graphics.DrawPath(outline, path);
 
         var providers = VisibleSnapshots();
@@ -140,50 +152,72 @@ internal sealed class TaskbarUsageOverlay : Form
         base.WndProc(ref m);
     }
 
-    private void DrawProvider(Graphics graphics, UsageSnapshot snapshot, Rectangle bounds, ZarpaThemeTokens theme)
+    private void DrawProvider(Graphics graphics, UsageSnapshot snapshot, Rectangle bounds, WindowsTaskbarPalette theme)
     {
         var window = snapshot.Windows.FirstOrDefault();
         var used = window?.PercentUsed is double value ? Math.Clamp(value, 0D, 1D) : 0D;
         var accent = used >= .9D ? theme.Danger : used >= .75D ? theme.Warning : theme.Accent;
         var provider = ProviderCatalog.NormalizeId(snapshot.Provider);
+        var showIcon = !string.Equals(_config.DisplayMode, "title", StringComparison.OrdinalIgnoreCase);
+        var showTitle = !string.Equals(_config.DisplayMode, "icon", StringComparison.OrdinalIgnoreCase);
+        var moduleWidth = ModuleWidth();
+        var rowY = bounds.Top + Math.Max(0, (Height - 20) / 2);
+        var moduleY = bounds.Top + Math.Max(0, (Height - 14) / 2);
+        var moduleX = bounds.Left + 6;
 
-        ZarpaProviderIconCatalog.TryDraw(graphics, provider,
-            new Rectangle(bounds.Left + 6, bounds.Top + 7, 22, 22), theme.Text);
-        DrawText(graphics, snapshot.DisplayName, new Font("Segoe UI", 7.5F, FontStyle.Bold),
-            new RectangleF(bounds.Left + 34, bounds.Top + 4, bounds.Width - 62, 17), theme.Text);
+        if (showIcon)
+        {
+            ZarpaProviderIconCatalog.TryDraw(graphics, provider,
+                new Rectangle(moduleX, rowY, 20, 20), theme.Text);
+            moduleX += 26;
+        }
+        if (showTitle)
+        {
+            DrawText(graphics, snapshot.DisplayName, new Font("Segoe UI", 7.5F, FontStyle.Bold),
+                new RectangleF(moduleX, rowY + 2, showIcon ? 72 : 76, 16), theme.Text);
+            moduleX += (showIcon ? 78 : 82);
+        }
 
-        var x = bounds.Left + 34;
         if (HasControl("percentage"))
         {
-            DrawText(graphics, window?.PercentUsed is double ? $"{used:P0} used" : "Usage n/a",
-                new Font("Segoe UI", 7.5F), new RectangleF(x, bounds.Top + 20, 60, 16), theme.TextMuted);
+            DrawText(graphics, window?.PercentUsed is double ? $"{used:P0}" : "—",
+                new Font("Segoe UI", 7.5F), new RectangleF(moduleX, moduleY, 30, 14), theme.TextMuted);
+            moduleX += 34;
         }
 
         if (HasControl("bar"))
         {
-            var bar = new Rectangle(x, bounds.Top + 39, Math.Min(60, bounds.Width - 70), 6);
+            var bar = new Rectangle(moduleX, moduleY + 5, 42, 4);
             ZarpaPopoverPaint.FillRounded(graphics, Color.FromArgb(70, theme.TextMuted), bar, 3);
             ZarpaPopoverPaint.FillRounded(graphics, accent,
                 new Rectangle(bar.Left, bar.Top, Math.Max(2, (int)Math.Round(bar.Width * used)), bar.Height), 3);
+            moduleX += 46;
         }
 
-        if (HasControl("pie")) DrawDonut(graphics, used, accent, new Rectangle(bounds.Right - 32, bounds.Top + 7, 24, 24));
-        if (HasControl("chart")) DrawSparkline(graphics, snapshot, accent,
-            new Rectangle(bounds.Left + 68, bounds.Top + 35, Math.Max(24, bounds.Width - 104), 12), theme);
+        if (HasControl("pie"))
+        {
+            DrawDonut(graphics, used, accent, new Rectangle(moduleX, moduleY - 1, 18, 18));
+            moduleX += 24;
+        }
+        if (HasControl("chart"))
+        {
+            DrawSparkline(graphics, snapshot, accent, new Rectangle(moduleX, moduleY + 3, 48, 10), theme);
+            moduleX += 52;
+        }
         if (HasControl("usedTotal") && window?.Used is double actual && window.Limit is double limit)
         {
             DrawText(graphics, $"{FormatValue(actual)} / {FormatValue(limit)} {window.Unit}".Trim(),
-                new Font("Segoe UI", 7F), new RectangleF(x, bounds.Top + 20, bounds.Width - 38, 15), theme.TextMuted);
+                new Font("Segoe UI", 7F), new RectangleF(moduleX, moduleY, 64, 14), theme.TextMuted);
+            moduleX += 68;
         }
         if (HasControl("reset") && window?.ResetAt is DateTimeOffset resetAt)
         {
             DrawText(graphics, ResetText(resetAt), new Font("Segoe UI", 7F),
-                new RectangleF(bounds.Left + 68, bounds.Top + 20, bounds.Width - 104, 15), theme.TextMuted,
-                StringAlignment.Far);
+                new RectangleF(moduleX, moduleY, 54, 14), theme.TextMuted);
         }
     }
 
-    private void DrawSparkline(Graphics graphics, UsageSnapshot snapshot, Color color, Rectangle bounds, ZarpaThemeTokens theme)
+    private void DrawSparkline(Graphics graphics, UsageSnapshot snapshot, Color color, Rectangle bounds, WindowsTaskbarPalette theme)
     {
         var points = _history.Where(point =>
                 string.Equals(ProviderCatalog.NormalizeId(point.Provider), ProviderCatalog.NormalizeId(snapshot.Provider), StringComparison.OrdinalIgnoreCase) &&
@@ -193,6 +227,9 @@ internal sealed class TaskbarUsageOverlay : Form
             .ToArray();
         if (points.Length < 2) return;
 
+        var state = graphics.Save();
+        graphics.SmoothingMode = SmoothingMode.HighQuality;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         using var track = new Pen(Color.FromArgb(80, theme.TextMuted), 1F);
         graphics.DrawLine(track, bounds.Left, bounds.Bottom, bounds.Right, bounds.Bottom);
         using var line = new Pen(color, 1.4F);
@@ -200,6 +237,7 @@ internal sealed class TaskbarUsageOverlay : Form
             bounds.Left + index * (bounds.Width - 1F) / (points.Length - 1),
             bounds.Bottom - (float)Math.Clamp(point.PercentUsed, 0D, 1D) * bounds.Height)).ToArray();
         graphics.DrawLines(line, mapped);
+        graphics.Restore(state);
     }
 
     private static void DrawDonut(Graphics graphics, double used, Color color, Rectangle bounds)
@@ -223,6 +261,7 @@ internal sealed class TaskbarUsageOverlay : Form
             Trimming = StringTrimming.EllipsisCharacter
         })
         {
+            graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             graphics.DrawString(text, font, brush, bounds, format);
         }
     }
@@ -236,30 +275,85 @@ internal sealed class TaskbarUsageOverlay : Form
         var selected = configured.Count == 0
             ? _snapshots.Where(snapshot => snapshot.Error is null && snapshot.Windows.Count > 0)
             : _snapshots.Where(snapshot => configured.Contains(ProviderCatalog.NormalizeId(snapshot.Provider), StringComparer.OrdinalIgnoreCase));
-        return selected.Take(4).ToArray();
+        var snapshots = selected.Take(4).ToArray();
+        if (snapshots.Length > 0 || configured.Count == 0) return snapshots;
+
+        // Keep the configured rail visible while the first refresh is pending.
+        // This makes the setting discoverable even when credentials are not
+        // available yet; the same bar will fill as soon as data arrives.
+        return configured.Take(4).Select(provider => new UsageSnapshot(
+            provider, ProviderCatalog.DisplayName(provider), "waiting", DateTimeOffset.UtcNow, [])).ToArray();
     }
 
-    private int SegmentWidth() => DefaultSegmentWidth +
-        (HasControl("usedTotal") ? 18 : 0) + (HasControl("reset") ? 18 : 0);
+    private int SegmentWidth()
+    {
+        var width = _config.DisplayMode switch
+        {
+            "icon" => 40,
+            "title" => 96,
+            _ => 118
+        };
+        width += ModuleWidth();
+        if (string.Equals(_config.Size, "spacious", StringComparison.OrdinalIgnoreCase)) width += 10;
+        return Math.Max(DefaultSegmentWidth, width);
+    }
+
+    private int ModuleWidth()
+    {
+        var width = 0;
+        if (HasControl("percentage")) width += 34;
+        if (HasControl("bar")) width += 46;
+        if (HasControl("pie")) width += 24;
+        if (HasControl("chart")) width += 52;
+        if (HasControl("usedTotal")) width += 68;
+        if (HasControl("reset")) width += 58;
+        return width;
+    }
+
+    private int OverlayHeight()
+    {
+        if (string.Equals(_config.Size, "spacious", StringComparison.OrdinalIgnoreCase)) return 46;
+        if (string.Equals(_config.Size, "compact", StringComparison.OrdinalIgnoreCase))
+            return string.Equals(_config.DisplayMode, "icon", StringComparison.OrdinalIgnoreCase) ? 30 : 34;
+        return HasControl("chart") || HasControl("bar") || HasControl("usedTotal") || HasControl("reset")
+            ? StandardOverlayHeight : CompactOverlayHeight;
+    }
 
     private bool TryPlace(int providerCount, out Rectangle placement)
     {
         placement = Rectangle.Empty;
         var taskbar = FindWindow("Shell_TrayWnd", null);
-        if (taskbar == IntPtr.Zero || !GetWindowRect(taskbar, out var taskbarRect)) return false;
-        if (taskbarRect.Height >= taskbarRect.Width) return false;
+        NativeRect taskbarRect = default;
+        var hasNativeTaskbar = taskbar != IntPtr.Zero && GetWindowRect(taskbar, out taskbarRect);
+        if (!hasNativeTaskbar)
+        {
+            var screen = Screen.PrimaryScreen;
+            if (screen is null) return false;
+            var taskbarTop = screen.WorkingArea.Bottom;
+            taskbarRect = new NativeRect(screen.WorkingArea.Left, taskbarTop, screen.WorkingArea.Right, screen.Bounds.Bottom);
+        }
+        if (taskbarRect.Height >= taskbarRect.Width || taskbarRect.Height <= 0) return false;
 
-        var tray = FindWindowEx(taskbar, IntPtr.Zero, "TrayNotifyWnd", null);
+        var tray = taskbar == IntPtr.Zero ? IntPtr.Zero : FindWindowEx(taskbar, IntPtr.Zero, "TrayNotifyWnd", null);
+        if (tray == IntPtr.Zero) tray = FindWindow("TrayNotifyWnd", null);
         var right = taskbarRect.Right - 12;
         if (tray != IntPtr.Zero && GetWindowRect(tray, out var trayRect)) right = trayRect.Left - TaskbarGap;
 
         var width = 14 + providerCount * SegmentWidth();
         var left = right - width;
         if (left < taskbarRect.Left + TaskbarReservedLeft || width > taskbarRect.Width - TaskbarReservedLeft)
-            return false;
+        {
+            // TrayNotifyWnd can report a stale/whole-taskbar rectangle on some
+            // Windows 11 builds. In that case use the taskbar's right edge;
+            // the compact pill still fits without covering the clock area.
+            right = taskbarRect.Right - 10;
+            left = right - width;
+            if (left < taskbarRect.Left + 12 || width > taskbarRect.Width - 24) return false;
+        }
 
-        placement = new Rectangle(left, taskbarRect.Top + Math.Max(0, (taskbarRect.Height - OverlayHeight) / 2),
-            width, OverlayHeight);
+        var height = OverlayHeight();
+        placement = new Rectangle(left, taskbarRect.Top + Math.Max(0, (taskbarRect.Height - height) / 2),
+            width, height);
         ClientSize = placement.Size;
         return true;
     }
@@ -268,7 +362,9 @@ internal sealed class TaskbarUsageOverlay : Form
     {
         Enabled = value.Enabled,
         ProviderIds = value.ProviderIds?.ToList() ?? [],
-        Controls = value.Controls?.ToList() ?? TaskbarOverlayControlCatalog.Default.ToList()
+        Controls = value.Controls?.ToList() ?? TaskbarOverlayControlCatalog.Default.ToList(),
+        DisplayMode = value.DisplayMode,
+        Size = value.Size
     };
 
     private static string FormatValue(double value) => value >= 1000D ? value.ToString("0.#") : value.ToString("0.##");
@@ -281,6 +377,40 @@ internal sealed class TaskbarUsageOverlay : Form
         return $"{Math.Max(1, remaining.Minutes)}m";
     }
 
+    private void ApplyWindowsCorners()
+    {
+        try
+        {
+            var preference = 2; // DWMWCP_ROUND; Windows 10 simply ignores it.
+            DwmSetWindowAttribute(Handle, 33, ref preference, sizeof(int)); // DWMWA_WINDOW_CORNER_PREFERENCE
+        }
+        catch (DllNotFoundException) { }
+        catch (EntryPointNotFoundException) { }
+    }
+
+    private void OnWindowsPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
+    {
+        if (IsDisposed) return;
+        _palette = WindowsTaskbarPalette.Read();
+        BeginInvoke(Invalidate);
+    }
+
+    private void RefreshPlacement()
+    {
+        if (IsDisposed) return;
+        var visible = VisibleSnapshots();
+        if (!_config.Enabled || visible.Count == 0 || !TryPlace(visible.Count, out var placement))
+        {
+            Hide();
+            return;
+        }
+
+        Bounds = placement;
+        if (!Visible) Show();
+        if (IsHandleCreated)
+            SetWindowPos(Handle, HwndTopmost, Left, Top, Width, Height, SwpNoActivate | SwpShowWindow);
+    }
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindow(string? className, string? windowName);
 
@@ -290,9 +420,23 @@ internal sealed class TaskbarUsageOverlay : Form
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr handle, out NativeRect rectangle);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr handle, int attribute, ref int value, int valueSize);
+
     [StructLayout(LayoutKind.Sequential)]
     private readonly struct NativeRect
     {
+        public NativeRect(int left, int top, int right, int bottom)
+        {
+            Left = left;
+            Top = top;
+            Right = right;
+            Bottom = bottom;
+        }
+
         public readonly int Left;
         public readonly int Top;
         public readonly int Right;
@@ -300,5 +444,44 @@ internal sealed class TaskbarUsageOverlay : Form
 
         public int Width => Right - Left;
         public int Height => Bottom - Top;
+    }
+}
+
+/// <summary>
+/// The taskbar widget follows Windows personalization rather than the
+/// application's Zarpa theme. Registry values are the same values used by
+/// Windows for the light/dark app preference; SystemColors keep high contrast
+/// and accessibility settings respected too.
+/// </summary>
+internal readonly record struct WindowsTaskbarPalette(
+    Color Surface,
+    Color Border,
+    Color Text,
+    Color TextMuted,
+    Color Accent,
+    Color Warning,
+    Color Danger)
+{
+    public static WindowsTaskbarPalette Read()
+    {
+        var light = true;
+        using (var key = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"))
+        {
+            if (key?.GetValue("AppsUseLightTheme") is int value) light = value != 0;
+        }
+
+        var accent = SystemColors.Highlight;
+        if (accent == Color.Black || accent == Color.White)
+            accent = light ? Color.FromArgb(0, 103, 192) : Color.FromArgb(96, 165, 250);
+
+        return light
+            ? new WindowsTaskbarPalette(
+                Color.FromArgb(248, 248, 248), Color.FromArgb(210, 210, 210),
+                SystemColors.ControlText, SystemColors.GrayText, accent,
+                Color.FromArgb(180, 95, 0), Color.FromArgb(196, 43, 28))
+            : new WindowsTaskbarPalette(
+                Color.FromArgb(32, 32, 32), Color.FromArgb(72, 72, 72),
+                Color.FromArgb(245, 245, 245), Color.FromArgb(185, 185, 185), accent,
+                Color.FromArgb(255, 185, 80), Color.FromArgb(255, 110, 100));
     }
 }

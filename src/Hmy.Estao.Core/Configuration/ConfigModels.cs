@@ -32,6 +32,12 @@ public sealed class TaskbarOverlayConfig
 
     [JsonPropertyName("controls")]
     public List<string> Controls { get; set; } = TaskbarOverlayControlCatalog.Default.ToList();
+
+    [JsonPropertyName("displayMode")]
+    public string DisplayMode { get; set; } = "icon-title";
+
+    [JsonPropertyName("size")]
+    public string Size { get; set; } = "normal";
 }
 
 public static class TaskbarOverlayControlCatalog
@@ -49,6 +55,12 @@ public static class TaskbarOverlayControlCatalog
         "reset" => "Reset time",
         _ => id
     };
+}
+
+public static class TaskbarOverlayDisplayCatalog
+{
+    public static readonly string[] DisplayModes = ["icon", "icon-title", "title"];
+    public static readonly string[] Sizes = ["compact", "normal", "spacious"];
 }
 
 public sealed class ProviderConfig

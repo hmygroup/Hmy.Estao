@@ -85,6 +85,10 @@ public sealed class ConfigStore
         config.TaskbarOverlay ??= new TaskbarOverlayConfig();
         config.TaskbarOverlay.ProviderIds ??= [];
         config.TaskbarOverlay.Controls ??= [];
+        config.TaskbarOverlay.DisplayMode = NormalizeOverlayValue(
+            config.TaskbarOverlay.DisplayMode, TaskbarOverlayDisplayCatalog.DisplayModes, "icon-title");
+        config.TaskbarOverlay.Size = NormalizeOverlayValue(
+            config.TaskbarOverlay.Size, TaskbarOverlayDisplayCatalog.Sizes, "normal");
         config.TaskbarOverlay.ProviderIds = config.TaskbarOverlay.ProviderIds
             .Select(ProviderCatalog.NormalizeId)
             .Where(ProviderCatalog.IsSupported)
@@ -119,6 +123,12 @@ public sealed class ConfigStore
     private static string NormalizeEnumValue(string? value, string fallback)
     {
         return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim().ToLowerInvariant();
+    }
+
+    private static string NormalizeOverlayValue(string? value, IReadOnlyCollection<string> allowed, string fallback)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim().ToLowerInvariant();
+        return allowed.Contains(normalized, StringComparer.OrdinalIgnoreCase) ? normalized : fallback;
     }
 }
 

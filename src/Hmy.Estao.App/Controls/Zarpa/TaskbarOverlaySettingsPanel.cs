@@ -6,6 +6,8 @@ namespace Hmy.Estao.App.Controls.Zarpa;
 internal sealed class TaskbarOverlaySettingsPanel : Panel
 {
     private readonly ZarpaToggleSwitch _enabled = new() { Text = "Show usage on the Windows taskbar", Width = 330 };
+    private readonly ZarpaComboBox _displayMode = new() { LabelText = "Identity", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+    private readonly ZarpaComboBox _size = new() { LabelText = "Size", DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
     private readonly FlowLayoutPanel _providers = new() { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = false, Margin = Padding.Empty };
     private readonly FlowLayoutPanel _controls = new() { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = false, Margin = Padding.Empty };
     private readonly Dictionary<string, ZarpaCheckBox> _providerChecks = new(StringComparer.OrdinalIgnoreCase);
@@ -13,7 +15,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
 
     public TaskbarOverlaySettingsPanel()
     {
-        Height = 204;
+        Height = 300;
         Dock = DockStyle.Top;
         Padding = new Padding(6, 8, 6, 10);
 
@@ -36,36 +38,54 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         var header = new Panel { Dock = DockStyle.Top, Height = 49 };
         header.Controls.Add(_enabled);
 
+        var options = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 38,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = Padding.Empty,
+            Margin = Padding.Empty
+        };
+        options.Controls.Add(_displayMode);
+        options.Controls.Add(_size);
+
         var providersLabel = SectionLabel("Providers");
         var controlsLabel = SectionLabel("Modules");
         var rows = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 2,
+            ColumnCount = 1,
+            RowCount = 4,
             Margin = Padding.Empty,
             Padding = Padding.Empty
         };
-        rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-        rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        rows.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        rows.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
         rows.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
         rows.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         rows.Controls.Add(providersLabel, 0, 0);
-        rows.Controls.Add(controlsLabel, 1, 0);
         rows.Controls.Add(_providers, 0, 1);
-        rows.Controls.Add(_controls, 1, 1);
+        rows.Controls.Add(controlsLabel, 0, 2);
+        rows.Controls.Add(_controls, 0, 3);
 
         Controls.Add(rows);
+        Controls.Add(options);
         Controls.Add(header);
         Controls.Add(helper);
         Controls.Add(title);
 
         BuildChecks();
+        foreach (var mode in TaskbarOverlayDisplayCatalog.DisplayModes) _displayMode.Items.Add(mode);
+        foreach (var size in TaskbarOverlayDisplayCatalog.Sizes) _size.Items.Add(size);
     }
 
     public void LoadConfig(EstaoConfig config)
     {
         _enabled.Checked = config.TaskbarOverlay.Enabled;
+        _displayMode.SelectedIndex = Math.Max(0, _displayMode.Items.IndexOf(config.TaskbarOverlay.DisplayMode));
+        _size.SelectedIndex = Math.Max(0, _size.Items.IndexOf(config.TaskbarOverlay.Size));
         var configuredProviders = config.TaskbarOverlay.ProviderIds;
         foreach (var (id, check) in _providerChecks)
         {
@@ -81,6 +101,8 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
     public void Apply(TaskbarOverlayConfig config)
     {
         config.Enabled = _enabled.Checked;
+        config.DisplayMode = _displayMode.SelectedItem?.ToString() ?? "icon-title";
+        config.Size = _size.SelectedItem?.ToString() ?? "normal";
         config.ProviderIds = _providerChecks.Where(item => item.Value.Checked).Select(item => item.Key).ToList();
         config.Controls = _controlChecks.Where(item => item.Value.Checked).Select(item => item.Key).ToList();
         if (config.Controls.Count == 0)
