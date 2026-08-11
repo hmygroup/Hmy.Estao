@@ -15,7 +15,7 @@ internal sealed class UsagePopover : ZarpaModernForm
     private readonly Action _quit;
     private readonly ZarpaReferenceSurface _surface = new();
     private readonly TableLayoutPanel _tabs = new();
-    private readonly Panel _tabSpacer = new() { Dock = DockStyle.Top, Height = 6 };
+    private readonly ZarpaThemeMotif _tabSpacer = new() { Dock = DockStyle.Top, Height = 22 };
     private readonly ZarpaUsageContent _content = new();
     private readonly ZarpaScrollBar _scrollBar = new() { Orientation = Orientation.Vertical, Dock = DockStyle.Right, Width = 9 };
     private readonly ZarpaThemeManager _theme;
@@ -304,7 +304,7 @@ internal sealed class UsagePopover : ZarpaModernForm
     private void ApplyContainerTheme()
     {
         _tabs.BackColor = _theme.Theme.Surface;
-        _tabSpacer.BackColor = _theme.Theme.Surface;
+        _tabSpacer.ApplyTheme(_theme.Theme);
         _surface.ApplyTheme(_theme.Theme);
         _content.ApplyTheme(_theme.Theme);
         _scrollBar.ApplyTheme(_theme.Theme);

@@ -62,6 +62,8 @@ internal sealed class TaskbarUsageOverlay : Form
 
     protected override bool ShowWithoutActivation => true;
 
+    public bool IsMoveMode => _moveMode;
+
     public void Update(
         IReadOnlyList<UsageSnapshot> snapshots,
         IReadOnlyList<UsageHistoryPoint> history,

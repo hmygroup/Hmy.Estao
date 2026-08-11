@@ -472,6 +472,125 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
     }
 }
 
+/// <summary>
+/// Small original vector motifs that give branded palettes a visual signature
+/// without embedding or reproducing a tobacco company logo.
+/// </summary>
+internal sealed class ZarpaThemeMotif : Control, IZarpaThemeAware
+{
+    private ZarpaThemeTokens? _theme;
+
+    public ZarpaThemeMotif()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+        BackColor = ZarpaPopoverPalette.SurfaceTop;
+    }
+
+    public void ApplyTheme(ZarpaThemeTokens value)
+    {
+        _theme = value;
+        BackColor = value.Surface;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        if (_theme is null || Width < 40 || Height < 10) return;
+
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var primary = Color.FromArgb(210, _theme.Accent);
+        var secondary = Color.FromArgb(175, _theme.Selection);
+        var bounds = new Rectangle(Math.Max(4, Width - 42), 2, 34, Height - 5);
+        var center = new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+
+        switch (_theme.Preset)
+        {
+            case ZarpaThemePreset.Camel:
+                DrawCamel(e.Graphics, bounds, primary, secondary);
+                break;
+            case ZarpaThemePreset.Marlboro:
+            case ZarpaThemePreset.MarlboroGold:
+                DrawChevron(e.Graphics, bounds, primary, secondary);
+                break;
+            case ZarpaThemePreset.Lucky:
+                using (var outer = new Pen(primary, 2F))
+                using (var inner = new Pen(secondary, 2F))
+                using (var dot = new SolidBrush(primary))
+                {
+                    e.Graphics.DrawEllipse(outer, new Rectangle(center.X - 9, center.Y - 9, 18, 18));
+                    e.Graphics.DrawEllipse(inner, new Rectangle(center.X - 5, center.Y - 5, 10, 10));
+                    e.Graphics.FillEllipse(dot, new Rectangle(center.X - 2, center.Y - 2, 4, 4));
+                }
+                break;
+            case ZarpaThemePreset.Winston:
+                using (var red = new SolidBrush(primary))
+                using (var blue = new SolidBrush(secondary))
+                {
+                    e.Graphics.FillRectangle(red, bounds.Left + 2, bounds.Top + 3, bounds.Width - 4, 4);
+                    e.Graphics.FillRectangle(blue, bounds.Left + 2, bounds.Top + 9, bounds.Width - 4, 4);
+                }
+                break;
+            case ZarpaThemePreset.Virginia:
+                using (var teal = new Pen(primary, 2F))
+                using (var gold = new Pen(secondary, 1.5F))
+                {
+                    e.Graphics.DrawLine(teal, bounds.Left + 8, bounds.Bottom - 3, center.X, bounds.Top + 3);
+                    e.Graphics.DrawLine(teal, center.X, bounds.Top + 3, bounds.Right - 8, bounds.Bottom - 3);
+                    e.Graphics.DrawLine(gold, bounds.Left + 4, bounds.Top + 4, bounds.Left + 4, bounds.Bottom - 3);
+                }
+                break;
+            case ZarpaThemePreset.Pueblo:
+                using (var sun = new Pen(primary, 2F))
+                using (var leaf = new Pen(secondary, 2F))
+                {
+                    e.Graphics.DrawEllipse(sun, new Rectangle(center.X - 6, center.Y - 6, 12, 12));
+                    for (var angle = 0; angle < 360; angle += 45)
+                    {
+                        var radians = angle * Math.PI / 180D;
+                        var start = new PointF(center.X + (float)Math.Cos(radians) * 9F, center.Y + (float)Math.Sin(radians) * 9F);
+                        var end = new PointF(center.X + (float)Math.Cos(radians) * 12F, center.Y + (float)Math.Sin(radians) * 12F);
+                        e.Graphics.DrawLine(sun, start, end);
+                    }
+                    e.Graphics.DrawArc(leaf, new Rectangle(bounds.Left + 5, bounds.Top + 2, 18, 17), 205, 125);
+                }
+                break;
+            default:
+                using (var diamond = new Pen(primary, 1.5F))
+                    e.Graphics.DrawRectangle(diamond, new Rectangle(center.X - 6, center.Y - 6, 12, 12));
+                break;
+        }
+    }
+
+    private static void DrawChevron(Graphics graphics, Rectangle bounds, Color primary, Color secondary)
+    {
+        using var gold = new Pen(secondary, 2F);
+        using var red = new Pen(primary, 1.5F);
+        var points = new[]
+        {
+            new PointF(bounds.Left + 3, bounds.Top + 4),
+            new PointF(bounds.Left + bounds.Width / 2F, bounds.Bottom - 3),
+            new PointF(bounds.Right - 3, bounds.Top + 4)
+        };
+        graphics.DrawLines(gold, points);
+        graphics.DrawLine(red, points[0].X + 3, points[0].Y, points[1].X, points[1].Y - 3);
+        graphics.DrawLine(red, points[1].X, points[1].Y - 3, points[2].X - 3, points[2].Y);
+    }
+
+    private static void DrawCamel(Graphics graphics, Rectangle bounds, Color primary, Color secondary)
+    {
+        using var sun = new SolidBrush(secondary);
+        using var dunes = new Pen(primary, 1.5F);
+        graphics.FillEllipse(sun, new Rectangle(bounds.Left + 4, bounds.Top + 2, 7, 7));
+        graphics.DrawArc(dunes, new Rectangle(bounds.Left, bounds.Top + 8, bounds.Width, 12), 190, 160);
+        graphics.DrawArc(dunes, new Rectangle(bounds.Left + 6, bounds.Top + 4, 14, 10), 185, 170);
+        graphics.DrawArc(dunes, new Rectangle(bounds.Left + 15, bounds.Top + 5, 14, 9), 185, 170);
+        graphics.DrawLine(dunes, bounds.Left + 10, bounds.Bottom - 5, bounds.Left + 10, bounds.Bottom - 1);
+        graphics.DrawLine(dunes, bounds.Left + 23, bounds.Bottom - 5, bounds.Left + 23, bounds.Bottom - 1);
+    }
+}
+
 internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
 {
     private ZarpaThemeTokens? _theme;
