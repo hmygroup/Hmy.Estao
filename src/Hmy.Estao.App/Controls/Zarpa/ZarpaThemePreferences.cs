@@ -12,9 +12,16 @@ internal static class ZarpaThemePreferences
     public static IReadOnlyList<ZarpaBackdropStyle> AvailableBackdrops { get; } =
         Enum.GetValues<ZarpaBackdropStyle>();
 
+    public static string DisplayName(ZarpaThemePreset preset) => preset switch
+    {
+        ZarpaThemePreset.MarlboroGold => "Marlboro Gold",
+        _ => preset.ToString()
+    };
+
     public static ZarpaThemePreset Parse(string? value)
     {
-        return Enum.TryParse<ZarpaThemePreset>(value, ignoreCase: true, out var preset) &&
+        var normalized = value?.Replace(" ", string.Empty, StringComparison.Ordinal);
+        return Enum.TryParse<ZarpaThemePreset>(normalized, ignoreCase: true, out var preset) &&
                preset != ZarpaThemePreset.Custom
             ? preset
             : ZarpaThemePreset.Graphite;

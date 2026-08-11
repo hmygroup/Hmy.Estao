@@ -64,7 +64,7 @@ public sealed class SettingsForm : ZarpaModernForm
         _overlaySettings.SetMovementAvailable(_beginMoveOverlay is not null);
         _overlaySettings.MoveModeChanged += SetOverlayMoveMode;
         _overlaySettings.ResetPositionRequested += ResetOverlayPosition;
-        foreach (var preset in ZarpaThemePreferences.Available) _themePicker.Items.Add(preset.ToString());
+        foreach (var preset in ZarpaThemePreferences.Available) _themePicker.Items.Add(ZarpaThemePreferences.DisplayName(preset));
         foreach (var backdrop in ZarpaThemePreferences.AvailableBackdrops) _backdropPicker.Items.Add(backdrop.ToString());
         _themePicker.SelectedIndexChanged += (_, _) =>
             _theme.Preset = ZarpaThemePreferences.Parse(_themePicker.Text);
@@ -170,7 +170,7 @@ public sealed class SettingsForm : ZarpaModernForm
             _config = await _configStore.LoadAsync().ConfigureAwait(true);
             _overlaySettings.LoadConfig(_config);
             _refreshSettings.LoadConfig(_config);
-            var selectedTheme = ZarpaThemePreferences.Parse(_config.Theme).ToString();
+            var selectedTheme = ZarpaThemePreferences.DisplayName(ZarpaThemePreferences.Parse(_config.Theme));
             _themePicker.SelectedIndex = Math.Max(0, _themePicker.Items.IndexOf(selectedTheme));
             var selectedBackdrop = ZarpaThemePreferences.ParseBackdrop(_config.BackdropStyle).ToString();
             _backdropPicker.SelectedIndex = Math.Max(0, _backdropPicker.Items.IndexOf(selectedBackdrop));

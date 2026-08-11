@@ -5,7 +5,7 @@ using Hmy.Estao.Core.Models;
 using Hmy.Estao.Core.Providers;
 using Hmy.Estao.Core.Refresh;
 using Hmy.Estao.App.Controls.Zarpa;
-using Microsoft.Win32;
+using Hmy.Estao.App.Services;
 using ZarpaSuite.Controls;
 
 namespace Hmy.Estao.App;
@@ -105,11 +105,17 @@ public sealed class TrayApplicationContext : ApplicationContext
         AddAccountMenu(menu);
         menu.Items.Add(new ZarpaMenuItem("Settings...", "ic_fluent_settings_24_regular", (_, _) => ShowSettings()));
         menu.Items.Add(new ToolStripSeparator());
-        var startup = new ToolStripMenuItem("Launch at sign-in") { Checked = StartupRegistration.IsEnabled() };
+        var startup = new ToolStripMenuItem("Launch at sign-in") { Checked = StartupManager.IsStartupEnabled() };
         startup.Click += (_, _) =>
         {
-            StartupRegistration.SetEnabled(!StartupRegistration.IsEnabled());
-            startup.Checked = StartupRegistration.IsEnabled();
+            var enable = !StartupManager.IsStartupEnabled();
+            var updated = enable ? StartupManager.EnableStartup() : StartupManager.DisableStartup();
+            startup.Checked = StartupManager.IsStartupEnabled();
+            if (!updated)
+            {
+                MessageBox.Show("Could not update the Windows startup setting.", EstaoConstants.DisplayName,
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         };
         menu.Items.Add(startup);
         menu.Items.Add(new ZarpaMenuItem("Quit", "ic_fluent_dismiss_circle_24_regular", (_, _) => ExitThread()) { Tone = ZarpaMenuItemTone.Danger });
@@ -337,28 +343,4 @@ public sealed class TrayApplicationContext : ApplicationContext
         _ => "ic_fluent_apps_24_regular"
     };
 
-}
-
-internal static class StartupRegistration
-{
-    private const string RunKey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-
-    public static bool IsEnabled()
-    {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: false);
-        return key?.GetValue(EstaoConstants.DisplayName) is string;
-    }
-
-    public static void SetEnabled(bool enabled)
-    {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true) ?? Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
-        if (enabled)
-        {
-            key.SetValue(EstaoConstants.DisplayName, Application.ExecutablePath);
-        }
-        else
-        {
-            key.DeleteValue(EstaoConstants.DisplayName, throwOnMissingValue: false);
-        }
-    }
 }

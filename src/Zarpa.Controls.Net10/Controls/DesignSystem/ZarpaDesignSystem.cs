@@ -196,6 +196,12 @@ namespace ZarpaSuite.Controls
         NordFrost,
         Aubergine,
         Marlboro,
+        Camel,
+        MarlboroGold,
+        Lucky,
+        Winston,
+        Virginia,
+        Pueblo,
         HighContrast,
         Custom
     }
@@ -279,6 +285,36 @@ namespace ZarpaSuite.Controls
                         Color.FromArgb(222, 205, 202), Color.FromArgb(177, 148, 145), Color.FromArgb(28, 27, 25), Color.FromArgb(104, 98, 93),
                         Color.FromArgb(205, 24, 35), Color.FromArgb(230, 45, 54), Color.FromArgb(161, 14, 24), Color.FromArgb(250, 216, 218), Color.FromArgb(48, 55, 20, 20),
                         "Segoe UI", 9F, 23F, 4, 6, 36, 42, 40, 4, 9, 18, 22, 1, 2, 125, 85, 175);
+                case ZarpaThemePreset.Camel:
+                    return Create(Color.FromArgb(247, 241, 226), Color.FromArgb(255, 252, 243), Color.FromArgb(238, 225, 194), Color.FromArgb(224, 205, 163),
+                        Color.FromArgb(210, 188, 143), Color.FromArgb(169, 139, 87), Color.FromArgb(48, 43, 34), Color.FromArgb(116, 101, 76),
+                        Color.FromArgb(185, 126, 35), Color.FromArgb(208, 151, 57), Color.FromArgb(145, 91, 20), Color.FromArgb(248, 228, 180), Color.FromArgb(46, 62, 38, 20),
+                        "Segoe UI", 9F, 23F, 7, 9, 36, 42, 40, 4, 9, 18, 22, 1, 2, 145, 95, 195);
+                case ZarpaThemePreset.MarlboroGold:
+                    return Create(Color.FromArgb(246, 242, 230), Color.FromArgb(255, 253, 245), Color.FromArgb(239, 228, 195), Color.FromArgb(225, 207, 157),
+                        Color.FromArgb(211, 190, 142), Color.FromArgb(167, 141, 83), Color.FromArgb(48, 42, 32), Color.FromArgb(115, 101, 72),
+                        Color.FromArgb(181, 137, 47), Color.FromArgb(207, 164, 72), Color.FromArgb(143, 101, 24), Color.FromArgb(248, 227, 174), Color.FromArgb(50, 63, 35, 18),
+                        "Segoe UI", 9F, 23F, 6, 8, 36, 42, 40, 4, 9, 18, 22, 1, 2, 140, 90, 190);
+                case ZarpaThemePreset.Lucky:
+                    return Create(Color.FromArgb(241, 247, 241), Color.FromArgb(253, 255, 252), Color.FromArgb(224, 239, 226), Color.FromArgb(207, 229, 211),
+                        Color.FromArgb(186, 212, 190), Color.FromArgb(113, 157, 119), Color.FromArgb(27, 57, 34), Color.FromArgb(82, 119, 89),
+                        Color.FromArgb(37, 125, 73), Color.FromArgb(57, 153, 91), Color.FromArgb(24, 96, 54), Color.FromArgb(211, 239, 216), Color.FromArgb(38, 28, 72, 38),
+                        "Segoe UI", 9F, 22F, 8, 10, 35, 41, 39, 4, 8, 17, 22, 1, 2, 135, 90, 185);
+                case ZarpaThemePreset.Winston:
+                    return Create(Color.FromArgb(242, 244, 248), Color.FromArgb(255, 255, 255), Color.FromArgb(229, 234, 243), Color.FromArgb(213, 220, 233),
+                        Color.FromArgb(197, 205, 220), Color.FromArgb(132, 145, 169), Color.FromArgb(28, 38, 57), Color.FromArgb(91, 104, 127),
+                        Color.FromArgb(166, 39, 52), Color.FromArgb(196, 57, 70), Color.FromArgb(127, 22, 36), Color.FromArgb(246, 215, 218), Color.FromArgb(42, 37, 53, 76),
+                        "Segoe UI", 9F, 22F, 6, 8, 35, 41, 39, 4, 8, 17, 22, 1, 2, 135, 90, 185);
+                case ZarpaThemePreset.Virginia:
+                    return Create(Color.FromArgb(239, 248, 247), Color.FromArgb(253, 255, 255), Color.FromArgb(222, 241, 239), Color.FromArgb(204, 229, 227),
+                        Color.FromArgb(180, 211, 209), Color.FromArgb(105, 158, 157), Color.FromArgb(22, 57, 59), Color.FromArgb(76, 117, 119),
+                        Color.FromArgb(30, 142, 143), Color.FromArgb(52, 171, 169), Color.FromArgb(17, 109, 111), Color.FromArgb(204, 239, 236), Color.FromArgb(36, 26, 72, 72),
+                        "Segoe UI", 9F, 22F, 9, 11, 36, 42, 40, 4, 9, 18, 22, 1, 2, 145, 95, 195);
+                case ZarpaThemePreset.Pueblo:
+                    return Create(Color.FromArgb(246, 240, 222), Color.FromArgb(255, 251, 237), Color.FromArgb(235, 221, 190), Color.FromArgb(218, 197, 155),
+                        Color.FromArgb(201, 178, 130), Color.FromArgb(153, 125, 77), Color.FromArgb(58, 48, 31), Color.FromArgb(119, 103, 76),
+                        Color.FromArgb(126, 105, 45), Color.FromArgb(157, 132, 58), Color.FromArgb(96, 77, 28), Color.FromArgb(239, 220, 170), Color.FromArgb(44, 55, 38, 20),
+                        "Segoe UI", 9F, 22F, 7, 9, 35, 41, 39, 4, 8, 17, 22, 1, 2, 140, 90, 190);
                 default:
                     return Create(Color.FromArgb(247, 248, 252), Color.White, Color.FromArgb(242, 244, 250), Color.FromArgb(234, 236, 246),
                         Color.FromArgb(224, 227, 238), Color.FromArgb(188, 193, 211), Color.FromArgb(28, 29, 36), Color.FromArgb(103, 107, 124),
@@ -294,7 +330,10 @@ namespace ZarpaSuite.Controls
                 preset == ZarpaThemePreset.OceanTeal || preset == ZarpaThemePreset.EmeraldForest ||
                 preset == ZarpaThemePreset.RoseQuartz || preset == ZarpaThemePreset.LavenderMist ||
                 preset == ZarpaThemePreset.MidnightNavy || preset == ZarpaThemePreset.NordFrost ||
-                preset == ZarpaThemePreset.Aubergine || preset == ZarpaThemePreset.Marlboro;
+                preset == ZarpaThemePreset.Aubergine || preset == ZarpaThemePreset.Marlboro ||
+                preset == ZarpaThemePreset.Camel || preset == ZarpaThemePreset.MarlboroGold ||
+                preset == ZarpaThemePreset.Lucky || preset == ZarpaThemePreset.Winston ||
+                preset == ZarpaThemePreset.Virginia || preset == ZarpaThemePreset.Pueblo;
         }
 
         private static ZarpaPresetDefinition Create(Color canvas, Color surface, Color raised, Color overlay,
