@@ -22,7 +22,6 @@ internal sealed class UsagePopover : ZarpaModernForm
     private IReadOnlyList<UsageHistoryPoint> _history = [];
     private string? _selectedProvider;
     private bool _allowDeactivateClose;
-    private Size _regionSize;
 
     public UsagePopover(
         IReadOnlyList<UsageSnapshot> snapshots,
@@ -120,29 +119,6 @@ internal sealed class UsagePopover : ZarpaModernForm
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
-        UpdateWindowRegion();
-    }
-
-    private void UpdateWindowRegion()
-    {
-        if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
-        if (_regionSize == ClientSize && Region is not null) return;
-        _regionSize = ClientSize;
-
-        using var path = ZarpaPopoverPaint.RoundedPath(
-            new Rectangle(Point.Empty, ClientSize), PopupCornerRadius);
-        var previousRegion = Region;
-        Region = new Region(path);
-        previousRegion?.Dispose();
-    }
-
-    private int PopupCornerRadius
-    {
-        get
-        {
-            var logicalRadius = _theme is null ? 9 : Math.Max(6, _theme.Theme.GroupCornerRadius);
-            return Math.Max(1, (int)Math.Round(logicalRadius * DeviceDpi / 96D));
-        }
     }
 
     public void ShowAt(Point anchor)
@@ -205,7 +181,6 @@ internal sealed class UsagePopover : ZarpaModernForm
         _theme.Preset = preset;
         _theme.BackdropStyle = backdropStyle;
         _theme.BackdropOpacity = backdropOpacity;
-        UpdateWindowRegion();
         ApplyContainerTheme();
     }
 

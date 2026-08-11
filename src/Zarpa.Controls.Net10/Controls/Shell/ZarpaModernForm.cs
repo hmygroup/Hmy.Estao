@@ -36,6 +36,7 @@ namespace ZarpaSuite.Controls
         private const int HtTop = 12, HtTopLeft = 13, HtTopRight = 14;
         private const int HtBottom = 15, HtBottomLeft = 16, HtBottomRight = 17;
         private const int DwmwaSystemBackdropType = 38;
+        private const int DwmwaBorderColor = 34;
         private const int DwmsbtNone = 1;
         private const int DwmsbtMainWindow = 2;
         private const int DwmsbtTransientWindow = 3;
@@ -114,6 +115,7 @@ namespace ZarpaSuite.Controls
             BackColor = theme.Canvas;
             ForeColor = theme.Text;
             Font = new Font(theme.FontFamily, theme.FontSize);
+            ApplyDwmBorderColor(theme.Border);
             ApplyBackdrop(theme.BackdropStyle, theme.BackdropOpacity);
             Invalidate(true);
         }
@@ -279,17 +281,30 @@ namespace ZarpaSuite.Controls
         {
             base.OnHandleCreated(e);
             ApplyWindowsCorners();
+            ApplyDwmBorderColor(theme.Border);
             ApplyBackdrop(theme.BackdropStyle, theme.BackdropOpacity);
             ApplyDpiScale(ZarpaDpiScale.FromControl(this));
         }
 
         private void ApplyWindowsCorners()
         {
-            if (!modernChrome) return;
             try
             {
                 int preference = 2; // DWMWCP_ROUND; Windows 10 simply ignores it.
                 DwmSetWindowAttribute(Handle, 33, ref preference, sizeof(int)); // DWMWA_WINDOW_CORNER_PREFERENCE
+            }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
+        }
+
+        private void ApplyDwmBorderColor(Color color)
+        {
+            if (!IsHandleCreated) return;
+            // DWMWA_BORDER_COLOR expects a COLORREF (0x00BBGGRR), not ARGB.
+            int colorRef = color.R | (color.G << 8) | (color.B << 16);
+            try
+            {
+                DwmSetWindowAttribute(Handle, DwmwaBorderColor, ref colorRef, sizeof(int));
             }
             catch (DllNotFoundException) { }
             catch (EntryPointNotFoundException) { }

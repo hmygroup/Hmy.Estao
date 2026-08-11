@@ -420,7 +420,6 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
 internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
 {
     private ZarpaThemeTokens? _theme;
-    private Size _regionSize;
 
     public ZarpaReferenceSurface()
     {
@@ -432,10 +431,6 @@ internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
-        if (_regionSize == ClientSize) return;
-        _regionSize = ClientSize;
-        using var path = ZarpaPopoverPaint.RoundedPath(new Rectangle(0, 0, Width, Height), CornerRadius);
-        Region = new Region(path);
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
