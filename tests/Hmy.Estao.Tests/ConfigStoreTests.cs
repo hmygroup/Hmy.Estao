@@ -12,6 +12,7 @@ public sealed class ConfigStoreTests
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "config.json");
         var config = await new ConfigStore(path).LoadAsync();
 
+        Assert.Equal(96, config.BackdropOpacity);
         Assert.Contains(config.Providers, provider => provider.Id == "codex" && provider.Enabled == true);
         Assert.Contains(config.Providers, provider => provider.Id == "claude");
     }
@@ -128,6 +129,24 @@ public sealed class ConfigStoreTests
         var overlay = saved.RootElement.GetProperty("taskbarOverlay");
         Assert.False(overlay.TryGetProperty("positionX", out _));
         Assert.False(overlay.TryGetProperty("positionY", out _));
+    }
+
+    [Fact]
+    public async Task backdrop_opacity_round_trips_and_is_normalized()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "config.json");
+        var store = new ConfigStore(path);
+        var config = ConfigStore.CreateDefaultConfig();
+        config.BackdropOpacity = 68;
+
+        await store.SaveAsync(config);
+        var loaded = await store.LoadAsync();
+
+        Assert.Equal(68, loaded.BackdropOpacity);
+
+        loaded.BackdropOpacity = 140;
+        await store.SaveAsync(loaded);
+        Assert.Equal(100, (await store.LoadAsync()).BackdropOpacity);
     }
 
     [Fact]

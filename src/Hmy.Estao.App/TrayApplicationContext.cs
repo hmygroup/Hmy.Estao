@@ -286,6 +286,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _zarpaTheme.Preset = ZarpaThemePreferences.Parse(config.Theme);
         _zarpaTheme.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(config.BackdropStyle);
+        _zarpaTheme.BackdropOpacity = Math.Clamp(config.BackdropOpacity <= 0 ? 96 : config.BackdropOpacity, 1, 100);
     }
 
     private TaskbarOverlayConfig OverlayConfigForDisplay(EstaoConfig? source = null)

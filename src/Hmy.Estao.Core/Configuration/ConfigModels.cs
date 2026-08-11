@@ -13,6 +13,9 @@ public sealed class EstaoConfig
     [JsonPropertyName("backdropStyle")]
     public string BackdropStyle { get; set; } = "None";
 
+    [JsonPropertyName("backdropOpacity")]
+    public int BackdropOpacity { get; set; } = 96;
+
     [JsonPropertyName("hooks")]
     public object? Hooks { get; set; }
 

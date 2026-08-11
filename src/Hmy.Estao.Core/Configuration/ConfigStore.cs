@@ -83,6 +83,7 @@ public sealed class ConfigStore
         config.Version = config.Version <= 0 ? 1 : config.Version;
         config.Theme = string.IsNullOrWhiteSpace(config.Theme) ? "Graphite" : config.Theme.Trim();
         config.BackdropStyle = NormalizeBackdropStyle(config.BackdropStyle);
+        config.BackdropOpacity = Math.Clamp(config.BackdropOpacity <= 0 ? 96 : config.BackdropOpacity, 1, 100);
         config.Providers ??= [];
         config.TaskbarOverlay ??= new TaskbarOverlayConfig();
         config.Refresh ??= new RefreshConfig();
