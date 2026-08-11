@@ -259,7 +259,25 @@ internal static partial class ProviderHelpers
         using var process = Process.Start(startInfo) ?? throw new ProviderException($"Could not start {fileName}.");
         if (stdin is not null)
         {
-            await process.StandardInput.WriteAsync(stdin.AsMemory(), cancellationToken).ConfigureAwait(false);
+            var lines = stdin.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            for (var index = 0; index < lines.Length; index++)
+            {
+                await process.StandardInput.WriteLineAsync(lines[index].AsMemory(), cancellationToken).ConfigureAwait(false);
+                await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+                // Codex app-server completes initialize asynchronously. Give it a
+                // chance to emit the handshake before sending initialized/read calls.
+                if (index == 0 && lines.Length > 1)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            if (!process.HasExited)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+            }
+
             process.StandardInput.Close();
         }
 

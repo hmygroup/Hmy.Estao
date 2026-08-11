@@ -31,19 +31,27 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
     {
         var account = request.Account ?? GetAccounts(request.Config).FirstOrDefault();
         var home = account?.HomePath ?? Path.Combine(ProviderHelpers.UserHome(), ".codex");
+        UsageSnapshot? oauthSnapshot = null;
 
         if (request.Source is ProviderSource.Auto or ProviderSource.OAuth)
         {
             var oauth = await TryFetchOAuthAsync(home, account?.Label, request.CancellationToken).ConfigureAwait(false);
-            if (oauth is not null || request.Source is ProviderSource.OAuth)
+            oauthSnapshot = oauth;
+            if (request.Source is ProviderSource.OAuth)
             {
                 return oauth ?? UsageSnapshot.Failure(Id, "oauth", "Codex auth.json is missing or does not contain an access token.");
+            }
+
+            if (oauth is not null && HasUsableRateLimits(oauth))
+            {
+                return oauth;
             }
         }
 
         if (request.Source is ProviderSource.Auto or ProviderSource.Cli)
         {
-            return await FetchCliAsync(home, account?.Label, request.CancellationToken).ConfigureAwait(false);
+            var cli = await FetchCliAsync(home, account?.Label, request.CancellationToken).ConfigureAwait(false);
+            return cli.Error is null || oauthSnapshot is null ? cli : oauthSnapshot;
         }
 
         return UsageSnapshot.Failure(Id, request.Source.ToString().ToLowerInvariant(), "Codex MVP supports OAuth auth.json and codex app-server only.");
@@ -80,15 +88,16 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
 
     private async Task<UsageSnapshot> FetchCliAsync(string home, string? accountLabel, CancellationToken cancellationToken)
     {
-        var initialize = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"client\":\"Estao\"}}\n";
+        var initialize = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"Estao\",\"version\":\"0.1\"}}}\n";
+        var initialized = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}\n";
         var accountRead = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/read\",\"params\":{}}\n";
         var limitsRead = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"account/rateLimits/read\",\"params\":{}}\n";
         var output = await ProviderHelpers.RunProcessAsync(
-            "codex",
+            OperatingSystem.IsWindows() ? "codex.cmd" : "codex",
             "-s read-only -a untrusted app-server",
             home,
             new Dictionary<string, string?> { ["CODEX_HOME"] = home },
-            initialize + accountRead + limitsRead,
+            initialize + initialized + accountRead + limitsRead,
             cancellationToken).ConfigureAwait(false);
 
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -106,21 +115,19 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
 
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
+            var parsed = ParseRateLimits(root, "cli", email);
             if (ProviderHelpers.FindProperty(root, "email") is { } emailElement && emailElement.ValueKind == JsonValueKind.String)
             {
                 email = emailElement.GetString();
             }
 
-            plan ??= ProviderHelpers.FirstString(root, "plan", "planType", "subscriptionType");
+            plan ??= parsed.Plan;
+            credits ??= parsed.Credits;
 
-            if (ProviderHelpers.FindProperty(root, "primary_window", "primaryWindow") is { } primary)
+            foreach (var window in ParseWindows(root))
             {
-                windows.Add(Window("session", "Session", primary));
-            }
-
-            if (ProviderHelpers.FindProperty(root, "secondary_window", "secondaryWindow") is { } secondary)
-            {
-                windows.Add(Window("weekly", "Weekly", secondary));
+                windows.RemoveAll(existing => string.Equals(existing.Id, window.Id, StringComparison.OrdinalIgnoreCase));
+                windows.Add(window);
             }
 
             var balance = ProviderHelpers.FirstNumber(root, "balance", "credits");
@@ -138,27 +145,146 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
         return new UsageSnapshot(Id, ProviderCatalog.DisplayName(Id), "cli", DateTimeOffset.UtcNow, windows, email, plan, credits);
     }
 
-    private static UsageSnapshot SnapshotFromWham(JsonElement root, string source, string? accountLabel)
+    internal static UsageSnapshot ParseRateLimits(JsonElement root, string source, string? accountLabel)
     {
-        var windows = new List<RateWindow>();
-        if (ProviderHelpers.FindProperty(root, "primary_window", "primaryWindow", "five_hour") is { } primary)
-        {
-            windows.Add(Window("session", "Session", primary));
-        }
-
-        if (ProviderHelpers.FindProperty(root, "secondary_window", "secondaryWindow", "weekly") is { } secondary)
-        {
-            windows.Add(Window("weekly", "Weekly", secondary));
-        }
+        var windows = ParseWindows(root);
 
         var email = ProviderHelpers.FirstString(root, "email", "accountEmail") ?? accountLabel;
-        var plan = ProviderHelpers.FirstString(root, "plan", "planType", "subscriptionType");
-        var credits = ProviderHelpers.FirstNumber(root, "balance", "credits") is { } balance ? new CreditsSnapshot(balance, "credits") : null;
-        return new UsageSnapshot("codex", ProviderCatalog.DisplayName("codex"), source, DateTimeOffset.UtcNow, windows, email, plan, credits);
+        var rateLimits = FindRateLimits(root);
+        var plan = ProviderHelpers.FirstString(rateLimits ?? root,
+                "plan", "planType", "plan_type", "subscriptionType", "subscription_type")
+            ?? ProviderHelpers.FirstString(root,
+                "plan", "planType", "plan_type", "subscriptionType", "subscription_type");
+
+        var creditsElement = rateLimits is { } limits
+            ? ProviderHelpers.FindProperty(limits, "credits")
+            : null;
+        creditsElement ??= ProviderHelpers.FindProperty(root, "credits");
+        var balance = creditsElement is { } credits
+            ? ProviderHelpers.FirstNumber(credits, "balance", "credits")
+            : ProviderHelpers.FirstNumber(root, "balance", "credits");
+        var unlimited = creditsElement is { } creditObject
+            ? FirstBoolean(creditObject, "unlimited")
+            : null;
+        var creditsSnapshot = balance is { } value
+            ? new CreditsSnapshot(value, "credits", unlimited)
+            : null;
+
+        return new UsageSnapshot("codex", ProviderCatalog.DisplayName("codex"), source, DateTimeOffset.UtcNow,
+            windows, email, plan, creditsSnapshot);
     }
 
-    private static RateWindow Window(string id, string title, JsonElement element)
+    private static UsageSnapshot SnapshotFromWham(JsonElement root, string source, string? accountLabel)
+        => ParseRateLimits(root, source, accountLabel);
+
+    private static bool HasUsableRateLimits(UsageSnapshot snapshot)
     {
-        return new RateWindow(id, title, ProviderHelpers.PercentUsedFrom(element), ProviderHelpers.ResetFrom(element));
+        return snapshot.Windows.Any(window => window.PercentUsed is not null || window.ResetAt is not null);
+    }
+
+    private static IReadOnlyList<RateWindow> ParseWindows(JsonElement root)
+    {
+        var rateLimits = FindRateLimits(root) ?? root;
+        var windows = new List<RateWindow>();
+
+        AddWindow(windows, rateLimits, "session", "Session",
+            "primary", "primary_window", "primaryWindow", "five_hour", "fiveHour");
+        AddWindow(windows, rateLimits, "weekly", "Weekly",
+            "secondary", "secondary_window", "secondaryWindow", "weekly", "weekly_window", "weeklyWindow");
+
+        return windows;
+    }
+
+    private static JsonElement? FindRateLimits(JsonElement root)
+    {
+        var byLimitId = ProviderHelpers.FindProperty(root, "rateLimitsByLimitId", "rate_limits_by_limit_id");
+        if (byLimitId is { } limitsById &&
+            ProviderHelpers.FindProperty(limitsById, "codex") is { } codex &&
+            HasRateLimitData(codex))
+        {
+            return codex;
+        }
+
+        return ProviderHelpers.FindProperty(root, "rateLimits", "rate_limits", "rate_limit");
+    }
+
+    private static bool HasRateLimitData(JsonElement element)
+    {
+        foreach (var name in new[]
+        {
+            "primary", "secondary", "primary_window", "secondary_window",
+            "primaryWindow", "secondaryWindow", "five_hour", "weekly"
+        })
+        {
+            if (ProviderHelpers.FindProperty(element, name) is { } value && value.ValueKind == JsonValueKind.Object)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void AddWindow(List<RateWindow> windows, JsonElement rateLimits,
+        string fallbackId, string fallbackTitle, params string[] names)
+    {
+        var element = ProviderHelpers.FindProperty(rateLimits, names);
+        if (element is null || element.Value.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        var durationMinutes = WindowDurationMinutes(element.Value);
+        var isWeekly = durationMinutes is >= 1000;
+        var isSession = durationMinutes is > 0 and < 1000;
+        var id = isWeekly ? "weekly" : isSession ? "session" : fallbackId;
+        var title = id == "weekly" ? "Weekly" : id == "session" ? "Session" : fallbackTitle;
+        var window = new RateWindow(id, title,
+            ProviderHelpers.PercentUsedFrom(element.Value), ProviderHelpers.ResetFrom(element.Value));
+
+        windows.RemoveAll(existing => string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase));
+        windows.Add(window);
+    }
+
+    private static double? WindowDurationMinutes(JsonElement element)
+    {
+        var minutes = ProviderHelpers.FirstNumber(element,
+            "windowDurationMins", "window_duration_mins", "windowMinutes", "window_minutes");
+        if (minutes is not null)
+        {
+            return minutes;
+        }
+
+        var seconds = ProviderHelpers.FirstNumber(element,
+            "limitWindowSeconds", "limit_window_seconds", "windowDurationSeconds", "window_duration_seconds");
+        return seconds / 60D;
+    }
+
+    private static bool? FirstBoolean(JsonElement element, params string[] names)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (var name in names)
+        {
+            if (!element.TryGetProperty(name, out var property))
+            {
+                continue;
+            }
+
+            if (property.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                return property.GetBoolean();
+            }
+
+            if (property.ValueKind == JsonValueKind.String && bool.TryParse(property.GetString(), out var value))
+            {
+                return value;
+            }
+        }
+
+        return null;
     }
 }
