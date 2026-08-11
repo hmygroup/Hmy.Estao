@@ -21,6 +21,7 @@ internal sealed class TaskbarUsageOverlay : Form
     private const int TaskbarGap = 6;
     private const int WmNcHitTest = 0x0084;
     private const int HtTransparent = -1;
+    private const int HtClient = 1;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
     private static readonly IntPtr HwndTopmost = new(-1);
@@ -31,6 +32,12 @@ internal sealed class TaskbarUsageOverlay : Form
     private IReadOnlyList<UsageHistoryPoint> _history = [];
     private TaskbarOverlayConfig _config = new();
     private Rectangle _regionBounds;
+    private Action<Point>? _positionChanged;
+    private bool _moveMode;
+    private bool _dragging;
+    private Point _dragOffset;
+    private bool _restoreDisabledWindowAfterMove;
+    private bool _suppressPositionNotification;
 
     public TaskbarUsageOverlay()
     {
@@ -73,6 +80,50 @@ internal sealed class TaskbarUsageOverlay : Form
         Invalidate();
     }
 
+    public void BeginMove(Action<Point> positionChanged)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => BeginMove(positionChanged));
+            return;
+        }
+
+        var enteringMoveMode = !_moveMode;
+        _positionChanged = positionChanged;
+        _moveMode = true;
+        Cursor = Cursors.SizeAll;
+        RefreshPlacement();
+        if (enteringMoveMode && IsHandleCreated && !IsWindowEnabled(Handle))
+        {
+            // ShowDialog disables every other form on the UI thread. The
+            // overlay must be enabled temporarily or Windows sends the click
+            // straight through to the taskbar/window underneath it.
+            _restoreDisabledWindowAfterMove = true;
+            EnableWindow(Handle, true);
+        }
+        Invalidate();
+    }
+
+    public void EndMove()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(EndMove));
+            return;
+        }
+
+        _moveMode = false;
+        _positionChanged = null;
+        StopDragging();
+        if (_restoreDisabledWindowAfterMove && IsHandleCreated)
+        {
+            EnableWindow(Handle, false);
+            _restoreDisabledWindowAfterMove = false;
+        }
+        Cursor = Cursors.Default;
+        Invalidate();
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -95,6 +146,53 @@ internal sealed class TaskbarUsageOverlay : Form
         previousRegion?.Dispose();
     }
 
+    protected override void OnLocationChanged(EventArgs e)
+    {
+        base.OnLocationChanged(e);
+        if (!_moveMode || _suppressPositionNotification || WindowState != FormWindowState.Normal) return;
+
+        _config.PositionX = Left;
+        _config.PositionY = Top;
+        _positionChanged?.Invoke(Location);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (!_moveMode || e.Button != MouseButtons.Left) return;
+
+        _dragging = true;
+        _dragOffset = e.Location;
+        Capture = true;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!_dragging) return;
+        if ((Control.MouseButtons & MouseButtons.Left) == 0)
+        {
+            StopDragging();
+            return;
+        }
+
+        var cursor = Cursor.Position;
+        var desired = new Rectangle(cursor.X - _dragOffset.X, cursor.Y - _dragOffset.Y, Width, Height);
+        Location = ConstrainToScreen(desired).Location;
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button == MouseButtons.Left) StopDragging();
+    }
+
+    protected override void OnMouseCaptureChanged(EventArgs e)
+    {
+        base.OnMouseCaptureChanged(e);
+        if (!Capture) _dragging = false;
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
@@ -113,7 +211,7 @@ internal sealed class TaskbarUsageOverlay : Form
         var theme = _palette;
         var card = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
         ZarpaPopoverPaint.FillRounded(e.Graphics, theme.Surface, card, 8);
-        using (var outline = new Pen(theme.Border, 1F))
+        using (var outline = new Pen(_moveMode ? theme.Accent : theme.Border, _moveMode ? 2F : 1F))
         using (var path = ZarpaPopoverPaint.RoundedPath(card, 8))
             e.Graphics.DrawPath(outline, path);
 
@@ -128,6 +226,17 @@ internal sealed class TaskbarUsageOverlay : Form
                 using var separator = new Pen(Color.FromArgb(110, theme.Border), 1F);
                 e.Graphics.DrawLine(separator, bounds.Right + 1, 10, bounds.Right + 1, Height - 10);
             }
+        }
+
+
+        if (_moveMode)
+        {
+            var prompt = new Rectangle(2, 2, Math.Max(1, Width - 4), Math.Max(1, Height - 4));
+            using var wash = new SolidBrush(Color.FromArgb(225, theme.Surface));
+            using var promptFont = new Font("Segoe UI", 8F, FontStyle.Bold);
+            e.Graphics.FillRectangle(wash, prompt);
+            TextRenderer.DrawText(e.Graphics, "Drag to move", promptFont, prompt,
+                theme.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
 
@@ -145,7 +254,7 @@ internal sealed class TaskbarUsageOverlay : Form
     {
         if (m.Msg == WmNcHitTest)
         {
-            m.Result = (IntPtr)HtTransparent;
+            m.Result = (IntPtr)(_moveMode ? HtClient : HtTransparent);
             return;
         }
 
@@ -323,13 +432,20 @@ internal sealed class TaskbarUsageOverlay : Form
         if (string.Equals(_config.Size, "spacious", StringComparison.OrdinalIgnoreCase)) return 46;
         if (string.Equals(_config.Size, "compact", StringComparison.OrdinalIgnoreCase))
             return string.Equals(_config.DisplayMode, "icon", StringComparison.OrdinalIgnoreCase) ? 30 : 34;
-        return HasControl("chart") || HasControl("bar") || HasControl("usedTotal") || HasControl("reset")
-            ? StandardOverlayHeight : CompactOverlayHeight;
+        return StandardOverlayHeight;
     }
 
     private bool TryPlace(int providerCount, out Rectangle placement)
     {
         placement = Rectangle.Empty;
+        var size = new Size(14 + providerCount * SegmentWidth(), OverlayHeight());
+        ClientSize = size;
+        if (_config.PositionX is int x && _config.PositionY is int y)
+        {
+            placement = ConstrainToScreen(new Rectangle(new Point(x, y), size));
+            return true;
+        }
+
         var taskbar = FindWindow("Shell_TrayWnd", null);
         NativeRect taskbarRect = default;
         var hasNativeTaskbar = taskbar != IntPtr.Zero && GetWindowRect(taskbar, out taskbarRect);
@@ -347,7 +463,7 @@ internal sealed class TaskbarUsageOverlay : Form
         var right = taskbarRect.Right - 12;
         if (tray != IntPtr.Zero && GetWindowRect(tray, out var trayRect)) right = trayRect.Left - TaskbarGap;
 
-        var width = 14 + providerCount * SegmentWidth();
+        var width = size.Width;
         var left = right - width;
         if (left < taskbarRect.Left + TaskbarReservedLeft || width > taskbarRect.Width - TaskbarReservedLeft)
         {
@@ -359,11 +475,29 @@ internal sealed class TaskbarUsageOverlay : Form
             if (left < taskbarRect.Left + 12 || width > taskbarRect.Width - 24) return false;
         }
 
-        var height = OverlayHeight();
+        var height = size.Height;
         placement = new Rectangle(left, taskbarRect.Top + Math.Max(0, (taskbarRect.Height - height) / 2),
             width, height);
-        ClientSize = placement.Size;
         return true;
+    }
+
+    private static Rectangle ConstrainToScreen(Rectangle placement)
+    {
+        var center = new Point(placement.Left + placement.Width / 2, placement.Top + placement.Height / 2);
+        var bounds = Screen.FromPoint(center).Bounds;
+        var maxX = Math.Max(bounds.Left, bounds.Right - placement.Width);
+        var maxY = Math.Max(bounds.Top, bounds.Bottom - placement.Height);
+        return new Rectangle(
+            Math.Clamp(placement.Left, bounds.Left, maxX),
+            Math.Clamp(placement.Top, bounds.Top, maxY),
+            placement.Width,
+            placement.Height);
+    }
+
+    private void StopDragging()
+    {
+        _dragging = false;
+        if (Capture) Capture = false;
     }
 
     private static TaskbarOverlayConfig CloneConfig(TaskbarOverlayConfig value) => new()
@@ -372,7 +506,9 @@ internal sealed class TaskbarUsageOverlay : Form
         ProviderIds = value.ProviderIds?.ToList() ?? [],
         Controls = value.Controls?.ToList() ?? TaskbarOverlayControlCatalog.Default.ToList(),
         DisplayMode = value.DisplayMode,
-        Size = value.Size
+        Size = value.Size,
+        PositionX = value.PositionX,
+        PositionY = value.PositionY
     };
 
     private static string FormatValue(double value) => value >= 1000D ? value.ToString("0.#") : value.ToString("0.##");
@@ -413,7 +549,15 @@ internal sealed class TaskbarUsageOverlay : Form
             return;
         }
 
-        Bounds = placement;
+        _suppressPositionNotification = true;
+        try
+        {
+            Bounds = placement;
+        }
+        finally
+        {
+            _suppressPositionNotification = false;
+        }
         if (!Visible) Show();
         if (IsHandleCreated)
             SetWindowPos(Handle, HwndTopmost, Left, Top, Width, Height, SwpNoActivate | SwpShowWindow);
@@ -430,6 +574,14 @@ internal sealed class TaskbarUsageOverlay : Form
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnableWindow(IntPtr handle, [MarshalAs(UnmanagedType.Bool)] bool enable);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowEnabled(IntPtr handle);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr handle, int attribute, ref int value, int valueSize);

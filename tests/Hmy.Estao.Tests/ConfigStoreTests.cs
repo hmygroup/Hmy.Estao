@@ -108,6 +108,29 @@ public sealed class ConfigStoreTests
     }
 
     [Fact]
+    public async Task taskbar_overlay_custom_position_is_optional_and_round_trips()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "config.json");
+        var store = new ConfigStore(path);
+        var config = ConfigStore.CreateDefaultConfig();
+        config.TaskbarOverlay.PositionX = 420;
+        config.TaskbarOverlay.PositionY = 180;
+
+        await store.SaveAsync(config);
+        var loaded = await store.LoadAsync();
+
+        Assert.Equal(420, loaded.TaskbarOverlay.PositionX);
+        Assert.Equal(180, loaded.TaskbarOverlay.PositionY);
+
+        loaded.TaskbarOverlay.PositionY = null;
+        await store.SaveAsync(loaded);
+        using var saved = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var overlay = saved.RootElement.GetProperty("taskbarOverlay");
+        Assert.False(overlay.TryGetProperty("positionX", out _));
+        Assert.False(overlay.TryGetProperty("positionY", out _));
+    }
+
+    [Fact]
     public void resolves_hmy_estao_config_override()
     {
         var env = new FakeEnvironment("C:\\Users\\me", "D:\\configs\\estao.json");

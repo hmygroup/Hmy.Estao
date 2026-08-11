@@ -200,7 +200,10 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowSettings()
     {
-        using var form = new SettingsForm(_configStore, previewOverlay: PreviewOverlay);
+        using var form = new SettingsForm(_configStore,
+            previewOverlay: PreviewOverlay,
+            beginMoveOverlay: BeginMoveOverlay,
+            endMoveOverlay: _taskbarOverlay.EndMove);
         form.ShowDialog();
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         ApplyConfiguredTheme(_config);
@@ -220,6 +223,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             ShowUsagePopover();
     }
 
+    private void BeginMoveOverlay(EstaoConfig previewConfig, Action<Point> positionChanged)
+    {
+        ApplyConfiguredTheme(previewConfig);
+        _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay(previewConfig));
+        _taskbarOverlay.BeginMove(positionChanged);
+    }
+
     private void ApplyConfiguredTheme(EstaoConfig config)
     {
         _zarpaTheme.Preset = ZarpaThemePreferences.Parse(config.Theme);
@@ -235,7 +245,9 @@ public sealed class TrayApplicationContext : ApplicationContext
             ProviderIds = config.TaskbarOverlay.ProviderIds.ToList(),
             Controls = config.TaskbarOverlay.Controls.ToList(),
             DisplayMode = config.TaskbarOverlay.DisplayMode,
-            Size = config.TaskbarOverlay.Size
+            Size = config.TaskbarOverlay.Size,
+            PositionX = config.TaskbarOverlay.PositionX,
+            PositionY = config.TaskbarOverlay.PositionY
         };
         if (configured.ProviderIds.Count == 0)
         {

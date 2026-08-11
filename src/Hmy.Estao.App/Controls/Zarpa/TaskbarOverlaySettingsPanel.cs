@@ -8,14 +8,22 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
     private readonly ZarpaToggleSwitch _enabled = new() { Text = "Show usage on the Windows taskbar", Width = 330 };
     private readonly ZarpaComboBox _displayMode = new() { LabelText = "Identity", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
     private readonly ZarpaComboBox _size = new() { LabelText = "Size", DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
+    private readonly ZarpaButton _move = new() { Text = "Move overlay", ButtonStyle = ZarpaButtonStyle.Secondary, Width = 120 };
+    private readonly ZarpaButton _resetPosition = new() { Text = "Reset position", ButtonStyle = ZarpaButtonStyle.Subtle, Width = 120, Enabled = false };
+    private readonly Label _position = new() { AutoSize = false, Width = 230, Height = 34, TextAlign = ContentAlignment.MiddleLeft };
     private readonly FlowLayoutPanel _providers = new() { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = false, Margin = Padding.Empty };
     private readonly FlowLayoutPanel _controls = new() { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = false, Margin = Padding.Empty };
     private readonly Dictionary<string, ZarpaCheckBox> _providerChecks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ZarpaCheckBox> _controlChecks = new(StringComparer.OrdinalIgnoreCase);
+    private bool _moving;
+    private bool _movementAvailable;
+
+    public event Action<bool>? MoveModeChanged;
+    public event Action? ResetPositionRequested;
 
     public TaskbarOverlaySettingsPanel()
     {
-        Height = 360;
+        Height = 410;
         Dock = DockStyle.Top;
         Padding = new Padding(6, 8, 6, 10);
 
@@ -51,6 +59,19 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         options.Controls.Add(_displayMode);
         options.Controls.Add(_size);
 
+        var positionActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 48,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0, 4, 0, 4),
+            Margin = Padding.Empty
+        };
+        positionActions.Controls.Add(_move);
+        positionActions.Controls.Add(_resetPosition);
+        positionActions.Controls.Add(_position);
+
         var providersLabel = SectionLabel("Providers");
         var controlsLabel = SectionLabel("Modules");
         var rows = new TableLayoutPanel
@@ -72,6 +93,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
 
         Controls.Add(new ZarpaSettingsSectionSeparator());
         Controls.Add(rows);
+        Controls.Add(positionActions);
         Controls.Add(options);
         Controls.Add(header);
         Controls.Add(helper);
@@ -80,6 +102,14 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         BuildChecks();
         foreach (var mode in TaskbarOverlayDisplayCatalog.DisplayModes) _displayMode.Items.Add(mode);
         foreach (var size in TaskbarOverlayDisplayCatalog.Sizes) _size.Items.Add(size);
+        _move.Click += (_, _) =>
+        {
+            SetMoving(!_moving);
+            MoveModeChanged?.Invoke(_moving);
+        };
+        _resetPosition.Click += (_, _) => ResetPositionRequested?.Invoke();
+        _enabled.CheckedChanged += (_, _) => UpdateMovementAvailability();
+        UpdateMovementAvailability();
     }
 
     public void LoadConfig(EstaoConfig config)
@@ -87,6 +117,8 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         _enabled.Checked = config.TaskbarOverlay.Enabled;
         _displayMode.SelectedIndex = Math.Max(0, _displayMode.Items.IndexOf(config.TaskbarOverlay.DisplayMode));
         _size.SelectedIndex = Math.Max(0, _size.Items.IndexOf(config.TaskbarOverlay.Size));
+        ShowPosition(config.TaskbarOverlay.PositionX, config.TaskbarOverlay.PositionY);
+        UpdateMovementAvailability();
         var configuredProviders = config.TaskbarOverlay.ProviderIds;
         foreach (var (id, check) in _providerChecks)
         {
@@ -97,6 +129,25 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
 
         foreach (var (id, check) in _controlChecks)
             check.Checked = config.TaskbarOverlay.Controls.Contains(id, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public void SetMovementAvailable(bool available)
+    {
+        _movementAvailable = available;
+        UpdateMovementAvailability();
+    }
+
+    public void SetMoving(bool moving)
+    {
+        _moving = moving;
+        _move.Text = moving ? "Finish moving" : "Move overlay";
+    }
+
+    public void ShowPosition(int? x, int? y)
+    {
+        var custom = x is not null && y is not null;
+        _position.Text = custom ? $"Custom position: {x}, {y}" : "Default taskbar position";
+        _resetPosition.Enabled = custom;
     }
 
     public void Apply(TaskbarOverlayConfig config)
@@ -136,6 +187,16 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
             };
             _controlChecks[control] = check;
             _controls.Controls.Add(check);
+        }
+    }
+
+    private void UpdateMovementAvailability()
+    {
+        _move.Enabled = _movementAvailable && _enabled.Checked;
+        if (!_move.Enabled && _moving)
+        {
+            SetMoving(false);
+            MoveModeChanged?.Invoke(false);
         }
     }
 

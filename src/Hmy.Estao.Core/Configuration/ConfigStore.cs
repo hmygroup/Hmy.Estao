@@ -96,6 +96,11 @@ public sealed class ConfigStore
             config.TaskbarOverlay.DisplayMode, TaskbarOverlayDisplayCatalog.DisplayModes, "icon-title");
         config.TaskbarOverlay.Size = NormalizeOverlayValue(
             config.TaskbarOverlay.Size, TaskbarOverlayDisplayCatalog.Sizes, "normal");
+        if (config.TaskbarOverlay.PositionX is null || config.TaskbarOverlay.PositionY is null)
+        {
+            config.TaskbarOverlay.PositionX = null;
+            config.TaskbarOverlay.PositionY = null;
+        }
         config.TaskbarOverlay.ProviderIds = config.TaskbarOverlay.ProviderIds
             .Select(ProviderCatalog.NormalizeId)
             .Where(ProviderCatalog.IsSupported)

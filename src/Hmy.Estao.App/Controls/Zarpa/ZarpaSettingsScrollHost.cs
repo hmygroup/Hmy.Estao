@@ -99,8 +99,7 @@ internal sealed class ZarpaSettingsScrollHost : Panel, IZarpaThemeAware
 
     private void ScrollBy(int delta)
     {
-        if (delta == 0 || !_scrollBar.Enabled) return;
-        _scrollBar.Value -= Math.Sign(delta) * Math.Max(1, ClientSize.Height / 5);
+        _scrollBar.ScrollByWheel(delta);
     }
 
     private void WireMouseWheel(Control control)

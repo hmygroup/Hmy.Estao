@@ -86,6 +86,7 @@ internal sealed class UsagePopover : ZarpaModernForm
         _content.RefreshRequested += async (_, _) => await RefreshFromUiAsync().ConfigureAwait(true);
         _content.QuitRequested += (_, _) => { Close(); _quit(); };
         _content.ScrollChanged += (_, _) => SyncScrollBarFromContent();
+        _content.ScrollWheel += (_, args) => _scrollBar.ScrollByWheel(args.Delta);
         _content.Resize += (_, _) => UpdateScrollBar();
         _scrollBar.ValueChanged += (_, _) => _content.ScrollTo(_scrollBar.Value);
 
@@ -360,6 +361,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     public event EventHandler? RefreshRequested;
     public event EventHandler? QuitRequested;
     public event EventHandler? ScrollChanged;
+    public event MouseEventHandler? ScrollWheel;
 
     public int ContentHeight => Math.Max(ClientSize.Height, _canvas.Height);
     public int ScrollOffset => _scrollOffset;
@@ -837,7 +839,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
 
     private void OnCanvasMouseWheel(object? sender, MouseEventArgs e)
     {
-        if (e.Delta != 0) ScrollTo(_scrollOffset - Math.Sign(e.Delta) * 48);
+        if (e.Delta != 0) ScrollWheel?.Invoke(this, e);
     }
 
     private static string UpdatedText(DateTimeOffset updated)

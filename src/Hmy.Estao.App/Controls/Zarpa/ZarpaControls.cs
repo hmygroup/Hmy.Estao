@@ -208,14 +208,18 @@ internal sealed class ZarpaBufferedPanel : Panel
 
 internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
 {
+    private const int SmoothScrollInterval = 16;
+    private const int WheelStep = 24;
     private ZarpaThemeTokens? _theme;
     private Orientation _orientation = Orientation.Vertical;
     private int _contentSize;
     private int _viewportSize = 1;
     private int _value;
+    private int _targetValue;
     private bool _hot;
     private bool _dragging;
     private int _dragOffset;
+    private readonly System.Windows.Forms.Timer _smoothScrollTimer = new() { Interval = SmoothScrollInterval };
 
     public ZarpaScrollBar()
     {
@@ -226,6 +230,7 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
         TabStop = true;
         AccessibleRole = AccessibleRole.ScrollBar;
         MinimumSize = new Size(8, 8);
+        _smoothScrollTimer.Tick += (_, _) => AnimateScroll();
     }
 
     public event EventHandler? ValueChanged;
@@ -268,9 +273,8 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
         {
             var next = Math.Clamp(value, 0, MaximumValue);
             if (_value == next) return;
-            _value = next;
-            ValueChanged?.Invoke(this, EventArgs.Empty);
-            Invalidate();
+            StopSmoothScroll();
+            SetCurrentValue(next);
         }
     }
 
@@ -282,6 +286,17 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
         _viewportSize = Math.Max(1, viewportSize);
         ClampValue();
         Invalidate();
+    }
+
+    public void ScrollByWheel(int delta)
+    {
+        if (!Enabled || delta == 0 || MaximumValue == 0) return;
+        var wheelDelta = delta / (double)SystemInformation.MouseWheelScrollDelta;
+        var start = _smoothScrollTimer.Enabled ? _targetValue : _value;
+        _targetValue = Math.Clamp(
+            (int)Math.Round(start - wheelDelta * WheelStep), 0, MaximumValue);
+        if (_targetValue == _value) return;
+        _smoothScrollTimer.Start();
     }
 
     public void ApplyTheme(ZarpaThemeTokens value)
@@ -316,6 +331,7 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
         base.OnMouseDown(e);
         Focus();
         if (e.Button != MouseButtons.Left) return;
+        StopSmoothScroll();
         var thumb = ThumbBounds(TrackBounds());
         var coordinate = _orientation == Orientation.Horizontal ? e.X : e.Y;
         if (thumb.Contains(e.Location))
@@ -358,8 +374,7 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
-        if (!Enabled || e.Delta == 0) return;
-        Value -= Math.Sign(e.Delta) * Math.Max(1, _viewportSize / 5);
+        ScrollByWheel(e.Delta);
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -399,6 +414,12 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
         }
     }
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _smoothScrollTimer.Dispose();
+        base.Dispose(disposing);
+    }
+
     private Rectangle TrackBounds() => new(2, 2, Math.Max(1, Width - 4), Math.Max(1, Height - 4));
 
     private Rectangle ThumbBounds(Rectangle track)
@@ -414,7 +435,41 @@ internal sealed class ZarpaScrollBar : Control, IZarpaThemeAware
             : new Rectangle(track.Left, track.Top + offset, track.Width, thumbLength);
     }
 
-    private void ClampValue() => Value = Math.Min(_value, MaximumValue);
+    private void AnimateScroll()
+    {
+        var distance = _targetValue - _value;
+        if (Math.Abs(distance) <= 1)
+        {
+            SetCurrentValue(_targetValue);
+            _smoothScrollTimer.Stop();
+            return;
+        }
+
+        var step = Math.Sign(distance) * Math.Max(1, (int)Math.Ceiling(Math.Abs(distance) * 0.28D));
+        SetCurrentValue(_value + step);
+    }
+
+    private void ClampValue()
+    {
+        _targetValue = Math.Clamp(_targetValue, 0, MaximumValue);
+        if (_value > MaximumValue) SetCurrentValue(MaximumValue);
+        if (_targetValue == _value) _smoothScrollTimer.Stop();
+    }
+
+    private void SetCurrentValue(int value)
+    {
+        var next = Math.Clamp(value, 0, MaximumValue);
+        if (_value == next) return;
+        _value = next;
+        ValueChanged?.Invoke(this, EventArgs.Empty);
+        Invalidate();
+    }
+
+    private void StopSmoothScroll()
+    {
+        _smoothScrollTimer.Stop();
+        _targetValue = _value;
+    }
 }
 
 internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
