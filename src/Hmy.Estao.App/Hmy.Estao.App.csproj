@@ -1,10 +1,11 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+	  <PublishProfile Condition="'$(PublishProfile)' == ''">Default</PublishProfile>
+	  <Nullable>enable</Nullable>
     <AssemblyName>Hmy.Estao</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>ai-setting.ico</ApplicationIcon>
@@ -20,8 +21,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Assets\ProviderIcons\*.svg"
-                      LogicalName="Hmy.Estao.ProviderIcons.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Assets\ProviderIcons\*.svg" LogicalName="Hmy.Estao.ProviderIcons.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Assets\usage-history.sample.json" LogicalName="Hmy.Estao.UsageHistorySample.json" />
   </ItemGroup>
 
 <Target Name="pubre">

@@ -14,7 +14,6 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly ZarpaSettingsScrollHost _providersViewport = new() { Dock = DockStyle.Fill };
     private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
     private readonly RefreshSettingsPanel _refreshSettings = new();
-    private readonly PacingSettingsPanel _pacingSettings = new();
     private readonly Panel _appearanceSettings = new() { Dock = DockStyle.Top, Height = 178, Padding = new Padding(6, 8, 6, 10) };
     private readonly Label _providerCount = new() { AutoSize = true };
     private readonly ZarpaComboBox _themePicker = new() { LabelText = "Theme", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
@@ -46,7 +45,6 @@ public sealed class SettingsForm : ZarpaModernForm
         BuildAppearanceSection();
         _providersHost.Controls.Add(_overlaySettings);
         _providersHost.Controls.Add(_refreshSettings);
-        _providersHost.Controls.Add(_pacingSettings);
         _providersHost.Controls.Add(_appearanceSettings);
         _providersViewport.Content = _providersHost;
         Controls.Add(_providersViewport);
@@ -157,7 +155,6 @@ public sealed class SettingsForm : ZarpaModernForm
             _config = await _configStore.LoadAsync().ConfigureAwait(true);
             _overlaySettings.LoadConfig(_config);
             _refreshSettings.LoadConfig(_config);
-            _pacingSettings.LoadConfig(_config);
             var selectedTheme = ZarpaThemePreferences.Parse(_config.Theme).ToString();
             _themePicker.SelectedIndex = Math.Max(0, _themePicker.Items.IndexOf(selectedTheme));
             var selectedBackdrop = ZarpaThemePreferences.ParseBackdrop(_config.BackdropStyle).ToString();
@@ -175,8 +172,7 @@ public sealed class SettingsForm : ZarpaModernForm
             }
             _providersHost.Controls.SetChildIndex(_appearanceSettings, 0);
             _providersHost.Controls.SetChildIndex(_refreshSettings, 1);
-            _providersHost.Controls.SetChildIndex(_pacingSettings, 2);
-            _providersHost.Controls.SetChildIndex(_overlaySettings, 3);
+            _providersHost.Controls.SetChildIndex(_overlaySettings, 2);
 
             var enabled = _providerRows.Count(row => row.EnabledProvider);
             _providerCount.Text = $"{enabled} of {_providerRows.Count} enabled  ·  Credentials stay encrypted on this device";
@@ -204,7 +200,6 @@ public sealed class SettingsForm : ZarpaModernForm
 
             _overlaySettings.Apply(_config.TaskbarOverlay);
             _refreshSettings.Apply(_config.Refresh);
-            _pacingSettings.Apply(_config.Pacing);
             _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
             _config.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text).ToString();
             await _configStore.SaveAsync(_config).ConfigureAwait(true);
@@ -286,7 +281,6 @@ public sealed class SettingsForm : ZarpaModernForm
         {
             if (!ReferenceEquals(_providersHost.Controls[index], _overlaySettings) &&
                 !ReferenceEquals(_providersHost.Controls[index], _refreshSettings) &&
-                !ReferenceEquals(_providersHost.Controls[index], _pacingSettings) &&
                 !ReferenceEquals(_providersHost.Controls[index], _appearanceSettings))
                 _providersHost.Controls[index].Dispose();
         }
@@ -307,6 +301,9 @@ public sealed class SettingsForm : ZarpaModernForm
         private readonly ZarpaTextBox _workspace;
         private readonly ZarpaTextBox _newCookie;
         private readonly ZarpaTextBox _apiKey;
+        private readonly ZarpaToggleSwitch _pacingEnabled;
+        private readonly ZarpaNumericUpDown _pacingTarget;
+        private readonly ZarpaToggleSwitch _pacingNotify;
         private readonly Func<string, IProgress<string>, Task> _signInAction;
         private readonly ProviderSignInButton? _signInButton;
         private readonly int _expandedHeight;
@@ -402,6 +399,33 @@ public sealed class SettingsForm : ZarpaModernForm
             _newCookie.PasswordChar = '●';
             _apiKey = TextField("API key / token", model.ApiKey, "Leave blank when authentication is automatic.");
             _apiKey.PasswordChar = '●';
+            _pacingEnabled = new ZarpaToggleSwitch
+            {
+                Dock = DockStyle.Fill,
+                Text = "Enable pacing for this provider",
+                Checked = model.Pacing.Enabled,
+                Margin = new Padding(6, 12, 6, 3)
+            };
+            _pacingTarget = new ZarpaNumericUpDown
+            {
+                Dock = DockStyle.Fill,
+                LabelText = "Daily pacing target",
+                Minimum = (decimal)PacingCatalog.MinDailyTargetPercent,
+                Maximum = (decimal)PacingCatalog.MaxDailyTargetPercent,
+                Increment = 1M,
+                DecimalPlaces = 0,
+                Suffix = "%/day",
+                Value = (decimal)Math.Clamp(model.Pacing.DailyTargetPercent,
+                    PacingCatalog.MinDailyTargetPercent, PacingCatalog.MaxDailyTargetPercent),
+                Margin = new Padding(6, 3, 6, 3)
+            };
+            _pacingNotify = new ZarpaToggleSwitch
+            {
+                Dock = DockStyle.Fill,
+                Text = "Notify once a day when over pace",
+                Checked = model.Pacing.NotifyOnExceed,
+                Margin = new Padding(6, 12, 6, 3)
+            };
 
             if (SupportsOAuth(model.ProviderId))
             {
@@ -443,6 +467,9 @@ public sealed class SettingsForm : ZarpaModernForm
             _model.WorkspaceOrHost = _workspace.Value;
             _model.NewCookieHeader = _newCookie.Value;
             _model.ApiKey = _apiKey.Value;
+            _model.Pacing.Enabled = _pacingEnabled.Checked;
+            _model.Pacing.DailyTargetPercent = (double)_pacingTarget.Value;
+            _model.Pacing.NotifyOnExceed = _pacingNotify.Checked;
             _model.Apply();
         }
 
@@ -467,14 +494,17 @@ public sealed class SettingsForm : ZarpaModernForm
             Parent?.PerformLayout();
         }
 
-        private IReadOnlyList<Control> ProviderFields(string provider) => provider switch
+        private IReadOnlyList<Control> ProviderFields(string provider) => WithPacing(provider switch
         {
             "codex" => WithSignIn([_source, _workspace]),
             "claude" => WithSignIn([_source, _cookieSource, _cookieStatus, _newCookie, _apiKey]),
             "copilot" => WithSignIn([_source, _workspace, _apiKey]),
             "opencode" => [_source, _cookieSource, _cookieStatus, _workspace, _newCookie],
             _ => [_source, _cookieSource, _cookieStatus, _workspace, _newCookie, _apiKey]
-        };
+        });
+
+        private IReadOnlyList<Control> WithPacing(IReadOnlyList<Control> fields) =>
+            [.. fields, _pacingEnabled, _pacingTarget, _pacingNotify];
 
         private IReadOnlyList<Control> WithSignIn(IReadOnlyList<Control> fields) => _signInButton is null
             ? fields
@@ -504,8 +534,11 @@ public sealed class SettingsForm : ZarpaModernForm
         private void UpdateSummary()
         {
             var state = _enabled.Checked ? "Enabled" : "Disabled";
+            var pacing = _model.Pacing.Enabled
+                ? $"Pacing: {_model.Pacing.DailyTargetPercent:0}%/day"
+                : "Pacing off";
             _providerIcon.Status = _model.Status;
-            _summary.Text = $"{state}  ·  {_model.CookieStatus}  ·  Source: {_model.Source}";
+            _summary.Text = $"{state}  ·  {pacing}  ·  {_model.CookieStatus}  ·  Source: {_model.Source}";
         }
 
         private static ZarpaComboBox ComboField(string label, IEnumerable<string> values, string selected)
@@ -613,6 +646,7 @@ public sealed class SettingsForm : ZarpaModernForm
         public string NewCookieHeader { get; set; } = string.Empty;
         public string ApiKey { get; set; }
         public string WorkspaceOrHost { get; set; }
+        public PacingConfig Pacing => _provider.Pacing;
         public ProviderStatus Status => !Enabled
             ? ProviderStatus.Disabled
             : IsConfigured ? ProviderStatus.Ready : ProviderStatus.NeedsSetup;

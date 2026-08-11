@@ -1,5 +1,6 @@
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Platform;
+using System.Text.Json;
 
 namespace Hmy.Estao.Tests;
 
@@ -41,6 +42,69 @@ public sealed class ConfigStoreTests
         var copilot = Assert.Single(loaded.Providers, provider => provider.Id == "copilot");
         Assert.Equal("secret", copilot.ApiKey);
         Assert.Equal("github.example.com", copilot.EnterpriseHost);
+        Assert.False(copilot.Pacing.Enabled);
+    }
+
+    [Fact]
+    public async Task legacy_global_pacing_is_migrated_to_each_provider()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "config.json");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(path, """
+            {
+              "version": 1,
+              "pacing": { "enabled": true, "dailyTargetPercent": 22, "notifyOnExceed": false },
+              "providers": [
+                { "id": "codex", "enabled": true },
+                { "id": "claude", "enabled": true }
+              ]
+            }
+            """);
+
+        var config = await new ConfigStore(path).LoadAsync();
+
+        Assert.Null(config.LegacyPacing);
+        Assert.All(config.Providers.Where(provider => provider.Id is "codex" or "claude"), provider =>
+        {
+            Assert.True(provider.Pacing.Enabled);
+            Assert.Equal(22D, provider.Pacing.DailyTargetPercent);
+            Assert.False(provider.Pacing.NotifyOnExceed);
+        });
+
+        await new ConfigStore(path).SaveAsync(config);
+        using var saved = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        Assert.False(saved.RootElement.TryGetProperty("pacing", out _));
+        Assert.All(saved.RootElement.GetProperty("providers").EnumerateArray(), provider =>
+            Assert.True(provider.TryGetProperty("pacing", out _)));
+    }
+
+    [Fact]
+    public async Task provider_pacing_takes_precedence_over_legacy_global_pacing()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "config.json");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(path, """
+            {
+              "version": 1,
+              "pacing": { "enabled": true, "dailyTargetPercent": 22 },
+              "providers": [
+                {
+                  "id": "codex",
+                  "enabled": true,
+                  "pacing": { "enabled": true, "dailyTargetPercent": 9 }
+                }
+              ]
+            }
+            """);
+
+        var config = await new ConfigStore(path).LoadAsync();
+
+        var codex = Assert.Single(config.Providers, provider => provider.Id == "codex");
+        Assert.Equal(9D, codex.Pacing.DailyTargetPercent);
+        var claude = Assert.Single(config.Providers, provider => provider.Id == "claude");
+        Assert.Equal(22D, claude.Pacing.DailyTargetPercent);
     }
 
     [Fact]

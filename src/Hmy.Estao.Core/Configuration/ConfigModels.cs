@@ -25,8 +25,12 @@ public sealed class EstaoConfig
     [JsonPropertyName("refresh")]
     public RefreshConfig Refresh { get; set; } = new();
 
+    // Kept only so older config files can be migrated. New configs persist
+    // pacing inside each provider, where different accounts can have different
+    // budgets and notification preferences.
     [JsonPropertyName("pacing")]
-    public PacingConfig Pacing { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PacingConfig? LegacyPacing { get; set; }
 }
 
 public sealed class RefreshConfig
@@ -44,9 +48,9 @@ public static class RefreshIntervalCatalog
 }
 
 /// <summary>
-/// Daily usage pacing: a self-imposed "budget" of how much of a rate-limit
-/// window the user wants to burn per day, so Estao can draw a target line on
-/// the usage chart and warn once per day when the real usage curve is above it.
+/// Provider-level usage pacing: a self-imposed "budget" of how much of a
+/// rate-limit window the user wants to burn per day, so Estao can draw a target
+/// line and warn once per day when that provider's usage curve is above it.
 /// </summary>
 public sealed class PacingConfig
 {
@@ -112,11 +116,27 @@ public static class TaskbarOverlayDisplayCatalog
 
 public sealed class ProviderConfig
 {
+    private PacingConfig? _pacing;
+
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
     [JsonPropertyName("enabled")]
     public bool? Enabled { get; set; }
+
+    [JsonPropertyName("pacing")]
+    public PacingConfig Pacing
+    {
+        get => _pacing ??= new PacingConfig();
+        set
+        {
+            _pacing = value ?? new PacingConfig();
+            HasExplicitPacing = true;
+        }
+    }
+
+    [JsonIgnore]
+    internal bool HasExplicitPacing { get; private set; }
 
     [JsonPropertyName("source")]
     public string? Source { get; set; }

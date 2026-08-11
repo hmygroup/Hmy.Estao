@@ -80,7 +80,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _snapshots = snapshots;
         if (_popover is { IsDisposed: false }) _popover.UpdateSnapshots(snapshots, _refreshService.History);
         _taskbarOverlay.Update(snapshots, _refreshService.History, OverlayConfigForDisplay());
-        if (_config.Pacing is { Enabled: true, NotifyOnExceed: true })
+        if (_config.Providers.Any(provider => provider.Pacing is { Enabled: true, NotifyOnExceed: true }))
             _ = CheckPacingWarningsAsync(snapshots);
 
         var menu = new ZarpaContextMenu();
@@ -128,7 +128,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         _popover = new UsagePopover(_snapshots, RefreshAsync, ShowSettings, ExitThread, _zarpaTheme.Preset,
-            _refreshService.History, _config.Pacing, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
+            _refreshService.History, _config.Providers, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
         _popover.FormClosed += (_, _) => _popover = null;
         _popover.ShowAt(Cursor.Position);
     }
@@ -146,19 +146,21 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// </summary>
     private async Task CheckPacingWarningsAsync(IReadOnlyList<UsageSnapshot> snapshots)
     {
-        var pacing = _config.Pacing;
         var history = _refreshService.History;
         var now = DateTimeOffset.UtcNow;
-        var rangeStart = now - TimeSpan.FromDays(7);
         var today = DateOnly.FromDateTime(now.LocalDateTime);
 
         foreach (var snapshot in snapshots)
         {
             if (snapshot.Error is not null) continue;
             var provider = ProviderCatalog.NormalizeId(snapshot.Provider);
+            var pacing = _config.Providers.FirstOrDefault(configured =>
+                string.Equals(ProviderCatalog.NormalizeId(configured.Id), provider, StringComparison.OrdinalIgnoreCase))?.Pacing;
+            if (pacing is not { Enabled: true, NotifyOnExceed: true }) continue;
 
             foreach (var window in snapshot.Windows)
             {
+                var rangeStart = now - UsageWindowCatalog.DisplayRange(provider, window.Id, window.Title);
                 var points = history
                     .Where(point => string.Equals(point.Provider, provider, StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(point.Window, window.Id, StringComparison.OrdinalIgnoreCase))
@@ -204,7 +206,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         ApplyConfiguredTheme(_config);
         _popover?.ApplyTheme(_zarpaTheme.Preset, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
         _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay());
-        if (_popover is { IsDisposed: false }) _popover.UpdatePacing(_config.Pacing);
+        if (_popover is { IsDisposed: false }) _popover.UpdatePacing(_config.Providers);
         _refreshLoop.Restart();
     }
 

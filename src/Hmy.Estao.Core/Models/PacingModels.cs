@@ -20,8 +20,8 @@ public sealed record PacingResult(
 /// Computes a "budget pacing" reference line for a rate-limit window: how much
 /// of the window's quota the user should have consumed by now if they spend it
 /// at a steady <c>dailyTargetPercent</c> per day, starting either from the
-/// last detected reset (a drop in the history) or from the earliest point
-/// Estao has on record for that window.
+/// last detected reset (a drop in the history) or from the beginning of the
+/// rate limit's visible window.
 /// </summary>
 public static class PacingCalculator
 {
@@ -52,7 +52,7 @@ public static class PacingCalculator
         }
 
         var expectedNow = Math.Clamp(dailyRate * totalSpan.TotalDays, 0D, 1D);
-        var line = BuildTargetLine(windowStart, now, dailyRate);
+        var line = BuildTargetLineForDailyRate(windowStart, now, dailyRate);
         var actualNow = orderedPoints.Count > 0 ? orderedPoints[^1].Value : 0D;
 
         return new PacingResult(line, windowStart, expectedNow, actualNow, actualNow > expectedNow);
@@ -70,36 +70,42 @@ public static class PacingCalculator
             }
         }
 
-        if (orderedPoints.Count > 0 && orderedPoints[0].Timestamp > rangeStart)
-        {
-            return orderedPoints[0].Timestamp;
-        }
-
         return rangeStart;
     }
 
-    private static IReadOnlyList<PacingPoint> BuildTargetLine(DateTimeOffset windowStart, DateTimeOffset now, double dailyRate)
+    public static IReadOnlyList<PacingPoint> BuildTargetLine(
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd,
+        double dailyTargetPercent)
+    {
+        if (dailyTargetPercent <= 0D || windowEnd <= windowStart) return [];
+        var dailyRate = Math.Clamp(dailyTargetPercent, 0D, 1000D) / 100D;
+        return BuildTargetLineForDailyRate(windowStart, windowEnd, dailyRate);
+    }
+
+    private static IReadOnlyList<PacingPoint> BuildTargetLineForDailyRate(
+        DateTimeOffset windowStart, DateTimeOffset windowEnd, double dailyRate)
     {
         if (dailyRate <= 0D)
         {
-            return [new PacingPoint(windowStart, 0D), new PacingPoint(now, 0D)];
+            return [new PacingPoint(windowStart, 0D), new PacingPoint(windowEnd, 0D)];
         }
 
         // Days needed to reach 100% at the configured daily rate.
         var saturationDays = 1D / dailyRate;
         var saturationAt = windowStart + TimeSpan.FromDays(saturationDays);
 
-        if (saturationAt >= now)
+        if (saturationAt >= windowEnd)
         {
-            var expectedNow = Math.Clamp(dailyRate * (now - windowStart).TotalDays, 0D, 1D);
-            return [new PacingPoint(windowStart, 0D), new PacingPoint(now, expectedNow)];
+            var expectedAtEnd = Math.Clamp(dailyRate * (windowEnd - windowStart).TotalDays, 0D, 1D);
+            return [new PacingPoint(windowStart, 0D), new PacingPoint(windowEnd, expectedAtEnd)];
         }
 
         return
         [
             new PacingPoint(windowStart, 0D),
             new PacingPoint(saturationAt, 1D),
-            new PacingPoint(now, 1D)
+            new PacingPoint(windowEnd, 1D)
         ];
     }
 }

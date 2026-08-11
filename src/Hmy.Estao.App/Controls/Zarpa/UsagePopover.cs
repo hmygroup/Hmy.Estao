@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Models;
 using ZarpaSuite.Controls;
@@ -30,7 +31,7 @@ internal sealed class UsagePopover : ZarpaModernForm
         Action quit,
         ZarpaThemePreset themePreset,
         IReadOnlyList<UsageHistoryPoint>? history = null,
-        PacingConfig? pacing = null,
+        IReadOnlyList<ProviderConfig>? providerConfigs = null,
         ZarpaBackdropStyle backdropStyle = ZarpaBackdropStyle.None,
         int backdropOpacity = 96)
     {
@@ -80,7 +81,7 @@ internal sealed class UsagePopover : ZarpaModernForm
 
         _content.Dock = DockStyle.Fill;
         _content.Margin = Padding.Empty;
-        _content.Pacing = pacing ?? new PacingConfig();
+        _content.UpdatePacing(providerConfigs ?? []);
         _content.SettingsRequested += (_, _) => { Close(); _showSettings(); };
         _content.RefreshRequested += async (_, _) => await RefreshFromUiAsync().ConfigureAwait(true);
         _content.QuitRequested += (_, _) => { Close(); _quit(); };
@@ -158,15 +159,15 @@ internal sealed class UsagePopover : ZarpaModernForm
         ShowSelectedSnapshot();
     }
 
-    public void UpdatePacing(PacingConfig pacing)
+    public void UpdatePacing(IReadOnlyList<ProviderConfig> providers)
     {
         if (InvokeRequired)
         {
-            BeginInvoke(() => UpdatePacing(pacing));
+            BeginInvoke(() => UpdatePacing(providers));
             return;
         }
 
-        _content.Pacing = pacing;
+        _content.UpdatePacing(providers);
         ShowSelectedSnapshot();
     }
 
@@ -312,6 +313,13 @@ internal sealed class UsagePopover : ZarpaModernForm
 
 internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBoundary
 {
+    private const string PreviewHistoryResourceName = "Hmy.Estao.UsageHistorySample.json";
+    private static readonly JsonSerializerOptions PreviewSerializerOptions = new(JsonSerializerDefaults.Web)
+    {
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true
+    };
+    private static readonly IReadOnlyList<UsageHistoryPoint> PreviewHistory = LoadPreviewHistory();
     private readonly ZarpaBufferedPanel _canvas = new();
     private int _scrollOffset;
     private readonly Font _headingFont = new("Segoe UI", 15F, FontStyle.Bold);
@@ -324,7 +332,8 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     private UsageSnapshot? _snapshot;
     private string? _provider;
     private IReadOnlyList<UsageHistoryPoint> _history = [];
-    private PacingConfig _pacing = new();
+    private IReadOnlyDictionary<string, PacingConfig> _pacingByProvider =
+        new Dictionary<string, PacingConfig>(StringComparer.OrdinalIgnoreCase);
 
     public ZarpaUsageContent()
     {
@@ -355,16 +364,12 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     public int ContentHeight => Math.Max(ClientSize.Height, _canvas.Height);
     public int ScrollOffset => _scrollOffset;
 
-    [System.ComponentModel.Browsable(false)]
-    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-    public PacingConfig Pacing
+    public void UpdatePacing(IReadOnlyList<ProviderConfig> providers)
     {
-        get => _pacing;
-        set
-        {
-            _pacing = value;
-            if (_provider is not null || _snapshot is not null) Display(_snapshot, _provider, _history);
-        }
+        _pacingByProvider = providers
+            .GroupBy(provider => ProviderCatalog.NormalizeId(provider.Id), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Pacing, StringComparer.OrdinalIgnoreCase);
+        if (_provider is not null || _snapshot is not null) Display(_snapshot, _provider, _history);
     }
 
     public void ScrollTo(int value)
@@ -436,8 +441,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
             {
                 AddSeparator(y);
                 y += 10;
-                AddUsageChart(snapshot, provider, y);
-                y += 199;
+                y += AddUsageCharts(snapshot, provider, y) + 15;
             }
             }
 
@@ -518,79 +522,173 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         base.Dispose(disposing);
     }
 
-    private void AddUsageChart(UsageSnapshot? snapshot, string? provider, int y)
+    private int AddUsageCharts(UsageSnapshot? snapshot, string? provider, int y)
     {
         var providerId = ProviderCatalog.NormalizeId(provider ?? snapshot?.Provider ?? "codex");
         var palette = new[]
         {
             _activeTheme?.Accent ?? ZarpaPopoverPalette.Accent,
-            _activeTheme?.Warning ?? ZarpaPopoverPalette.Meter,
             _activeTheme?.Information ?? Color.FromArgb(30, 157, 190),
-            _activeTheme?.Success ?? Color.FromArgb(69, 169, 165)
+            _activeTheme?.Success ?? Color.FromArgb(69, 169, 165),
+            _activeTheme?.AccentHover ?? Color.FromArgb(155, 110, 210)
         };
-        var windows = snapshot?.Windows.Select(window => (window.Id, window.Title)).ToList() ?? [];
+        // Warning is reserved for pacing so the target never shares a color
+        // with a provider usage series.
+        var pacingColor = _activeTheme?.Warning ?? ZarpaPopoverPalette.Meter;
+        var trendColor = _activeTheme?.Danger ?? Color.FromArgb(225, 79, 96);
+        var windows = snapshot?.Windows.Select(window => (window.Id, window.Title, window.ResetAt)).ToList() ?? [];
         foreach (var group in _history
                      .Where(point => string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase))
                      .GroupBy(point => point.Window, StringComparer.OrdinalIgnoreCase))
         {
             if (windows.All(window => !string.Equals(window.Id, group.Key, StringComparison.OrdinalIgnoreCase)))
-                windows.Add((group.Key, WindowTitle(group.Key)));
+                windows.Add((group.Key, WindowTitle(group.Key), (DateTimeOffset?)null));
         }
 
-        var providerHistory = _history.Where(point =>
+        var storedProviderHistory = _history.Where(point =>
             string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var preview = providerHistory.Select(point => point.Timestamp).Distinct().Count() < 2;
+        var preview = storedProviderHistory.Length == 0;
+        var providerHistory = preview
+            ? PreviewHistory.Where(point => string.Equals(point.Provider, providerId, StringComparison.OrdinalIgnoreCase)).ToArray()
+            : storedProviderHistory;
         var series = windows.Take(palette.Length).Select((window, index) =>
         {
+            var range = UsageWindowCatalog.DisplayRange(providerId, window.Id, window.Title);
+            var now = DateTimeOffset.UtcNow;
+            var windowStart = window.ResetAt is { } resetAt && resetAt > now
+                ? resetAt - range
+                : now - range;
             var points = providerHistory
                 .Where(point => string.Equals(point.Window, window.Id, StringComparison.OrdinalIgnoreCase))
+                .Where(point => point.Timestamp >= windowStart && point.Timestamp <= now)
                 .OrderBy(point => point.Timestamp)
                 .Select(point => new ZarpaUsageChartPoint(point.Timestamp, point.PercentUsed))
-                .ToArray();
-            if (points.Length < 2 && preview) points = MockPoints(index);
-            return new ZarpaUsageChartSeries(window.Title, palette[index], points);
+                .ToList();
+            // A rate-limit cycle starts at 0%. Seed that known boundary so a
+            // sparse/new history still begins at the left edge instead of
+            // appearing as an isolated point near "now".
+            if (points.Count == 0 || points[0].Timestamp > windowStart)
+                points.Insert(0, new ZarpaUsageChartPoint(windowStart, 0D));
+            return new ZarpaUsageChartSeries(window.Title, palette[index], points, range, window.ResetAt);
         }).ToArray();
 
-        var targetLines = _pacing.Enabled && _pacing.DailyTargetPercent > 0 && !preview
-            ? series
-                .Select(item => BuildTargetSeries(item, _pacing.DailyTargetPercent))
-                .Where(item => item is not null)
-                .Select(item => item!)
-                .ToArray()
-            : [];
-
-        var chart = new ZarpaUsageChart
+        var pacing = _pacingByProvider.GetValueOrDefault(providerId) ?? new PacingConfig();
+        var groups = series
+            .GroupBy(item => new ChartCycle(item.TimeRange, item.ResetAt?.UtcTicks))
+            .ToArray();
+        var chartY = y;
+        foreach (var group in groups)
         {
-            Location = new Point(0, y),
-            Size = new Size(ContentWidth, 184),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            BackColor = SurfaceColor
-        };
-        chart.SetData([.. series, .. targetLines], preview);
-        if (_activeTheme is not null) chart.ApplyTheme(_activeTheme);
-        AddContentControl(chart);
+            var usageSeries = group.ToArray();
+            var target = pacing.Enabled && pacing.DailyTargetPercent > 0
+                ? BuildTargetSeries(usageSeries[0], pacing.DailyTargetPercent, pacingColor)
+                : null;
+            var forecastSeries = usageSeries
+                .OrderByDescending(item => snapshot?.Windows.FirstOrDefault(window =>
+                    string.Equals(window.Title, item.Label, StringComparison.OrdinalIgnoreCase))?.PercentUsed ?? 0D)
+                .First();
+            var projection = BuildForecastAndTrend(
+                snapshot, forecastSeries, storedProviderHistory,
+                pacing.Enabled ? pacing.DailyTargetPercent : 0D, pacingColor, trendColor);
+            var chartSeries = new List<ZarpaUsageChartSeries>(usageSeries);
+            if (target is not null) chartSeries.Add(target);
+            if (projection.Trend is not null) chartSeries.Add(projection.Trend);
+
+            var chart = new ZarpaUsageChart
+            {
+                Location = new Point(0, chartY),
+                Size = new Size(ContentWidth, ZarpaUsageChart.PreferredHeight),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                BackColor = SurfaceColor
+            };
+            chart.SetData(chartSeries, preview, projection.Forecast);
+            if (_activeTheme is not null) chart.ApplyTheme(_activeTheme);
+            AddContentControl(chart);
+            chartY += ZarpaUsageChart.PreferredHeight + 10;
+        }
+
+        return groups.Length == 0 ? 0 : chartY - y - 10;
     }
 
     /// <summary>
-    /// Builds the dashed daily-pacing reference line for one window's series,
-    /// using its own history points to detect the last reset (if any) within
-    /// the visible 7-day range.
+    /// Builds the full-cycle daily-pacing reference line. Actual usage stops at
+    /// now, but this target intentionally continues to the provider reset.
     /// </summary>
-    private static ZarpaUsageChartSeries? BuildTargetSeries(ZarpaUsageChartSeries series, double dailyTargetPercent)
+    private static ZarpaUsageChartSeries? BuildTargetSeries(
+        ZarpaUsageChartSeries series, double dailyTargetPercent, Color pacingColor)
     {
-        if (series.Points.Count == 0) return null;
+        var now = DateTimeOffset.UtcNow;
+        var rangeStart = series.ResetAt is { } resetAt && resetAt > now
+            ? resetAt - series.TimeRange
+            : now - series.TimeRange;
+        var rangeEnd = series.ResetAt is { } nextReset && nextReset > now ? nextReset : now;
+        var target = PacingCalculator.BuildTargetLine(rangeStart, rangeEnd, dailyTargetPercent);
+        if (target.Count < 2) return null;
+        var line = target.Select(point => new ZarpaUsageChartPoint(point.Timestamp, point.Value)).ToArray();
+        return new ZarpaUsageChartSeries(
+            series.Label, pacingColor, line, series.TimeRange, series.ResetAt, IsTarget: true);
+    }
+
+    private static ForecastAndTrend BuildForecastAndTrend(
+        UsageSnapshot? snapshot,
+        ZarpaUsageChartSeries? series,
+        IReadOnlyList<UsageHistoryPoint> history,
+        double dailyTargetPercent,
+        Color forecastColor,
+        Color trendColor)
+    {
+        if (snapshot is null || series is null) return new ForecastAndTrend(null, null);
+        var window = snapshot.Windows.FirstOrDefault(item =>
+            string.Equals(item.Title, series.Label, StringComparison.OrdinalIgnoreCase));
+        if (window is null) return new ForecastAndTrend(null, null);
 
         var now = DateTimeOffset.UtcNow;
-        var rangeStart = now - TimeSpan.FromDays(7);
-        var points = series.Points
-            .Select(point => new PacingPoint(point.Timestamp, point.Value))
+        var points = history
+            .Where(point => string.Equals(point.Window, window.Id, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(point => point.Timestamp)
+            .Select(point => new PacingPoint(point.Timestamp, point.PercentUsed))
             .ToArray();
-        var result = PacingCalculator.Compute(points, dailyTargetPercent, rangeStart, now);
-        if (result is null) return null;
+        var forecast = UsageExhaustionCalculator.Compute(
+            points, window.PercentUsed, series.TimeRange, now, window.ResetAt);
+        if (forecast is null)
+            return new ForecastAndTrend(
+                new ZarpaUsageChartForecast(
+                    $"At this pace · {series.Label} has no depletion trend yet", series.Color),
+                null);
 
-        var line = result.TargetLine.Select(point => new ZarpaUsageChartPoint(point.Timestamp, point.Value)).ToArray();
-        return new ZarpaUsageChartSeries(series.Label, series.Color, line, IsTarget: true);
+        ZarpaUsageChartForecast forecastLabel;
+        if (forecast.ResetOccursFirst && forecast.ResetAt is { } nextReset)
+            forecastLabel = new ZarpaUsageChartForecast(
+                $"At this pace · {series.Label} lasts until reset {nextReset.ToLocalTime():dd/MM HH:mm}",
+                forecastColor);
+        else
+            forecastLabel = new ZarpaUsageChartForecast(
+                $"At this pace · {series.Label} runs out {forecast.EstimatedAt.ToLocalTime():dd/MM HH:mm}",
+                forecastColor);
+
+        if (dailyTargetPercent <= 0D || window.ResetAt is not { } resetAt || resetAt <= now)
+            return new ForecastAndTrend(forecastLabel, null);
+
+        var windowStart = resetAt - series.TimeRange;
+        var current = window.PercentUsed ?? (points.Length == 0 ? 0D : points[^1].Value);
+        var trend = UsageTrendCalculator.Compute(
+            current, forecast.DailyConsumptionRate, dailyTargetPercent,
+            windowStart, now, resetAt);
+        if (trend is null) return new ForecastAndTrend(forecastLabel, null);
+
+        var trendPoints = trend.Line
+            .Select(point => new ZarpaUsageChartPoint(point.Timestamp, point.Value))
+            .ToArray();
+        var trendSeries = new ZarpaUsageChartSeries(
+            $"{series.Label} trend", trendColor, trendPoints,
+            series.TimeRange, series.ResetAt, IsProjection: true);
+        return new ForecastAndTrend(forecastLabel, trendSeries);
     }
+
+    private readonly record struct ChartCycle(TimeSpan Range, long? ResetTicks);
+    private sealed record ForecastAndTrend(
+        ZarpaUsageChartForecast? Forecast,
+        ZarpaUsageChartSeries? Trend);
 
     private static string WindowTitle(string id) => id.Trim().ToLowerInvariant() switch
     {
@@ -601,16 +699,33 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         _ => id
     };
 
-    private static ZarpaUsageChartPoint[] MockPoints(int seriesIndex)
+    private static IReadOnlyList<UsageHistoryPoint> LoadPreviewHistory()
     {
-        var values = seriesIndex switch
-        {
-            1 => new[] { .08D, .12D, .16D, .22D, .27D, .31D, .36D },
-            _ => new[] { .18D, .24D, .21D, .39D, .34D, .52D, .47D }
-        };
-        var now = DateTimeOffset.UtcNow;
-        return values.Select((value, index) =>
-            new ZarpaUsageChartPoint(now.AddDays(index - (values.Length - 1)), value)).ToArray();
+        using var stream = typeof(ZarpaUsageContent).Assembly
+            .GetManifestResourceStream(PreviewHistoryResourceName);
+        if (stream is null) return [];
+
+        var document = JsonSerializer.Deserialize<PreviewHistoryDocument>(stream, PreviewSerializerOptions);
+        var points = document?.Points ?? [];
+        if (points.Count == 0) return [];
+
+        var latest = points.Max(point => point.Timestamp);
+        var shift = DateTimeOffset.UtcNow - latest;
+        return points
+            .Where(point => !double.IsNaN(point.PercentUsed) && !double.IsInfinity(point.PercentUsed))
+            .Select(point => point with
+            {
+                Provider = ProviderCatalog.NormalizeId(point.Provider),
+                Timestamp = point.Timestamp + shift,
+                PercentUsed = Math.Clamp(point.PercentUsed, 0D, 1D)
+            })
+            .OrderBy(point => point.Timestamp)
+            .ToArray();
+    }
+
+    private sealed class PreviewHistoryDocument
+    {
+        public List<UsageHistoryPoint> Points { get; set; } = [];
     }
 
     private int AddWindow(RateWindow window, int y)

@@ -14,7 +14,11 @@ internal sealed record ZarpaUsageChartPoint(DateTimeOffset Timestamp, double Val
 /// usage curve (no area fill, no point markers, no legend/dot chip).
 /// </summary>
 internal sealed record ZarpaUsageChartSeries(
-    string Label, Color Color, IReadOnlyList<ZarpaUsageChartPoint> Points, bool IsTarget = false);
+    string Label, Color Color, IReadOnlyList<ZarpaUsageChartPoint> Points,
+    TimeSpan TimeRange, DateTimeOffset? ResetAt = null,
+    bool IsTarget = false, bool IsProjection = false);
+
+internal sealed record ZarpaUsageChartForecast(string Text, Color Color);
 
 /// <summary>
 /// Compact, double-buffered usage graph. It only receives locally persisted
@@ -22,6 +26,7 @@ internal sealed record ZarpaUsageChartSeries(
 /// </summary>
 internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
 {
+    internal const int PreferredHeight = 224;
     // Keep the timer close to the display cadence. The Stopwatch still owns
     // the animation clock, so delayed UI ticks catch up instead of slowing
     // down the animation.
@@ -46,11 +51,13 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
     private PointF[][] _mappedPoints = [];
     private Bitmap? _seriesCache;
     private Rectangle _seriesCachePlot;
+    private DateTimeOffset _rangeEnd = DateTimeOffset.UtcNow;
+    private ZarpaUsageChartForecast? _forecast;
 
     public ZarpaUsageChart()
     {
-        Height = 184;
-        MinimumSize = new Size(240, 145);
+        Height = PreferredHeight;
+        MinimumSize = new Size(240, 169);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
             ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
         BackColor = ZarpaPopoverPalette.SurfaceTop;
@@ -61,10 +68,13 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         _animationTimer.Tick += AnimationTimerOnTick;
     }
 
-    public void SetData(IReadOnlyList<ZarpaUsageChartSeries> series, bool preview = false)
+    public void SetData(IReadOnlyList<ZarpaUsageChartSeries> series, bool preview = false,
+        ZarpaUsageChartForecast? forecast = null)
     {
         _series = series;
         _preview = preview;
+        _forecast = forecast;
+        _rangeEnd = DateTimeOffset.UtcNow;
         _mappedPointsDirty = true;
         _animationRequested = true;
         StartAnimation();
@@ -158,11 +168,23 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
 
         DrawChartText(graphics, "Usage history", _titleFont,
             new RectangleF(12, 7, 120, 22), text, StringAlignment.Near);
-        var subtitle = _preview ? "Preview · local history" : "Stored locally · last 7 days";
+        var ranges = string.Join(" / ", _series
+            .Where(series => !series.IsTarget)
+            .Select(series => UsageWindowCatalog.DisplayLabel(series.TimeRange))
+            .Distinct(StringComparer.Ordinal));
+        var subtitle = _preview ? "Preview · local history" : "Stored locally";
+        if (!string.IsNullOrEmpty(ranges)) subtitle += $" · {ranges} windows";
         if (_series.Any(series => series.IsTarget))
             subtitle += " · - - daily target";
+        if (_series.Any(series => series.IsProjection))
+            subtitle += " · trend";
         DrawChartText(graphics, subtitle, _bodyFont,
             new RectangleF(12, 25, 220, 16), muted, StringAlignment.Near);
+
+        if (_forecast is not null)
+            DrawChartText(graphics, _forecast.Text, _bodyFont,
+                new RectangleF(12, 40, Math.Max(120, Width - 68), 16),
+                _forecast.Color, StringAlignment.Near, true);
 
         DrawLegend(graphics, text, muted);
         DrawGrid(graphics, plot, border, muted);
@@ -173,16 +195,52 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
                 plot, muted, StringAlignment.Center);
         }
 
-        DrawChartText(graphics, "7d ago", _bodyFont,
-            new RectangleF(plot.Left, plot.Bottom + 5, 48, 15), muted, StringAlignment.Near);
-        DrawChartText(graphics, "now", _bodyFont,
-            new RectangleF(plot.Right - 30, plot.Bottom + 5, 30, 15), muted, StringAlignment.Far);
+        DrawTimeAxis(graphics, plot, border, muted);
+    }
+
+    private void DrawTimeAxis(Graphics graphics, Rectangle plot, Color border, Color muted)
+    {
+        var reference = _series.FirstOrDefault(series => !series.IsTarget && !series.IsProjection);
+        var rangeStart = reference is null ? _rangeEnd - UsageWindowCatalog.Weekly : RangeStart(reference);
+        var rangeEnd = reference is null ? _rangeEnd : RangeEnd(reference);
+        var midpoint = rangeStart + TimeSpan.FromTicks((rangeEnd - rangeStart).Ticks / 2);
+        var fullRange = rangeEnd - rangeStart;
+
+        using var markerPen = new Pen(Color.FromArgb(55, border), 1F) { DashStyle = DashStyle.Dot };
+        graphics.DrawLine(markerPen, plot.Left + plot.Width / 2, plot.Top, plot.Left + plot.Width / 2, plot.Bottom);
+
+        DrawChartText(graphics, FormatAxisTime(rangeStart, fullRange), _axisFont,
+            new RectangleF(plot.Left, plot.Bottom + 5, 88, 15), muted, StringAlignment.Near);
+        DrawChartText(graphics, FormatAxisTime(midpoint, fullRange), _axisFont,
+            new RectangleF(plot.Left + plot.Width / 2F - 44F, plot.Bottom + 5, 88, 15), muted, StringAlignment.Center);
+        DrawChartText(graphics, FormatAxisTime(rangeEnd, fullRange), _axisFont,
+            new RectangleF(plot.Right - 88, plot.Bottom + 5, 88, 15), muted, StringAlignment.Far);
+
+        if (_rangeEnd > rangeStart && _rangeEnd < rangeEnd)
+        {
+            var progress = Math.Clamp(
+                (_rangeEnd - rangeStart).TotalSeconds / fullRange.TotalSeconds, 0D, 1D);
+            var nowX = plot.Left + (float)progress * plot.Width;
+            using var nowPen = new Pen(Color.FromArgb(150, muted), 1F) { DashStyle = DashStyle.Dash };
+            graphics.DrawLine(nowPen, nowX, plot.Top, nowX, plot.Bottom);
+            DrawChartText(graphics, "now", _axisFont,
+                new RectangleF(Math.Clamp(nowX - 18F, plot.Left, plot.Right - 36F), plot.Top + 2, 36, 13),
+                muted, StringAlignment.Center);
+        }
+    }
+
+    private static string FormatAxisTime(DateTimeOffset timestamp, TimeSpan elapsed)
+    {
+        var local = timestamp.ToLocalTime();
+        if (elapsed <= TimeSpan.FromDays(1)) return local.ToString("HH:mm");
+        if (elapsed <= TimeSpan.FromDays(14)) return local.ToString("dd/MM HH:mm");
+        return local.ToString("dd/MM");
     }
 
     private void DrawLegend(Graphics graphics, Color text, Color muted)
     {
         var x = Math.Max(155, Width - 164);
-        foreach (var series in _series.Where(series => !series.IsTarget).Take(3))
+        foreach (var series in _series.Where(series => !series.IsTarget && !series.IsProjection).Take(3))
         {
             using var brush = new SolidBrush(series.Color);
             graphics.FillEllipse(brush, new Rectangle(x, 14, 6, 6));
@@ -231,7 +289,12 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         try
         {
             var clipWidth = plot.Width * (float)Math.Clamp(progress, 0D, 1D);
-            graphics.SetClip(new RectangleF(plot.Left, plot.Top, clipWidth, plot.Height), CombineMode.Intersect);
+            // Temporarily reveal the chart in conventional chronological order,
+            // from the window start on the left towards "now" on the right.
+            // A small overflow keeps thick/dotted strokes from being cut.
+            graphics.SetClip(new RectangleF(
+                plot.Left - 3F, plot.Top - 3F,
+                clipWidth + 6F, plot.Height + 6F), CombineMode.Intersect);
             graphics.DrawImageUnscaled(_seriesCache, Point.Empty);
         }
         finally
@@ -257,32 +320,54 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
 
         EnsureMappedPoints(plot);
         for (var index = 0; index < _series.Count; index++)
-            DrawSeries(graphics, plot, _series[index].Color, _mappedPoints[index], _series[index].IsTarget);
+            DrawSeries(graphics, plot, _series[index].Color, _mappedPoints[index],
+                _series[index].IsTarget, _series[index].IsProjection);
 
         _seriesCacheDirty = false;
     }
 
     private static void DrawSeries(Graphics graphics, Rectangle plot, Color color,
-        IReadOnlyList<PointF> mapped, bool isTarget = false)
+        IReadOnlyList<PointF> mapped, bool isTarget = false, bool isProjection = false)
     {
         if (mapped.Count == 0) return;
 
         if (mapped.Count == 1)
         {
-            if (isTarget) return;
+            if (isTarget || isProjection) return;
             using var dotBrush = new SolidBrush(color);
             graphics.FillEllipse(dotBrush, new RectangleF(mapped[0].X - 3, mapped[0].Y - 3, 6, 6));
             return;
         }
 
-        using var linePath = SmoothPath(mapped);
-
         if (isTarget)
         {
-            using var targetPen = new Pen(color, 1.6F) { DashStyle = DashStyle.Dash };
-            graphics.DrawPath(targetPen, linePath);
+            using var targetPen = new Pen(color, 2F)
+            {
+                DashStyle = DashStyle.Dot,
+                DashCap = DashCap.Round
+            };
+            // Pacing is intentionally linear. Smoothing a line that reaches
+            // 100% and then stays flat produces a Bezier overshoot above the
+            // plot, which looks like a large missing segment.
+            graphics.DrawLines(targetPen, mapped.ToArray());
             return;
         }
+
+        if (isProjection)
+        {
+            using var projectionPen = new Pen(color, 2F)
+            {
+                DashStyle = DashStyle.Dash,
+                DashCap = DashCap.Round
+            };
+            graphics.DrawLines(projectionPen, mapped.ToArray());
+            using var endpoint = new SolidBrush(color);
+            var last = mapped[^1];
+            graphics.FillEllipse(endpoint, last.X - 3F, last.Y - 3F, 6F, 6F);
+            return;
+        }
+
+        using var linePath = CreateSmoothPath(mapped);
 
         using var fillPath = (GraphicsPath)linePath.Clone();
         fillPath.AddLine(mapped[^1].X, plot.Bottom, mapped[0].X, plot.Bottom);
@@ -302,25 +387,51 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         if (!_mappedPointsDirty && _mappedPlot == plot && _mappedPoints.Length == _series.Count)
             return;
 
-        var rangeStart = DateTimeOffset.UtcNow - TimeSpan.FromDays(7);
-        var range = TimeSpan.FromDays(7).TotalSeconds;
-        _mappedPoints = _series.Select(series => series.Points
-            .Where(point => point.Timestamp >= rangeStart)
-            .OrderBy(point => point.Timestamp)
-            .Select(point =>
-            {
-                var x = plot.Left + (float)Math.Clamp((point.Timestamp - rangeStart).TotalSeconds / range, 0D, 1D) * plot.Width;
-                var y = plot.Bottom - (float)Math.Clamp(point.Value, 0D, 1D) * plot.Height;
-                return new PointF(x, y);
-            })
-            .ToArray())
+        _mappedPoints = _series.Select(series =>
+        {
+            var rangeStart = RangeStart(series);
+            var rangeEnd = RangeEnd(series);
+            var rangeSeconds = Math.Max(1D, (rangeEnd - rangeStart).TotalSeconds);
+            // Target endpoints are intentionally created at the exact window
+            // boundaries. SetData captures its clock a few milliseconds later,
+            // so filtering them like history could remove the first endpoint
+            // and leave an undrawable one-point target. Keep target endpoints
+            // and clamp them to the plot edges instead.
+            var visiblePoints = series.IsTarget || series.IsProjection
+                ? series.Points
+                : series.Points.Where(point => point.Timestamp >= rangeStart && point.Timestamp <= _rangeEnd);
+            return visiblePoints
+                .OrderBy(point => point.Timestamp)
+                .Where(point => !double.IsNaN(point.Value) && !double.IsInfinity(point.Value))
+                .Select(point =>
+                {
+                    var x = plot.Left + (float)Math.Clamp(
+                        (point.Timestamp - rangeStart).TotalSeconds / rangeSeconds, 0D, 1D) * plot.Width;
+                    // Leave two pixels above 100% so dotted target caps remain
+                    // fully visible instead of merging into the top border.
+                    var y = plot.Bottom - (float)Math.Clamp(point.Value, 0D, 1D) * (plot.Height - 2F);
+                    return new PointF(x, y);
+                })
+                .ToArray();
+        })
             .ToArray();
         _mappedPlot = plot;
         _mappedPointsDirty = false;
     }
 
     private Rectangle GetPlotRectangle() => new(
-        12, 42, Math.Max(20, Width - 52), Math.Max(35, Height - 67));
+        12, 58, Math.Max(20, Width - 52), Math.Max(35, Height - 83));
+
+    private DateTimeOffset RangeStart(ZarpaUsageChartSeries series)
+    {
+        var range = series.TimeRange > TimeSpan.Zero ? series.TimeRange : UsageWindowCatalog.Weekly;
+        return series.ResetAt is { } resetAt && resetAt > _rangeEnd
+            ? resetAt - range
+            : _rangeEnd - range;
+    }
+
+    private DateTimeOffset RangeEnd(ZarpaUsageChartSeries series) =>
+        series.ResetAt is { } resetAt && resetAt > _rangeEnd ? resetAt : _rangeEnd;
 
     private void StartAnimation()
     {
@@ -353,11 +464,9 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
             StopAnimation();
     }
 
-    private static GraphicsPath SmoothPath(IReadOnlyList<PointF> points)
+    private static GraphicsPath CreateSmoothPath(IReadOnlyList<PointF> points)
     {
         var path = new GraphicsPath();
-        path.StartFigure();
-        path.AddLine(points[0], points[0]);
         for (var index = 0; index < points.Count - 1; index++)
         {
             var p0 = index == 0 ? points[index] : points[index - 1];

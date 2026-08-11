@@ -89,10 +89,7 @@ public sealed class ConfigStore
         config.Refresh.IntervalMinutes = RefreshIntervalCatalog.Minutes.Contains(config.Refresh.IntervalMinutes)
             ? config.Refresh.IntervalMinutes
             : 15;
-        config.Pacing ??= new PacingConfig();
-        config.Pacing.DailyTargetPercent = Math.Clamp(
-            config.Pacing.DailyTargetPercent <= 0 ? 15D : config.Pacing.DailyTargetPercent,
-            PacingCatalog.MinDailyTargetPercent, PacingCatalog.MaxDailyTargetPercent);
+        var legacyPacing = config.LegacyPacing;
         config.TaskbarOverlay.ProviderIds ??= [];
         config.TaskbarOverlay.Controls ??= [];
         config.TaskbarOverlay.DisplayMode = NormalizeOverlayValue(
@@ -127,8 +124,33 @@ public sealed class ConfigStore
             }
         }
 
+        foreach (var provider in config.Providers)
+        {
+            if (legacyPacing is not null && !provider.HasExplicitPacing)
+                provider.Pacing = CopyPacing(legacyPacing);
+            NormalizePacing(provider.Pacing);
+        }
+
+        // A legacy global setting is copied to every existing provider once.
+        // Clearing it means the next save emits only the provider-level shape.
+        config.LegacyPacing = null;
+
         return config;
     }
+
+    private static void NormalizePacing(PacingConfig pacing)
+    {
+        pacing.DailyTargetPercent = Math.Clamp(
+            pacing.DailyTargetPercent <= 0 ? 15D : pacing.DailyTargetPercent,
+            PacingCatalog.MinDailyTargetPercent, PacingCatalog.MaxDailyTargetPercent);
+    }
+
+    private static PacingConfig CopyPacing(PacingConfig pacing) => new()
+    {
+        Enabled = pacing.Enabled,
+        DailyTargetPercent = pacing.DailyTargetPercent,
+        NotifyOnExceed = pacing.NotifyOnExceed
+    };
 
     private static string NormalizeBackdropStyle(string? value)
     {

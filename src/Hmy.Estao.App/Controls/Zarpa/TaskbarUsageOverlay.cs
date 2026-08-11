@@ -219,9 +219,16 @@ internal sealed class TaskbarUsageOverlay : Form
 
     private void DrawSparkline(Graphics graphics, UsageSnapshot snapshot, Color color, Rectangle bounds, WindowsTaskbarPalette theme)
     {
+        var window = snapshot.Windows.FirstOrDefault();
+        if (window is null) return;
+
+        var now = DateTimeOffset.UtcNow;
+        var displayRange = UsageWindowCatalog.DisplayRange(snapshot.Provider, window.Id, window.Title);
+        var rangeStart = now - displayRange;
         var points = _history.Where(point =>
                 string.Equals(ProviderCatalog.NormalizeId(point.Provider), ProviderCatalog.NormalizeId(snapshot.Provider), StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(point.Window, snapshot.Windows.FirstOrDefault()?.Id, StringComparison.OrdinalIgnoreCase))
+                string.Equals(point.Window, window.Id, StringComparison.OrdinalIgnoreCase) &&
+                point.Timestamp >= rangeStart && point.Timestamp <= now)
             .OrderBy(point => point.Timestamp)
             .TakeLast(18)
             .ToArray();
@@ -233,8 +240,9 @@ internal sealed class TaskbarUsageOverlay : Form
         using var track = new Pen(Color.FromArgb(80, theme.TextMuted), 1F);
         graphics.DrawLine(track, bounds.Left, bounds.Bottom, bounds.Right, bounds.Bottom);
         using var line = new Pen(color, 1.4F);
-        var mapped = points.Select((point, index) => new PointF(
-            bounds.Left + index * (bounds.Width - 1F) / (points.Length - 1),
+        var mapped = points.Select(point => new PointF(
+            bounds.Left + (float)Math.Clamp(
+                (point.Timestamp - rangeStart).TotalSeconds / displayRange.TotalSeconds, 0D, 1D) * (bounds.Width - 1F),
             bounds.Bottom - (float)Math.Clamp(point.PercentUsed, 0D, 1D) * bounds.Height)).ToArray();
         graphics.DrawLines(line, mapped);
         graphics.Restore(state);
