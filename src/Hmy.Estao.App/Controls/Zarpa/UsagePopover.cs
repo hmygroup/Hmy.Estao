@@ -31,13 +31,20 @@ internal sealed class UsagePopover : Form
         Action quit,
         ZarpaThemePreset themePreset,
         IReadOnlyList<UsageHistoryPoint>? history = null,
-        PacingConfig? pacing = null)
+        PacingConfig? pacing = null,
+        ZarpaBackdropStyle backdropStyle = ZarpaBackdropStyle.None,
+        int backdropOpacity = 88)
     {
         _refresh = refresh;
         _showSettings = showSettings;
         _quit = quit;
         _history = history ?? [];
-        _theme = new ZarpaThemeManager { Preset = themePreset };
+        _theme = new ZarpaThemeManager
+        {
+            Preset = themePreset,
+            BackdropStyle = backdropStyle,
+            BackdropOpacity = backdropOpacity
+        };
 
         // The application is already SystemAware. Scaling this owner-drawn widget a
         // second time makes its children wider than the fixed popover window.
@@ -170,6 +177,20 @@ internal sealed class UsagePopover : Form
 
         _content.Pacing = pacing;
         ShowSelectedSnapshot();
+    }
+
+    public void ApplyTheme(ZarpaThemePreset preset, ZarpaBackdropStyle backdropStyle, int backdropOpacity = 88)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => ApplyTheme(preset, backdropStyle, backdropOpacity));
+            return;
+        }
+
+        _theme.Preset = preset;
+        _theme.BackdropStyle = backdropStyle;
+        _theme.BackdropOpacity = backdropOpacity;
+        ApplyContainerTheme();
     }
 
     private string[] ProviderIds() => ProviderCatalog.InitialProviderIds

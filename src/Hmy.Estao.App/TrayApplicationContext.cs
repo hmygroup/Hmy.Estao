@@ -30,7 +30,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _configStore = configStore;
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         _pacingStateStore = new PacingStateStore(configStore.Path);
-        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
+        ApplyConfiguredTheme(_config);
         _taskbarOverlay = new TaskbarUsageOverlay();
         _refreshService = serviceFactory(configStore);
         _refreshService.Refreshed += (_, snapshots) => PostMenuRebuild(snapshots);
@@ -128,7 +128,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         _popover = new UsagePopover(_snapshots, RefreshAsync, ShowSettings, ExitThread, _zarpaTheme.Preset,
-            _refreshService.History, _config.Pacing);
+            _refreshService.History, _config.Pacing, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
         _popover.FormClosed += (_, _) => _popover = null;
         _popover.ShowAt(Cursor.Position);
     }
@@ -201,7 +201,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         using var form = new SettingsForm(_configStore, previewOverlay: PreviewOverlay);
         form.ShowDialog();
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
-        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(_config.Theme);
+        ApplyConfiguredTheme(_config);
+        _popover?.ApplyTheme(_zarpaTheme.Preset, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
         _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay());
         if (_popover is { IsDisposed: false }) _popover.UpdatePacing(_config.Pacing);
         _refreshLoop.Restart();
@@ -209,7 +210,18 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void PreviewOverlay(EstaoConfig previewConfig)
     {
+        ApplyConfiguredTheme(previewConfig);
         _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay(previewConfig));
+        if (_popover is { IsDisposed: false, Visible: true })
+            _popover.ApplyTheme(_zarpaTheme.Preset, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
+        else
+            ShowUsagePopover();
+    }
+
+    private void ApplyConfiguredTheme(EstaoConfig config)
+    {
+        _zarpaTheme.Preset = ZarpaThemePreferences.Parse(config.Theme);
+        _zarpaTheme.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(config.BackdropStyle);
     }
 
     private TaskbarOverlayConfig OverlayConfigForDisplay(EstaoConfig? source = null)

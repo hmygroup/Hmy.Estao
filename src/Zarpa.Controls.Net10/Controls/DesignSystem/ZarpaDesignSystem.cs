@@ -200,6 +200,13 @@ namespace ZarpaSuite.Controls
         Custom
     }
 
+    public enum ZarpaBackdropStyle
+    {
+        None,
+        Mica,
+        Acrylic
+    }
+
     internal sealed class ZarpaPresetDefinition
     {
         internal Color Canvas, Surface, Raised, Overlay, Border, BorderStrong, Text, Muted;
@@ -335,10 +342,13 @@ namespace ZarpaSuite.Controls
         private int headerHeight, tabHeight, iconSize, borderThickness, shadowDepth;
         private int hoverDuration, pressDuration, tabDuration;
         private bool motionEnabled;
+        private ZarpaBackdropStyle backdropStyle;
+        private int backdropOpacity;
 
         internal ZarpaThemeTokens(Action changedCallback)
         {
             changed = changedCallback;
+            backdropOpacity = 88;
             ApplyPreset(ZarpaThemePreset.ZarpaLight);
         }
 
@@ -353,6 +363,12 @@ namespace ZarpaSuite.Controls
         public Color SurfaceRaised { get { return surfaceRaised; } set { surfaceRaised = value; Changed(); } }
         [Category("Superficies")]
         public Color SurfaceOverlay { get { return surfaceOverlay; } set { surfaceOverlay = value; Changed(); } }
+
+        [Category("Superficies"), DefaultValue(ZarpaBackdropStyle.None)]
+        public ZarpaBackdropStyle BackdropStyle { get { return backdropStyle; } set { backdropStyle = value; Changed(); } }
+
+        [Category("Superficies"), DefaultValue(88)]
+        public int BackdropOpacity { get { return backdropOpacity; } set { backdropOpacity = Clamp(value, 1, 100); Changed(); } }
 
         [Category("Bordes")]
         public Color Border { get { return border; } set { border = value; Changed(); } }
@@ -536,6 +552,12 @@ namespace ZarpaSuite.Controls
 
         [Category("Tipografía"), DefaultValue(22F)]
         public float HeadingFontSize { get { return theme.HeadingFontSize; } set { theme.HeadingFontSize = value; } }
+
+        [Category("Superficies"), DefaultValue(ZarpaBackdropStyle.None)]
+        public ZarpaBackdropStyle BackdropStyle { get { return theme.BackdropStyle; } set { theme.BackdropStyle = value; } }
+
+        [Category("Superficies"), DefaultValue(88)]
+        public int BackdropOpacity { get { return theme.BackdropOpacity; } set { theme.BackdropOpacity = value; } }
 
         [Category("Comportamiento"), DefaultValue(true)]
         public bool AutoApply { get { return autoApply; } set { autoApply = value; if (value) Apply(); } }

@@ -65,6 +65,7 @@ public sealed class ConfigStore
         {
             Version = 1,
             Theme = "Graphite",
+            BackdropStyle = "None",
             TaskbarOverlay = new TaskbarOverlayConfig
             {
                 Enabled = true,
@@ -81,6 +82,7 @@ public sealed class ConfigStore
     {
         config.Version = config.Version <= 0 ? 1 : config.Version;
         config.Theme = string.IsNullOrWhiteSpace(config.Theme) ? "Graphite" : config.Theme.Trim();
+        config.BackdropStyle = NormalizeBackdropStyle(config.BackdropStyle);
         config.Providers ??= [];
         config.TaskbarOverlay ??= new TaskbarOverlayConfig();
         config.Refresh ??= new RefreshConfig();
@@ -126,6 +128,16 @@ public sealed class ConfigStore
         }
 
         return config;
+    }
+
+    private static string NormalizeBackdropStyle(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "mica" => "Mica",
+            "acrylic" => "Acrylic",
+            _ => "None"
+        };
     }
 
     private static string NormalizeEnumValue(string? value, string fallback)

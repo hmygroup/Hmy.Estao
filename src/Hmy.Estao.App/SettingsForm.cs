@@ -15,9 +15,10 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
     private readonly RefreshSettingsPanel _refreshSettings = new();
     private readonly PacingSettingsPanel _pacingSettings = new();
-    private readonly Panel _appearanceSettings = new() { Dock = DockStyle.Top, Height = 104, Padding = new Padding(6, 8, 6, 10) };
+    private readonly Panel _appearanceSettings = new() { Dock = DockStyle.Top, Height = 178, Padding = new Padding(6, 8, 6, 10) };
     private readonly Label _providerCount = new() { AutoSize = true };
     private readonly ZarpaComboBox _themePicker = new() { LabelText = "Theme", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+    private readonly ZarpaComboBox _backdropPicker = new() { LabelText = "Backdrop", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
     private readonly ZarpaButton _previewButton = new() { Text = "Preview", ButtonStyle = ZarpaButtonStyle.Secondary, Width = 92 };
     private readonly ZarpaButton _saveButton = new() { Text = "Save changes", ButtonStyle = ZarpaButtonStyle.Primary, Width = 126 };
     private readonly List<ProviderSettingsRow> _providerRows = [];
@@ -55,8 +56,11 @@ public sealed class SettingsForm : ZarpaModernForm
         _previewButton.Click += (_, _) => PreviewOverlay();
         _saveButton.Click += async (_, _) => await SaveAsync().ConfigureAwait(true);
         foreach (var preset in ZarpaThemePreferences.Available) _themePicker.Items.Add(preset.ToString());
+        foreach (var backdrop in ZarpaThemePreferences.AvailableBackdrops) _backdropPicker.Items.Add(backdrop.ToString());
         _themePicker.SelectedIndexChanged += (_, _) =>
             _theme.Preset = ZarpaThemePreferences.Parse(_themePicker.Text);
+        _backdropPicker.SelectedIndexChanged += (_, _) =>
+            _theme.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text);
         Load += async (_, _) => await LoadAsync().ConfigureAwait(true);
         _theme.Theme.MotionEnabled = false;
         _theme.Attach(this);
@@ -136,7 +140,11 @@ public sealed class SettingsForm : ZarpaModernForm
         _themePicker.Dock = DockStyle.Top;
         _themePicker.Width = 220;
         _themePicker.Height = 76;
+        _backdropPicker.Dock = DockStyle.Top;
+        _backdropPicker.Width = 220;
+        _backdropPicker.Height = 76;
         _appearanceSettings.Controls.Add(new ZarpaSettingsSectionSeparator());
+        _appearanceSettings.Controls.Add(_backdropPicker);
         _appearanceSettings.Controls.Add(_themePicker);
         _appearanceSettings.Controls.Add(title);
     }
@@ -152,6 +160,8 @@ public sealed class SettingsForm : ZarpaModernForm
             _pacingSettings.LoadConfig(_config);
             var selectedTheme = ZarpaThemePreferences.Parse(_config.Theme).ToString();
             _themePicker.SelectedIndex = Math.Max(0, _themePicker.Items.IndexOf(selectedTheme));
+            var selectedBackdrop = ZarpaThemePreferences.ParseBackdrop(_config.BackdropStyle).ToString();
+            _backdropPicker.SelectedIndex = Math.Max(0, _backdropPicker.Items.IndexOf(selectedBackdrop));
             var statuses = await Task.WhenAll(_config.Providers.Select(CookieStatusAsync)).ConfigureAwait(true);
             DisposeProviderRows();
 
@@ -196,6 +206,7 @@ public sealed class SettingsForm : ZarpaModernForm
             _refreshSettings.Apply(_config.Refresh);
             _pacingSettings.Apply(_config.Pacing);
             _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
+            _config.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text).ToString();
             await _configStore.SaveAsync(_config).ConfigureAwait(true);
             DialogResult = DialogResult.OK;
             Close();
@@ -210,6 +221,8 @@ public sealed class SettingsForm : ZarpaModernForm
     {
         foreach (var row in _providerRows) row.Apply();
         _overlaySettings.Apply(_config.TaskbarOverlay);
+        _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
+        _config.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text).ToString();
         _previewOverlay?.Invoke(_config);
     }
 

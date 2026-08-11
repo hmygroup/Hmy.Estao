@@ -35,6 +35,13 @@ namespace ZarpaSuite.Controls
         private const int HtMinButton = 8, HtMaxButton = 9, HtClose = 20;
         private const int HtTop = 12, HtTopLeft = 13, HtTopRight = 14;
         private const int HtBottom = 15, HtBottomLeft = 16, HtBottomRight = 17;
+        private const int DwmwaSystemBackdropType = 38;
+        private const int DwmsbtNone = 1;
+        private const int DwmsbtMainWindow = 2;
+        private const int DwmsbtTransientWindow = 3;
+        private const int WcaAccentPolicy = 19;
+        private const int AccentDisabled = 0;
+        private const int AccentEnableAcrylicBlurBehind = 4;
         private ZarpaThemeTokens theme;
         private int titleBarHeight = 42;
         private bool modernChrome = true;
@@ -43,6 +50,7 @@ namespace ZarpaSuite.Controls
         private Rectangle minimizeBounds, maximizeBounds, closeBounds;
         private int hotButton = -1;
         private ZarpaDpiScale dpiScale = new ZarpaDpiScale(96, 96);
+        private bool backdropApplied;
         internal bool SuppressAccessibilityInterop { get; set; }
 
         private int S(int logicalPixels) { return dpiScale.X(logicalPixels); }
@@ -106,7 +114,16 @@ namespace ZarpaSuite.Controls
             BackColor = theme.Canvas;
             ForeColor = theme.Text;
             Font = new Font(theme.FontFamily, theme.FontSize);
+            ApplyBackdrop(theme.BackdropStyle, theme.BackdropOpacity);
             Invalidate(true);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            // Let DWM render the Mica/Acrylic surface behind the client content.
+            // Child controls still paint their own themed surfaces normally.
+            if (backdropApplied) return;
+            base.OnPaintBackground(e);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -262,6 +279,7 @@ namespace ZarpaSuite.Controls
         {
             base.OnHandleCreated(e);
             ApplyWindowsCorners();
+            ApplyBackdrop(theme.BackdropStyle, theme.BackdropOpacity);
             ApplyDpiScale(ZarpaDpiScale.FromControl(this));
         }
 
@@ -275,6 +293,102 @@ namespace ZarpaSuite.Controls
             catch (DllNotFoundException) { }
             catch (EntryPointNotFoundException) { }
         }
+
+        private void ApplyBackdrop(ZarpaBackdropStyle style, int opacity)
+        {
+            backdropApplied = false;
+            if (!IsHandleCreated) return;
+
+            bool systemBackdropApplied = false;
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT &&
+                Environment.OSVersion.Version.Build >= 22000)
+            {
+                int backdropType = style == ZarpaBackdropStyle.Mica ? DwmsbtMainWindow :
+                    style == ZarpaBackdropStyle.Acrylic ? DwmsbtTransientWindow : DwmsbtNone;
+                systemBackdropApplied = DwmSetWindowAttribute(Handle, DwmwaSystemBackdropType,
+                    ref backdropType, sizeof(int)) == 0;
+            }
+
+            if (style != ZarpaBackdropStyle.None && !systemBackdropApplied)
+            {
+                // Windows 10 has no public Mica API. Acrylic is the closest
+                // compatible fallback and is also used when DWM rejects the
+                // Windows 11 backdrop attribute.
+                ApplyAcrylicFallback(style, opacity);
+                backdropApplied = true;
+            }
+            else if (style == ZarpaBackdropStyle.None)
+            {
+                DisableAcrylicFallback();
+            }
+            else
+            {
+                DisableAcrylicFallback();
+                backdropApplied = true;
+            }
+
+            Invalidate(true);
+        }
+
+        private void ApplyAcrylicFallback(ZarpaBackdropStyle style, int opacity)
+        {
+            int alpha = (int)Math.Round(Math.Max(1, Math.Min(100, opacity)) * 255D / 100D);
+            Color tint = theme.Surface;
+            uint gradientColor = (uint)(alpha << 24 | tint.B << 16 | tint.G << 8 | tint.R);
+            AccentPolicy policy = new AccentPolicy
+            {
+                AccentState = AccentEnableAcrylicBlurBehind,
+                GradientColor = gradientColor
+            };
+            SetAccentPolicy(policy);
+        }
+
+        private void DisableAcrylicFallback()
+        {
+            if (!IsHandleCreated) return;
+            AccentPolicy policy = new AccentPolicy { AccentState = AccentDisabled };
+            SetAccentPolicy(policy);
+        }
+
+        private void SetAccentPolicy(AccentPolicy policy)
+        {
+            int policySize = Marshal.SizeOf(typeof(AccentPolicy));
+            IntPtr policyBuffer = Marshal.AllocHGlobal(policySize);
+            try
+            {
+                Marshal.StructureToPtr(policy, policyBuffer, false);
+                WindowCompositionAttributeData data = new WindowCompositionAttributeData
+                {
+                    Attribute = WcaAccentPolicy,
+                    Data = policyBuffer,
+                    SizeOfData = policySize
+                };
+                SetWindowCompositionAttribute(Handle, ref data);
+            }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
+            finally { Marshal.FreeHGlobal(policyBuffer); }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct AccentPolicy
+        {
+            internal int AccentState;
+            internal int AccentFlags;
+            internal uint GradientColor;
+            internal int AnimationId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WindowCompositionAttributeData
+        {
+            internal int Attribute;
+            internal IntPtr Data;
+            internal int SizeOfData;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern int SetWindowCompositionAttribute(IntPtr window, ref WindowCompositionAttributeData data);
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr handle, int attribute, ref int value, int valueSize);

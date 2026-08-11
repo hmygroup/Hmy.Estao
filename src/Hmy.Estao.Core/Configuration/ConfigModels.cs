@@ -10,6 +10,9 @@ public sealed class EstaoConfig
     [JsonPropertyName("theme")]
     public string Theme { get; set; } = "Graphite";
 
+    [JsonPropertyName("backdropStyle")]
+    public string BackdropStyle { get; set; } = "None";
+
     [JsonPropertyName("hooks")]
     public object? Hooks { get; set; }
 
