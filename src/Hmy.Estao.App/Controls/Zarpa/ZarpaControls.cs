@@ -434,7 +434,7 @@ internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
         base.OnResize(e);
         if (_regionSize == ClientSize) return;
         _regionSize = ClientSize;
-        using var path = ZarpaPopoverPaint.RoundedPath(new Rectangle(0, 0, Width, Height), 22);
+        using var path = ZarpaPopoverPaint.RoundedPath(new Rectangle(0, 0, Width, Height), CornerRadius);
         Region = new Region(path);
     }
 
@@ -448,11 +448,11 @@ internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var bounds = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
         using (var background = new SolidBrush(_theme?.Surface ?? ZarpaPopoverPalette.SurfaceTop))
-        using (var path = ZarpaPopoverPaint.RoundedPath(bounds, 18))
+        using (var path = ZarpaPopoverPaint.RoundedPath(bounds, CornerRadius))
             e.Graphics.FillPath(background, path);
 
         using var border = new Pen(_theme?.Border ?? ZarpaPopoverPalette.Border, 1F);
-        using var borderPath = ZarpaPopoverPaint.RoundedPath(bounds, 18);
+        using var borderPath = ZarpaPopoverPaint.RoundedPath(bounds, CornerRadius);
         e.Graphics.DrawPath(border, borderPath);
     }
 
@@ -461,6 +461,15 @@ internal sealed class ZarpaReferenceSurface : Panel, IZarpaThemeAware
         _theme = value;
         BackColor = value.Surface;
         Invalidate();
+    }
+
+    private int CornerRadius
+    {
+        get
+        {
+            var logicalRadius = _theme is null ? 9 : Math.Max(6, _theme.GroupCornerRadius);
+            return Math.Max(1, (int)Math.Round(logicalRadius * DeviceDpi / 96D));
+        }
     }
 }
 

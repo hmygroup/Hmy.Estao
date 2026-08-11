@@ -285,6 +285,7 @@ namespace ZarpaSuite.Controls
 
         private void ApplyWindowsCorners()
         {
+            if (!modernChrome) return;
             try
             {
                 int preference = 2; // DWMWCP_ROUND; Windows 10 simply ignores it.
@@ -299,6 +300,12 @@ namespace ZarpaSuite.Controls
             backdropApplied = false;
             if (!IsHandleCreated) return;
 
+            // Keep the existing window-level translucency behavior. The
+            // custom corner handling is independent from the backdrop.
+            Opacity = style == ZarpaBackdropStyle.None
+                ? 1D
+                : Math.Max(0.55D, Math.Min(1D, opacity / 100D));
+
             bool systemBackdropApplied = false;
             if (Environment.OSVersion.Platform == PlatformID.Win32NT &&
                 Environment.OSVersion.Version.Build >= 22000)
@@ -311,9 +318,6 @@ namespace ZarpaSuite.Controls
 
             if (style != ZarpaBackdropStyle.None && !systemBackdropApplied)
             {
-                // Windows 10 has no public Mica API. Acrylic is the closest
-                // compatible fallback and is also used when DWM rejects the
-                // Windows 11 backdrop attribute.
                 ApplyAcrylicFallback(style, opacity);
                 backdropApplied = true;
             }

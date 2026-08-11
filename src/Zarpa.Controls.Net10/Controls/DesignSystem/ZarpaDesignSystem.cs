@@ -348,7 +348,7 @@ namespace ZarpaSuite.Controls
         internal ZarpaThemeTokens(Action changedCallback)
         {
             changed = changedCallback;
-            backdropOpacity = 88;
+            backdropOpacity = 96;
             ApplyPreset(ZarpaThemePreset.ZarpaLight);
         }
 
@@ -367,7 +367,7 @@ namespace ZarpaSuite.Controls
         [Category("Superficies"), DefaultValue(ZarpaBackdropStyle.None)]
         public ZarpaBackdropStyle BackdropStyle { get { return backdropStyle; } set { backdropStyle = value; Changed(); } }
 
-        [Category("Superficies"), DefaultValue(88)]
+        [Category("Superficies"), DefaultValue(96)]
         public int BackdropOpacity { get { return backdropOpacity; } set { backdropOpacity = Clamp(value, 1, 100); Changed(); } }
 
         [Category("Bordes")]
@@ -556,7 +556,7 @@ namespace ZarpaSuite.Controls
         [Category("Superficies"), DefaultValue(ZarpaBackdropStyle.None)]
         public ZarpaBackdropStyle BackdropStyle { get { return theme.BackdropStyle; } set { theme.BackdropStyle = value; } }
 
-        [Category("Superficies"), DefaultValue(88)]
+        [Category("Superficies"), DefaultValue(96)]
         public int BackdropOpacity { get { return theme.BackdropOpacity; } set { theme.BackdropOpacity = value; } }
 
         [Category("Comportamiento"), DefaultValue(true)]

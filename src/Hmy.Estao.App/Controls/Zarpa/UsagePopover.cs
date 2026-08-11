@@ -5,7 +5,7 @@ using ZarpaSuite.Controls;
 
 namespace Hmy.Estao.App.Controls.Zarpa;
 
-internal sealed class UsagePopover : Form
+internal sealed class UsagePopover : ZarpaModernForm
 {
     private const int WidgetWidth = 470;
     private const int WidgetHeight = 720;
@@ -33,7 +33,7 @@ internal sealed class UsagePopover : Form
         IReadOnlyList<UsageHistoryPoint>? history = null,
         PacingConfig? pacing = null,
         ZarpaBackdropStyle backdropStyle = ZarpaBackdropStyle.None,
-        int backdropOpacity = 88)
+        int backdropOpacity = 96)
     {
         _refresh = refresh;
         _showSettings = showSettings;
@@ -49,6 +49,7 @@ internal sealed class UsagePopover : Form
         // The application is already SystemAware. Scaling this owner-drawn widget a
         // second time makes its children wider than the fixed popover window.
         AutoScaleMode = AutoScaleMode.None;
+        ModernChrome = false;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
             ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
         DoubleBuffered = true;
@@ -119,15 +120,29 @@ internal sealed class UsagePopover : Form
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+        UpdateWindowRegion();
+    }
+
+    private void UpdateWindowRegion()
+    {
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
-        if (_regionSize == ClientSize) return;
+        if (_regionSize == ClientSize && Region is not null) return;
         _regionSize = ClientSize;
 
         using var path = ZarpaPopoverPaint.RoundedPath(
-            new Rectangle(Point.Empty, ClientSize), 18);
+            new Rectangle(Point.Empty, ClientSize), PopupCornerRadius);
         var previousRegion = Region;
         Region = new Region(path);
         previousRegion?.Dispose();
+    }
+
+    private int PopupCornerRadius
+    {
+        get
+        {
+            var logicalRadius = _theme is null ? 9 : Math.Max(6, _theme.Theme.GroupCornerRadius);
+            return Math.Max(1, (int)Math.Round(logicalRadius * DeviceDpi / 96D));
+        }
     }
 
     public void ShowAt(Point anchor)
@@ -179,7 +194,7 @@ internal sealed class UsagePopover : Form
         ShowSelectedSnapshot();
     }
 
-    public void ApplyTheme(ZarpaThemePreset preset, ZarpaBackdropStyle backdropStyle, int backdropOpacity = 88)
+    public void ApplyTheme(ZarpaThemePreset preset, ZarpaBackdropStyle backdropStyle, int backdropOpacity = 96)
     {
         if (InvokeRequired)
         {
@@ -190,6 +205,7 @@ internal sealed class UsagePopover : Form
         _theme.Preset = preset;
         _theme.BackdropStyle = backdropStyle;
         _theme.BackdropOpacity = backdropOpacity;
+        UpdateWindowRegion();
         ApplyContainerTheme();
     }
 
