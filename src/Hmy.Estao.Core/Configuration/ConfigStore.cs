@@ -135,6 +135,7 @@ public sealed class ConfigStore
             if (legacyPacing is not null && !provider.HasExplicitPacing)
                 provider.Pacing = CopyPacing(legacyPacing);
             NormalizePacing(provider.Pacing);
+            NormalizeUsageColors(provider.UsageColors);
         }
 
         // A legacy global setting is copied to every existing provider once.
@@ -149,6 +150,20 @@ public sealed class ConfigStore
         pacing.DailyTargetPercent = Math.Clamp(
             pacing.DailyTargetPercent <= 0 ? 15D : pacing.DailyTargetPercent,
             PacingCatalog.MinDailyTargetPercent, PacingCatalog.MaxDailyTargetPercent);
+    }
+
+    private static void NormalizeUsageColors(UsageColorConfig colors)
+    {
+        colors.WarningPercent = Math.Clamp(
+            double.IsFinite(colors.WarningPercent) ? colors.WarningPercent : UsageColorCatalog.DefaultWarningPercent,
+            0D, UsageColorCatalog.MaximumWarningPercent);
+        colors.CriticalPercent = Math.Clamp(
+            double.IsFinite(colors.CriticalPercent) ? colors.CriticalPercent : UsageColorCatalog.DefaultCriticalPercent,
+            colors.WarningPercent + 1D, 100D);
+        colors.WarningColor = UsageColorCatalog.NormalizeColor(
+            colors.WarningColor, UsageColorCatalog.DefaultWarningColor);
+        colors.CriticalColor = UsageColorCatalog.NormalizeColor(
+            colors.CriticalColor, UsageColorCatalog.DefaultCriticalColor);
     }
 
     private static PacingConfig CopyPacing(PacingConfig pacing) => new()

@@ -87,7 +87,7 @@ namespace ZarpaSuite.Controls
     [ToolboxBitmap(typeof(ProgressBar))]
     public class ZarpaProgressBar : Control, IZarpaThemeAware
     {
-        private ZarpaThemeTokens theme; private readonly ZarpaPaintAnimator animator; private int value; private float offset; private bool indeterminate;
+        private ZarpaThemeTokens theme; private readonly ZarpaPaintAnimator animator; private int value; private float offset; private bool indeterminate; private Color fillColor = Color.Empty;
         public ZarpaProgressBar()
         {
             theme = new ZarpaThemeTokens(Invalidate);
@@ -99,6 +99,7 @@ namespace ZarpaSuite.Controls
         }
         [Category("Estado"), DefaultValue(0)] public int Value { get { return value; } set { this.value = Math.Max(0, Math.Min(100, value)); Invalidate(); } }
         [Category("Estado"), DefaultValue(false)] public bool Indeterminate { get { return indeterminate; } set { indeterminate = value; UpdateTimer(); Invalidate(); } }
+        [Category("Apariencia")] public Color FillColor { get { return fillColor; } set { fillColor = value; Invalidate(); } }
         public void ApplyTheme(ZarpaThemeTokens value) { if (value == null) return; theme = value; UpdateTimer(); Invalidate(); }
         protected override void Dispose(bool disposing) { if (disposing) animator.Dispose(); base.Dispose(disposing); }
         protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); UpdateTimer(); }
@@ -121,7 +122,7 @@ namespace ZarpaSuite.Controls
             if (!dirty.IsEmpty) Invalidate(dirty);
         }
         private Rectangle GetAnimatedBounds() { return new Rectangle((int)Math.Round(offset) - 80, 0, 80, Math.Max(0, Height)); }
-        protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); Rectangle track = new Rectangle(0, 0, Width - 1, Height - 1); ZarpaPaint.FillRounded(e.Graphics, theme.SurfaceRaised, track, Height / 2); Rectangle fill = indeterminate ? GetAnimatedBounds() : new Rectangle(0, 0, (int)((Width - 1) * value / 100F), Height - 1); e.Graphics.SetClip(track); ZarpaPaint.FillRounded(e.Graphics, theme.Accent, fill, Height / 2); e.Graphics.ResetClip(); }
+        protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); Rectangle track = new Rectangle(0, 0, Width - 1, Height - 1); ZarpaPaint.FillRounded(e.Graphics, theme.SurfaceRaised, track, Height / 2); Rectangle fill = indeterminate ? GetAnimatedBounds() : new Rectangle(0, 0, (int)((Width - 1) * value / 100F), Height - 1); e.Graphics.SetClip(track); ZarpaPaint.FillRounded(e.Graphics, fillColor.IsEmpty ? theme.Accent : fillColor, fill, Height / 2); e.Graphics.ResetClip(); }
     }
 
     [ToolboxItem(true)]

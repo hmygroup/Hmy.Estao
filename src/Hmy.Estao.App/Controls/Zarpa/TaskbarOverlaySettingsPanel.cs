@@ -8,17 +8,14 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
     private readonly ZarpaToggleSwitch _enabled = new() { Text = "Show usage on the Windows taskbar", Width = 330 };
     private readonly ZarpaComboBox _displayMode = new() { LabelText = "Identity", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
     private readonly ZarpaComboBox _size = new() { LabelText = "Size", DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
-    private readonly ZarpaButton _move = new() { Text = "Move overlay", ButtonStyle = ZarpaButtonStyle.Secondary, Width = 120 };
+    private readonly ZarpaToggleSwitch _moveEnabled = new() { Text = "Allow moving the overlay", Width = 210 };
     private readonly ZarpaButton _resetPosition = new() { Text = "Reset position", ButtonStyle = ZarpaButtonStyle.Subtle, Width = 120, Enabled = false };
     private readonly Label _position = new() { AutoSize = false, Width = 230, Height = 34, TextAlign = ContentAlignment.MiddleLeft };
     private readonly FlowLayoutPanel _providers = new() { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = false, Margin = Padding.Empty };
     private readonly FlowLayoutPanel _controls = new() { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = false, Margin = Padding.Empty };
     private readonly Dictionary<string, ZarpaCheckBox> _providerChecks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ZarpaCheckBox> _controlChecks = new(StringComparer.OrdinalIgnoreCase);
-    private bool _moving;
-    private bool _movementAvailable;
 
-    public event Action<bool>? MoveModeChanged;
     public event Action? ResetPositionRequested;
 
     public TaskbarOverlaySettingsPanel()
@@ -68,7 +65,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
             Padding = new Padding(0, 4, 0, 4),
             Margin = Padding.Empty
         };
-        positionActions.Controls.Add(_move);
+        positionActions.Controls.Add(_moveEnabled);
         positionActions.Controls.Add(_resetPosition);
         positionActions.Controls.Add(_position);
 
@@ -102,14 +99,8 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         BuildChecks();
         foreach (var mode in TaskbarOverlayDisplayCatalog.DisplayModes) _displayMode.Items.Add(mode);
         foreach (var size in TaskbarOverlayDisplayCatalog.Sizes) _size.Items.Add(size);
-        _move.Click += (_, _) =>
-        {
-            SetMoving(!_moving);
-            MoveModeChanged?.Invoke(_moving);
-        };
         _resetPosition.Click += (_, _) => ResetPositionRequested?.Invoke();
         _enabled.CheckedChanged += (_, _) => UpdateMovementAvailability();
-        UpdateMovementAvailability();
     }
 
     public void LoadConfig(EstaoConfig config)
@@ -117,6 +108,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         _enabled.Checked = config.TaskbarOverlay.Enabled;
         _displayMode.SelectedIndex = Math.Max(0, _displayMode.Items.IndexOf(config.TaskbarOverlay.DisplayMode));
         _size.SelectedIndex = Math.Max(0, _size.Items.IndexOf(config.TaskbarOverlay.Size));
+        _moveEnabled.Checked = config.TaskbarOverlay.MoveEnabled;
         ShowPosition(config.TaskbarOverlay.PositionX, config.TaskbarOverlay.PositionY);
         UpdateMovementAvailability();
         var configuredProviders = config.TaskbarOverlay.ProviderIds;
@@ -131,18 +123,6 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
             check.Checked = config.TaskbarOverlay.Controls.Contains(id, StringComparer.OrdinalIgnoreCase);
     }
 
-    public void SetMovementAvailable(bool available)
-    {
-        _movementAvailable = available;
-        UpdateMovementAvailability();
-    }
-
-    public void SetMoving(bool moving)
-    {
-        _moving = moving;
-        _move.Text = moving ? "Finish moving" : "Move overlay";
-    }
-
     public void ShowPosition(int? x, int? y)
     {
         var custom = x is not null && y is not null;
@@ -155,6 +135,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         config.Enabled = _enabled.Checked;
         config.DisplayMode = _displayMode.SelectedItem?.ToString() ?? "icon-title";
         config.Size = _size.SelectedItem?.ToString() ?? "normal";
+        config.MoveEnabled = _moveEnabled.Checked;
         config.ProviderIds = _providerChecks.Where(item => item.Value.Checked).Select(item => item.Key).ToList();
         config.Controls = _controlChecks.Where(item => item.Value.Checked).Select(item => item.Key).ToList();
         if (config.Controls.Count == 0)
@@ -192,12 +173,7 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
 
     private void UpdateMovementAvailability()
     {
-        _move.Enabled = _movementAvailable && _enabled.Checked;
-        if (!_move.Enabled && _moving)
-        {
-            SetMoving(false);
-            MoveModeChanged?.Invoke(false);
-        }
+        _moveEnabled.Enabled = _enabled.Checked;
     }
 
     private static Label SectionLabel(string text) => new()

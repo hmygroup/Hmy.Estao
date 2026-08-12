@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
+using Hmy.Estao.Core.Configuration;
 using Svg;
 using ZarpaSuite.Controls;
 
@@ -97,6 +98,18 @@ internal static class ZarpaPopoverPaint
     }
 }
 
+internal static class ZarpaUsageColorResolver
+{
+    public static Color OverrideFor(UsageColorConfig? config, double? percentUsed)
+    {
+        if (percentUsed is not double used) return Color.Empty;
+        var value = UsageColorCatalog.ColorFor(config, used);
+        if (value is null) return Color.Empty;
+        try { return ColorTranslator.FromHtml(value); }
+        catch (Exception) { return Color.Empty; }
+    }
+}
+
 internal static class ZarpaProviderIconCatalog
 {
     private static readonly Dictionary<(string Provider, int Width, int Height, int Tint), Bitmap?> Cache = new();
@@ -150,6 +163,17 @@ internal static class ZarpaProviderIconCatalog
         graphics.DrawImage(bitmap, bounds);
         graphics.InterpolationMode = previousInterpolation;
         return true;
+    }
+
+    public static Bitmap? CreateBitmap(string provider, int size, Color? monochromeTint = null)
+    {
+        var pixelSize = Math.Max(1, size);
+        var bitmap = new Bitmap(pixelSize, pixelSize, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.Clear(Color.Transparent);
+        if (TryDraw(graphics, provider, new Rectangle(0, 0, pixelSize, pixelSize), monochromeTint)) return bitmap;
+        bitmap.Dispose();
+        return null;
     }
 }
 
@@ -679,6 +703,7 @@ internal sealed class ZarpaProviderTab : Control, IZarpaThemeAware
     private bool _active;
     private bool _available = true;
     private int _usagePercent;
+    private Color _usageColor = Color.Empty;
 
     public ZarpaProviderTab(string provider, string iconKey)
     {
@@ -707,6 +732,10 @@ internal sealed class ZarpaProviderTab : Control, IZarpaThemeAware
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int UsagePercent { get => _usagePercent; set { _usagePercent = Math.Clamp(value, 0, 100); Invalidate(); } }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public Color UsageColor { get => _usageColor; set { _usageColor = value; Invalidate(); } }
 
     public void ApplyTheme(ZarpaThemeTokens value)
     {
@@ -760,7 +789,9 @@ internal sealed class ZarpaProviderTab : Control, IZarpaThemeAware
                 : _theme?.SurfaceRaised ?? Color.FromArgb(172, 172, 213), track, 4);
         var meterWidth = (int)Math.Round(track.Width * _usagePercent / 100D);
         if (meterWidth > 0)
-            ZarpaPopoverPaint.FillRounded(e.Graphics, _theme?.Success ?? Color.FromArgb(69, 169, 165),
+            ZarpaPopoverPaint.FillRounded(e.Graphics, _usageColor.IsEmpty
+                    ? _theme?.Success ?? Color.FromArgb(69, 169, 165)
+                    : _usageColor,
                 new Rectangle(track.Left, track.Top, Math.Max(5, meterWidth), track.Height), 4);
     }
 
