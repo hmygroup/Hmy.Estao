@@ -151,6 +151,17 @@ internal static class ZarpaProviderIconCatalog
         graphics.InterpolationMode = previousInterpolation;
         return true;
     }
+
+    public static Bitmap? CreateBitmap(string provider, int size, Color? monochromeTint = null)
+    {
+        var pixelSize = Math.Max(1, size);
+        var bitmap = new Bitmap(pixelSize, pixelSize, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.Clear(Color.Transparent);
+        if (TryDraw(graphics, provider, new Rectangle(0, 0, pixelSize, pixelSize), monochromeTint)) return bitmap;
+        bitmap.Dispose();
+        return null;
+    }
 }
 
 internal sealed class ZarpaPopoverBackdrop : Panel

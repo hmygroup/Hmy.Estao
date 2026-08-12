@@ -17,6 +17,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly UsageProviderFactory _providerFactory = new();
     private readonly AdaptiveRefreshLoop _refreshLoop;
     private readonly NotifyIcon _notifyIcon;
+    private readonly Icon _applicationIcon;
     private readonly ZarpaThemeManager _zarpaTheme = new() { Preset = ZarpaThemePreset.Graphite };
     private readonly TaskbarUsageOverlay _taskbarOverlay;
     private readonly System.Windows.Forms.Timer _hoverPopoverTimer;
@@ -46,9 +47,11 @@ public sealed class TrayApplicationContext : ApplicationContext
             () => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline,
             ConfiguredRefreshDelay);
         _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        _applicationIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ??
+            (Icon)SystemIcons.Application.Clone();
         _notifyIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = _applicationIcon,
             Text = EstaoConstants.DisplayName,
             Visible = true
         };
@@ -70,6 +73,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _refreshLoop.Dispose();
             _notifyIcon.Dispose();
+            _applicationIcon.Dispose();
             _taskbarOverlay.Dispose();
             _hoverPopoverTimer.Stop();
             _hoverPopoverTimer.Dispose();
@@ -103,7 +107,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             foreach (var snapshot in snapshots)
             {
-                var item = new ZarpaMenuItem(Summary(snapshot), ProviderIcon(snapshot.Provider), null);
+                var item = ProviderMenuItem(Summary(snapshot), snapshot.Provider);
                 item.Enabled = false;
                 menu.Items.Add(item);
             }
@@ -131,7 +135,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         _notifyIcon.ContextMenuStrip?.Dispose();
         _notifyIcon.ContextMenuStrip = menu;
-        _notifyIcon.Text = snapshots.FirstOrDefault(snapshot => snapshot.Error is null)?.DisplayName ?? EstaoConstants.DisplayName;
+        _notifyIcon.Text = EstaoConstants.DisplayName;
     }
 
     private void ShowUsagePopover()
@@ -347,7 +351,7 @@ public sealed class TrayApplicationContext : ApplicationContext
                 continue;
             }
 
-            var providerItem = new ZarpaMenuItem(ProviderCatalog.DisplayName(providerConfig.Id), ProviderIcon(providerConfig.Id), null);
+            var providerItem = ProviderMenuItem(ProviderCatalog.DisplayName(providerConfig.Id), providerConfig.Id);
             var activeIndex = providerConfig.ActiveAccountIndex ?? providerConfig.TokenAccounts?.ActiveIndex ?? 0;
             for (var index = 0; index < accounts.Count; index++)
             {
@@ -401,9 +405,19 @@ public sealed class TrayApplicationContext : ApplicationContext
         return $"{snapshot.DisplayName}: {primary.PercentRemaining.Value:P0} left{account}";
     }
 
+    private ZarpaMenuItem ProviderMenuItem(string text, string provider)
+    {
+        if (ProviderCatalog.NormalizeId(provider) == "codex")
+            return new ZarpaMenuItem(text, string.Empty, null)
+            {
+                Image = ZarpaProviderIconCatalog.CreateBitmap(provider, 20, _zarpaTheme.Theme.TextMuted)
+            };
+
+        return new ZarpaMenuItem(text, ProviderIcon(provider), null);
+    }
+
     private static string ProviderIcon(string provider) => ProviderCatalog.NormalizeId(provider) switch
     {
-        "codex" => "ic_fluent_bot_24_regular",
         "claude" => "ic_fluent_sparkle_24_regular",
         "copilot" => "ic_fluent_people_24_regular",
         "opencode" => "ic_fluent_code_24_regular",
