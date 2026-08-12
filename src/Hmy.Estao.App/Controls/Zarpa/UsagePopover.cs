@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Hmy.Estao.Core.Configuration;
+using Hmy.Estao.Core.Formatting;
 using Hmy.Estao.Core.Models;
 using ZarpaSuite.Controls;
 
@@ -868,9 +869,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         if (resetAt is null) return string.Empty;
         var remaining = resetAt.Value - DateTimeOffset.Now;
         if (remaining <= TimeSpan.Zero) return "Reset due";
-        if (remaining.TotalDays >= 1) return $"Resets in {(int)remaining.TotalDays}d {remaining.Hours}h";
-        if (remaining.TotalHours >= 1) return $"Resets in {(int)remaining.TotalHours}h {remaining.Minutes}m";
-        return $"Resets in {Math.Max(1, remaining.Minutes)}m";
+        return $"Resets in {DurationFormatter.ToCompact(remaining)}";
     }
 
     private static void OpenDashboard(string? provider) => OpenUrl(ProviderCatalog.NormalizeId(provider ?? string.Empty) switch

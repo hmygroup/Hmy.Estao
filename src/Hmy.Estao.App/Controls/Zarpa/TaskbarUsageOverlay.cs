@@ -3,6 +3,7 @@ using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 using Hmy.Estao.Core.Configuration;
+using Hmy.Estao.Core.Formatting;
 using Hmy.Estao.Core.Models;
 
 namespace Hmy.Estao.App.Controls.Zarpa;
@@ -21,6 +22,8 @@ internal sealed class TaskbarUsageOverlay : Form
     private const int TaskbarGap = 6;
     private const int DragHandleWidth = 18;
     private const int ProviderHoverDelay = 350;
+    private const string OverlayFontFamily = "Segoe UI";
+    private const float OverlayFontSize = 8.5F;
     private const int WmNcHitTest = 0x0084;
     private const int HtTransparent = -1;
     private const int HtClient = 1;
@@ -247,7 +250,7 @@ internal sealed class TaskbarUsageOverlay : Form
         }
         if (showTitle)
         {
-            DrawText(graphics, snapshot.DisplayName, new Font("Segoe UI", 7.5F, FontStyle.Bold),
+            DrawText(graphics, snapshot.DisplayName, new Font(OverlayFontFamily, OverlayFontSize, FontStyle.Bold),
                 new RectangleF(moduleX, rowY + 2, showIcon ? 72 : 76, 16), theme.Text);
             moduleX += (showIcon ? 78 : 82);
         }
@@ -255,7 +258,7 @@ internal sealed class TaskbarUsageOverlay : Form
         if (HasControl("percentage"))
         {
             DrawText(graphics, window?.PercentUsed is double ? $"{used:P0}" : "—",
-                new Font("Segoe UI", 7.5F), new RectangleF(moduleX, moduleY, 30, 14), theme.TextMuted);
+                new Font(OverlayFontFamily, OverlayFontSize), new RectangleF(moduleX, moduleY, 30, 14), theme.TextMuted);
             moduleX += 34;
         }
 
@@ -281,13 +284,13 @@ internal sealed class TaskbarUsageOverlay : Form
         if (HasControl("usedTotal") && window?.Used is double actual && window.Limit is double limit)
         {
             DrawText(graphics, $"{FormatValue(actual)} / {FormatValue(limit)} {window.Unit}".Trim(),
-                new Font("Segoe UI", 7F), new RectangleF(moduleX, moduleY, 64, 14), theme.TextMuted);
+                new Font(OverlayFontFamily, OverlayFontSize), new RectangleF(moduleX, moduleY, 64, 14), theme.TextMuted);
             moduleX += 68;
         }
         if (HasControl("reset") && window?.ResetAt is DateTimeOffset resetAt)
         {
-            DrawText(graphics, ResetText(resetAt), new Font("Segoe UI", 7F),
-                new RectangleF(moduleX, moduleY, 54, 14), theme.TextMuted);
+            DrawText(graphics, ResetText(resetAt), new Font(OverlayFontFamily, OverlayFontSize),
+                new RectangleF(moduleX, moduleY, 54, 14), theme.TextMuted, StringAlignment.Near);
         }
     }
 
@@ -440,7 +443,7 @@ internal sealed class TaskbarUsageOverlay : Form
     {
         var width = _config.DisplayMode switch
         {
-            "icon" => 40,
+            "icon" => 32,
             "title" => 96,
             _ => 118
         };
@@ -457,7 +460,7 @@ internal sealed class TaskbarUsageOverlay : Form
         if (HasControl("pie")) width += 24;
         if (HasControl("chart")) width += 52;
         if (HasControl("usedTotal")) width += 68;
-        if (HasControl("reset")) width += 58;
+        if (HasControl("reset")) width += 47;
         return width;
     }
 
@@ -472,7 +475,7 @@ internal sealed class TaskbarUsageOverlay : Form
     private bool TryPlace(int providerCount, out Rectangle placement)
     {
         placement = Rectangle.Empty;
-        var size = new Size(DragHandleWidth + 14 + providerCount * SegmentWidth(), OverlayHeight());
+        var size = new Size(DragHandleWidth + 7 + providerCount * SegmentWidth(), OverlayHeight());
         ClientSize = size;
         if (_config.PositionX is int x && _config.PositionY is int y)
         {
@@ -557,8 +560,7 @@ internal sealed class TaskbarUsageOverlay : Form
     {
         var remaining = resetAt - DateTimeOffset.Now;
         if (remaining <= TimeSpan.Zero) return "Reset due";
-        if (remaining.TotalHours >= 1) return $"{(int)remaining.TotalHours}h {remaining.Minutes}m";
-        return $"{Math.Max(1, remaining.Minutes)}m";
+        return DurationFormatter.ToCompact(remaining);
     }
 
     private void ApplyWindowsCorners()
