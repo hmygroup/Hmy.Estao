@@ -15,12 +15,19 @@ namespace Hmy.Estao.App.Controls.Zarpa;
 /// </summary>
 internal sealed class TaskbarUsageOverlay : Form
 {
-    private const int DefaultSegmentWidth = 86;
     private const int CompactOverlayHeight = 32;
     private const int StandardOverlayHeight = 38;
     private const int TaskbarReservedLeft = 120;
     private const int TaskbarGap = 6;
     private const int DragHandleWidth = 18;
+    private const int OuterPadding = 7;
+    private const int ProviderPadding = 6;
+    private const int ElementGap = 6;
+    private const int ProviderGap = 10;
+    private const int ProviderIconSize = 20;
+    private const int UsageBarWidth = 42;
+    private const int UsageDonutSize = 18;
+    private const int UsageChartWidth = 48;
     private const int ProviderHoverDelay = 350;
     private const string OverlayFontFamily = "Segoe UI";
     private const float OverlayFontSize = 8.5F;
@@ -197,15 +204,20 @@ internal sealed class TaskbarUsageOverlay : Form
         DrawDragHandle(e.Graphics, theme);
 
         var providers = VisibleSnapshots();
-        var segmentWidth = SegmentWidth();
-        for (var index = 0; index < providers.Count; index++)
+        var layouts = BuildProviderLayouts(providers);
+        var left = DragHandleWidth + OuterPadding;
+        for (var index = 0; index < layouts.Count; index++)
         {
-            var bounds = new Rectangle(DragHandleWidth + 7 + index * segmentWidth, 0, segmentWidth - 4, Height);
-            DrawProvider(e.Graphics, providers[index], bounds, theme);
-            if (index < providers.Count - 1)
+            var layout = layouts[index];
+            var bounds = new Rectangle(left, 0, layout.Width, Height);
+            DrawProvider(e.Graphics, layout, bounds, theme);
+            left = bounds.Right;
+            if (index < layouts.Count - 1)
             {
                 using var separator = new Pen(Color.FromArgb(110, theme.Border), 1F);
-                e.Graphics.DrawLine(separator, bounds.Right + 1, 10, bounds.Right + 1, Height - 10);
+                var separatorX = left + ProviderGap / 2;
+                e.Graphics.DrawLine(separator, separatorX, 10, separatorX, Height - 10);
+                left += ProviderGap;
             }
         }
     }
@@ -235,70 +247,53 @@ internal sealed class TaskbarUsageOverlay : Form
         base.WndProc(ref m);
     }
 
-    private void DrawProvider(Graphics graphics, UsageSnapshot snapshot, Rectangle bounds, WindowsTaskbarPalette theme)
+    private void DrawProvider(Graphics graphics, ProviderLayout layout, Rectangle bounds, WindowsTaskbarPalette theme)
     {
+        var snapshot = layout.Snapshot;
         var window = snapshot.Windows.FirstOrDefault();
         var used = window?.PercentUsed is double value ? Math.Clamp(value, 0D, 1D) : 0D;
         var provider = ProviderCatalog.NormalizeId(snapshot.Provider);
         var indicatorColor = ZarpaUsageColorResolver.OverrideFor(
             _usageColorsByProvider.GetValueOrDefault(provider), window?.PercentUsed);
         if (indicatorColor.IsEmpty) indicatorColor = theme.Accent;
-        var showIcon = !string.Equals(_config.DisplayMode, "title", StringComparison.OrdinalIgnoreCase);
-        var showTitle = !string.Equals(_config.DisplayMode, "icon", StringComparison.OrdinalIgnoreCase);
-        var moduleWidth = ModuleWidth();
         var rowY = bounds.Top + Math.Max(0, (Height - 20) / 2);
         var moduleY = bounds.Top + Math.Max(0, (Height - 14) / 2);
-        var moduleX = bounds.Left + 6;
+        var elementX = bounds.Left + ProviderHorizontalPadding();
+        foreach (var element in layout.Elements)
+        {
+            switch (element.Kind)
+            {
+                case OverlayElementKind.Icon:
+                    ZarpaProviderIconCatalog.TryDraw(graphics, provider,
+                        new Rectangle(elementX, rowY, element.Width, ProviderIconSize), theme.Text);
+                    break;
+                case OverlayElementKind.Title:
+                    DrawText(graphics, element.Text!, new Font(OverlayFontFamily, OverlayFontSize, FontStyle.Bold),
+                        new RectangleF(elementX, rowY + 2, element.Width, 16), theme.Text);
+                    break;
+                case OverlayElementKind.Text:
+                    DrawText(graphics, element.Text!, new Font(OverlayFontFamily, OverlayFontSize),
+                        new RectangleF(elementX, moduleY, element.Width, 14), theme.TextMuted);
+                    break;
+                case OverlayElementKind.Bar:
+                {
+                    var bar = new Rectangle(elementX, moduleY + 5, element.Width, 4);
+                    ZarpaPopoverPaint.FillRounded(graphics, Color.FromArgb(70, theme.TextMuted), bar, 3);
+                    ZarpaPopoverPaint.FillRounded(graphics, indicatorColor,
+                        new Rectangle(bar.Left, bar.Top, Math.Max(2, (int)Math.Round(bar.Width * used)), bar.Height), 3);
+                    break;
+                }
+                case OverlayElementKind.Donut:
+                    DrawDonut(graphics, used, indicatorColor,
+                        new Rectangle(elementX, moduleY - 1, element.Width, UsageDonutSize));
+                    break;
+                case OverlayElementKind.Chart:
+                    DrawSparkline(graphics, snapshot, theme.Accent,
+                        new Rectangle(elementX, moduleY + 3, element.Width, 10), theme);
+                    break;
+            }
 
-        if (showIcon)
-        {
-            ZarpaProviderIconCatalog.TryDraw(graphics, provider,
-                new Rectangle(moduleX, rowY, 20, 20), theme.Text);
-            moduleX += 26;
-        }
-        if (showTitle)
-        {
-            DrawText(graphics, snapshot.DisplayName, new Font(OverlayFontFamily, OverlayFontSize, FontStyle.Bold),
-                new RectangleF(moduleX, rowY + 2, showIcon ? 72 : 76, 16), theme.Text);
-            moduleX += (showIcon ? 78 : 82);
-        }
-
-        if (HasControl("percentage"))
-        {
-            DrawText(graphics, window?.PercentUsed is double ? $"{used:P0}" : "—",
-                new Font(OverlayFontFamily, OverlayFontSize), new RectangleF(moduleX, moduleY, 30, 14), theme.TextMuted);
-            moduleX += 34;
-        }
-
-        if (HasControl("bar"))
-        {
-            var bar = new Rectangle(moduleX, moduleY + 5, 42, 4);
-            ZarpaPopoverPaint.FillRounded(graphics, Color.FromArgb(70, theme.TextMuted), bar, 3);
-            ZarpaPopoverPaint.FillRounded(graphics, indicatorColor,
-                new Rectangle(bar.Left, bar.Top, Math.Max(2, (int)Math.Round(bar.Width * used)), bar.Height), 3);
-            moduleX += 46;
-        }
-
-        if (HasControl("pie"))
-        {
-            DrawDonut(graphics, used, indicatorColor, new Rectangle(moduleX, moduleY - 1, 18, 18));
-            moduleX += 24;
-        }
-        if (HasControl("chart"))
-        {
-            DrawSparkline(graphics, snapshot, theme.Accent, new Rectangle(moduleX, moduleY + 3, 48, 10), theme);
-            moduleX += 52;
-        }
-        if (HasControl("usedTotal") && window?.Used is double actual && window.Limit is double limit)
-        {
-            DrawText(graphics, $"{FormatValue(actual)} / {FormatValue(limit)} {window.Unit}".Trim(),
-                new Font(OverlayFontFamily, OverlayFontSize), new RectangleF(moduleX, moduleY, 64, 14), theme.TextMuted);
-            moduleX += 68;
-        }
-        if (HasControl("reset") && window?.ResetAt is DateTimeOffset resetAt)
-        {
-            DrawText(graphics, ResetText(resetAt), new Font(OverlayFontFamily, OverlayFontSize),
-                new RectangleF(moduleX, moduleY, 54, 14), theme.TextMuted, StringAlignment.Near);
+            elementX += element.Width + ElementGap;
         }
     }
 
@@ -412,12 +407,21 @@ internal sealed class TaskbarUsageOverlay : Form
         var cursor = Cursor.Position;
         var clientPoint = PointToClient(cursor);
         var providers = VisibleSnapshots();
-        var segmentWidth = SegmentWidth();
-        var firstSegmentLeft = DragHandleWidth + 7;
-        var index = (clientPoint.X - firstSegmentLeft) / Math.Max(1, segmentWidth);
-        var insideSegments = clientPoint.Y >= 0 && clientPoint.Y < Height &&
-            clientPoint.X >= firstSegmentLeft && index >= 0 && index < providers.Count;
-        var provider = insideSegments ? ProviderCatalog.NormalizeId(providers[index].Provider) : null;
+        var layouts = BuildProviderLayouts(providers);
+        var left = DragHandleWidth + OuterPadding;
+        var index = -1;
+        for (var candidate = 0; candidate < layouts.Count; candidate++)
+        {
+            if (new Rectangle(left, 0, layouts[candidate].Width, Height).Contains(clientPoint))
+            {
+                index = candidate;
+                break;
+            }
+
+            left += layouts[candidate].Width + ProviderGap;
+        }
+
+        var provider = index >= 0 ? ProviderCatalog.NormalizeId(providers[index].Provider) : null;
         if (provider is null)
         {
             ResetProviderHover();
@@ -435,8 +439,7 @@ internal sealed class TaskbarUsageOverlay : Form
         if (_reportedHoverProvider is not null || Environment.TickCount64 - _hoverStartedAt < ProviderHoverDelay) return;
 
         _reportedHoverProvider = provider;
-        var segmentLeft = firstSegmentLeft + index * segmentWidth;
-        var anchor = PointToScreen(new Point(segmentLeft + segmentWidth / 2, 0));
+        var anchor = PointToScreen(new Point(left + layouts[index].Width / 2, 0));
         ProviderHoverRequested?.Invoke(provider, anchor);
     }
 
@@ -447,30 +450,87 @@ internal sealed class TaskbarUsageOverlay : Form
         _hoverStartedAt = 0;
     }
 
-    private int SegmentWidth()
+    private IReadOnlyList<ProviderLayout> BuildProviderLayouts(IReadOnlyList<UsageSnapshot> snapshots)
     {
-        var width = _config.DisplayMode switch
+        using var graphics = Graphics.FromHwnd(IntPtr.Zero);
+        using var regularFont = new Font(OverlayFontFamily, OverlayFontSize);
+        using var boldFont = new Font(OverlayFontFamily, OverlayFontSize, FontStyle.Bold);
+        using var format = new StringFormat(StringFormat.GenericTypographic)
         {
-            "icon" => 32,
-            "title" => 96,
-            _ => 118
+            FormatFlags = StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap
         };
-        width += ModuleWidth();
-        if (string.Equals(_config.Size, "spacious", StringComparison.OrdinalIgnoreCase)) width += 10;
-        return Math.Max(DefaultSegmentWidth, width);
+        return snapshots.Select(snapshot => BuildProviderLayout(snapshot, graphics, regularFont, boldFont, format)).ToArray();
     }
 
-    private int ModuleWidth()
+    private ProviderLayout BuildProviderLayout(
+        UsageSnapshot snapshot,
+        Graphics graphics,
+        Font regularFont,
+        Font boldFont,
+        StringFormat format)
     {
-        var width = 0;
-        if (HasControl("percentage")) width += 34;
-        if (HasControl("bar")) width += 46;
-        if (HasControl("pie")) width += 24;
-        if (HasControl("chart")) width += 52;
-        if (HasControl("usedTotal")) width += 68;
-        if (HasControl("reset")) width += 47;
+        var elements = new List<OverlayElement>();
+        var window = snapshot.Windows.FirstOrDefault();
+        var used = window?.PercentUsed is double value ? Math.Clamp(value, 0D, 1D) : 0D;
+        var showIcon = !string.Equals(_config.DisplayMode, "title", StringComparison.OrdinalIgnoreCase);
+        var showTitle = !string.Equals(_config.DisplayMode, "icon", StringComparison.OrdinalIgnoreCase);
+
+        if (showIcon) elements.Add(new OverlayElement(OverlayElementKind.Icon, ProviderIconSize));
+        if (showTitle)
+            elements.Add(TextElement(snapshot.DisplayName, graphics, boldFont, format, OverlayElementKind.Title));
+        if (HasControl("percentage"))
+            elements.Add(TextElement(window?.PercentUsed is double ? $"{used:P0}" : "—", graphics, regularFont, format));
+        if (HasControl("bar")) elements.Add(new OverlayElement(OverlayElementKind.Bar, UsageBarWidth));
+        if (HasControl("pie")) elements.Add(new OverlayElement(OverlayElementKind.Donut, UsageDonutSize));
+        if (HasControl("chart")) elements.Add(new OverlayElement(OverlayElementKind.Chart, UsageChartWidth));
+        if (HasControl("usedTotal") && window?.Used is double actual && window.Limit is double limit)
+            elements.Add(TextElement($"{FormatValue(actual)} / {FormatValue(limit)} {window.Unit}".Trim(),
+                graphics, regularFont, format));
+        if (HasControl("reset") && window?.ResetAt is DateTimeOffset resetAt)
+            elements.Add(TextElement(ResetText(resetAt), graphics, regularFont, format));
+
+        var width = ProviderHorizontalPadding() * 2 + elements.Sum(element => element.Width);
+        if (elements.Count > 1) width += ElementGap * (elements.Count - 1);
+        return new ProviderLayout(snapshot, elements, width);
+    }
+
+    private int ProviderHorizontalPadding() => ProviderPadding +
+        (string.Equals(_config.Size, "spacious", StringComparison.OrdinalIgnoreCase) ? 5 : 0);
+
+    private static OverlayElement TextElement(
+        string text,
+        Graphics graphics,
+        Font font,
+        StringFormat format,
+        OverlayElementKind kind = OverlayElementKind.Text)
+    {
+        var width = (int)Math.Ceiling(graphics.MeasureString(text, font, int.MaxValue, format).Width);
+        return new OverlayElement(kind, Math.Max(1, width), text);
+    }
+
+    private int OverlayWidth(IReadOnlyList<ProviderLayout> layouts)
+    {
+        var width = DragHandleWidth + OuterPadding * 2 + layouts.Sum(layout => layout.Width);
+        if (layouts.Count > 1) width += ProviderGap * (layouts.Count - 1);
         return width;
     }
+
+    private enum OverlayElementKind
+    {
+        Icon,
+        Title,
+        Text,
+        Bar,
+        Donut,
+        Chart
+    }
+
+    private sealed record OverlayElement(OverlayElementKind Kind, int Width, string? Text = null);
+
+    private sealed record ProviderLayout(
+        UsageSnapshot Snapshot,
+        IReadOnlyList<OverlayElement> Elements,
+        int Width);
 
     private int OverlayHeight()
     {
@@ -480,10 +540,10 @@ internal sealed class TaskbarUsageOverlay : Form
         return StandardOverlayHeight;
     }
 
-    private bool TryPlace(int providerCount, out Rectangle placement)
+    private bool TryPlace(IReadOnlyList<ProviderLayout> layouts, out Rectangle placement)
     {
         placement = Rectangle.Empty;
-        var size = new Size(DragHandleWidth + 7 + providerCount * SegmentWidth(), OverlayHeight());
+        var size = new Size(OverlayWidth(layouts), OverlayHeight());
         ClientSize = size;
         if (_config.PositionX is int x && _config.PositionY is int y)
         {
@@ -593,7 +653,8 @@ internal sealed class TaskbarUsageOverlay : Form
     {
         if (IsDisposed) return;
         var visible = VisibleSnapshots();
-        if (!_config.Enabled || visible.Count == 0 || !TryPlace(visible.Count, out var placement))
+        var layouts = BuildProviderLayouts(visible);
+        if (!_config.Enabled || layouts.Count == 0 || !TryPlace(layouts, out var placement))
         {
             Hide();
             return;

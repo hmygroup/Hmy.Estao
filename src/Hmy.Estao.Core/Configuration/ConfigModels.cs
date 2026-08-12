@@ -167,7 +167,7 @@ public sealed class TaskbarOverlayConfig
 public static class TaskbarOverlayControlCatalog
 {
     public static readonly string[] All = ["percentage", "bar", "pie", "chart", "usedTotal", "reset"];
-    public static readonly string[] Default = ["percentage", "bar", "pie", "chart"];
+    public static readonly string[] Default = ["percentage", "pie", "reset"];
 
     public static string DisplayName(string id) => id switch
     {

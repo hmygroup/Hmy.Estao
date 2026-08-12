@@ -16,6 +16,7 @@ public sealed class ConfigStoreTests
         Assert.Contains(config.Providers, provider => provider.Id == "codex" && provider.Enabled == true);
         Assert.Contains(config.Providers, provider => provider.Id == "claude");
         Assert.True(config.TaskbarOverlay.MoveEnabled);
+        Assert.Equal(["percentage", "pie", "reset"], config.TaskbarOverlay.Controls);
         Assert.All(config.Providers, provider => Assert.False(provider.UsageColors.Enabled));
     }
 
