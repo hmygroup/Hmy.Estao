@@ -21,6 +21,8 @@ internal sealed class UsagePopover : ZarpaModernForm
     private readonly ZarpaThemeManager _theme;
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
     private IReadOnlyList<UsageHistoryPoint> _history = [];
+    private IReadOnlyDictionary<string, UsageColorConfig> _usageColorsByProvider =
+        new Dictionary<string, UsageColorConfig>(StringComparer.OrdinalIgnoreCase);
     private string? _selectedProvider;
     private bool _allowDeactivateClose;
 
@@ -81,7 +83,7 @@ internal sealed class UsagePopover : ZarpaModernForm
 
         _content.Dock = DockStyle.Fill;
         _content.Margin = Padding.Empty;
-        _content.UpdatePacing(providerConfigs ?? []);
+        UpdateProviderConfigs(providerConfigs ?? []);
         _content.SettingsRequested += (_, _) => { Close(); _showSettings(); };
         _content.RefreshRequested += async (_, _) => await RefreshFromUiAsync().ConfigureAwait(true);
         _content.QuitRequested += (_, _) => { Close(); _quit(); };
@@ -172,15 +174,19 @@ internal sealed class UsagePopover : ZarpaModernForm
         ShowSelectedSnapshot();
     }
 
-    public void UpdatePacing(IReadOnlyList<ProviderConfig> providers)
+    public void UpdateProviderConfigs(IReadOnlyList<ProviderConfig> providers)
     {
         if (InvokeRequired)
         {
-            BeginInvoke(() => UpdatePacing(providers));
+            BeginInvoke(() => UpdateProviderConfigs(providers));
             return;
         }
 
-        _content.UpdatePacing(providers);
+        _usageColorsByProvider = providers
+            .GroupBy(provider => ProviderCatalog.NormalizeId(provider.Id), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().UsageColors, StringComparer.OrdinalIgnoreCase);
+        _content.UpdateProviderConfigs(providers);
+        UpdateTabVisuals();
         ShowSelectedSnapshot();
     }
 
@@ -224,6 +230,7 @@ internal sealed class UsagePopover : ZarpaModernForm
                     Active = string.Equals(provider, _selectedProvider, StringComparison.OrdinalIgnoreCase),
                     Available = snapshot is not null && snapshot.Error is null,
                     UsagePercent = PercentUsed(snapshot),
+                    UsageColor = UsageColor(provider, snapshot),
                     Dock = DockStyle.Fill,
                     Margin = new Padding(column == 0 ? 0 : 2, 0,
                         column == providers.Length - 1 ? 0 : 2, 0),
@@ -252,6 +259,7 @@ internal sealed class UsagePopover : ZarpaModernForm
             tab.Active = string.Equals(provider, _selectedProvider, StringComparison.OrdinalIgnoreCase);
             tab.Available = snapshot is not null && snapshot.Error is null;
             tab.UsagePercent = PercentUsed(snapshot);
+            tab.UsageColor = UsageColor(provider, snapshot);
         }
     }
 
@@ -306,6 +314,13 @@ internal sealed class UsagePopover : ZarpaModernForm
         ? (int)Math.Round(Math.Clamp(value, 0D, 1D) * 100D)
         : 0;
 
+    private Color UsageColor(string? provider, UsageSnapshot? snapshot)
+    {
+        var id = ProviderCatalog.NormalizeId(provider ?? snapshot?.Provider ?? string.Empty);
+        return ZarpaUsageColorResolver.OverrideFor(
+            _usageColorsByProvider.GetValueOrDefault(id), snapshot?.Windows.FirstOrDefault()?.PercentUsed);
+    }
+
     private static string TabDisplayName(string provider) => ProviderCatalog.NormalizeId(provider) switch
     {
         "copilot" => "Copilot",
@@ -347,6 +362,8 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     private IReadOnlyList<UsageHistoryPoint> _history = [];
     private IReadOnlyDictionary<string, PacingConfig> _pacingByProvider =
         new Dictionary<string, PacingConfig>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyDictionary<string, UsageColorConfig> _usageColorsByProvider =
+        new Dictionary<string, UsageColorConfig>(StringComparer.OrdinalIgnoreCase);
 
     public ZarpaUsageContent()
     {
@@ -378,11 +395,14 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
     public int ContentHeight => Math.Max(ClientSize.Height, _canvas.Height);
     public int ScrollOffset => _scrollOffset;
 
-    public void UpdatePacing(IReadOnlyList<ProviderConfig> providers)
+    public void UpdateProviderConfigs(IReadOnlyList<ProviderConfig> providers)
     {
         _pacingByProvider = providers
             .GroupBy(provider => ProviderCatalog.NormalizeId(provider.Id), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().Pacing, StringComparer.OrdinalIgnoreCase);
+        _usageColorsByProvider = providers
+            .GroupBy(provider => ProviderCatalog.NormalizeId(provider.Id), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().UsageColors, StringComparer.OrdinalIgnoreCase);
         if (_provider is not null || _snapshot is not null) Display(_snapshot, _provider, _history);
     }
 
@@ -747,7 +767,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         var width = ContentWidth;
         AddText(window.Title, _sectionFont, TextColor, 0, y, width, 26);
         var percent = window.PercentUsed is double used ? (int)Math.Round(Math.Clamp(used, 0D, 1D) * 100D) : 0;
-        AddProgress(percent, y + 29);
+        AddProgress(percent, y + 29, UsageColor(window.PercentUsed));
         AddText(window.PercentUsed is null ? "Usage unavailable" : $"{percent}% used", _bodyFont,
             TextColor, 0, y + 41, width / 2, 23);
         AddText(window.ResetAt is null ? "Reset time unavailable" : ResetText(window.ResetAt), _mutedFont, MutedColor,
@@ -756,18 +776,25 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         return y + 72;
     }
 
-    private ZarpaProgressBar AddProgress(int value, int y)
+    private ZarpaProgressBar AddProgress(int value, int y, Color fillColor = default)
     {
         var progress = new ZarpaProgressBar
         {
             BackColor = SurfaceColor,
             Location = new Point(0, y),
             Size = new Size(ContentWidth, 8),
-            Value = value
+            Value = value,
+            FillColor = fillColor
         };
         _progressTheme.Attach(progress);
         AddContentControl(progress);
         return progress;
+    }
+
+    private Color UsageColor(double? percentUsed)
+    {
+        var provider = ProviderCatalog.NormalizeId(_provider ?? _snapshot?.Provider ?? string.Empty);
+        return ZarpaUsageColorResolver.OverrideFor(_usageColorsByProvider.GetValueOrDefault(provider), percentUsed);
     }
 
     private void AddSeparator(int y)

@@ -71,6 +71,63 @@ public static class PacingCatalog
     public static readonly double[] Presets = [5, 10, 15, 20, 25, 30, 50];
 }
 
+public sealed class UsageColorConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    [JsonPropertyName("warningPercent")]
+    public double WarningPercent { get; set; } = UsageColorCatalog.DefaultWarningPercent;
+
+    [JsonPropertyName("warningColor")]
+    public string WarningColor { get; set; } = UsageColorCatalog.DefaultWarningColor;
+
+    [JsonPropertyName("criticalPercent")]
+    public double CriticalPercent { get; set; } = UsageColorCatalog.DefaultCriticalPercent;
+
+    [JsonPropertyName("criticalColor")]
+    public string CriticalColor { get; set; } = UsageColorCatalog.DefaultCriticalColor;
+}
+
+public enum UsageColorLevel
+{
+    Default,
+    Warning,
+    Critical
+}
+
+public static class UsageColorCatalog
+{
+    public const double DefaultWarningPercent = 75D;
+    public const double DefaultCriticalPercent = 90D;
+    public const double MaximumWarningPercent = 99D;
+    public const string DefaultWarningColor = "#F59E0B";
+    public const string DefaultCriticalColor = "#EF4444";
+
+    public static UsageColorLevel LevelFor(UsageColorConfig? config, double percentUsed)
+    {
+        if (config is not { Enabled: true }) return UsageColorLevel.Default;
+        var percent = Math.Clamp(percentUsed, 0D, 1D) * 100D;
+        if (percent >= config.CriticalPercent) return UsageColorLevel.Critical;
+        return percent >= config.WarningPercent ? UsageColorLevel.Warning : UsageColorLevel.Default;
+    }
+
+    public static string? ColorFor(UsageColorConfig? config, double percentUsed) => LevelFor(config, percentUsed) switch
+    {
+        UsageColorLevel.Warning => config!.WarningColor,
+        UsageColorLevel.Critical => config!.CriticalColor,
+        _ => null
+    };
+
+    public static string NormalizeColor(string? value, string fallback)
+    {
+        var color = value?.Trim();
+        if (color is not { Length: 7 } || color[0] != '#' || !color.Skip(1).All(Uri.IsHexDigit))
+            return fallback;
+        return color.ToUpperInvariant();
+    }
+}
+
 public sealed class TaskbarOverlayConfig
 {
     [JsonPropertyName("enabled")]
@@ -130,6 +187,7 @@ public static class TaskbarOverlayDisplayCatalog
 public sealed class ProviderConfig
 {
     private PacingConfig? _pacing;
+    private UsageColorConfig? _usageColors;
 
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
@@ -150,6 +208,13 @@ public sealed class ProviderConfig
 
     [JsonIgnore]
     internal bool HasExplicitPacing { get; private set; }
+
+    [JsonPropertyName("usageColors")]
+    public UsageColorConfig UsageColors
+    {
+        get => _usageColors ??= new UsageColorConfig();
+        set => _usageColors = value ?? new UsageColorConfig();
+    }
 
     [JsonPropertyName("source")]
     public string? Source { get; set; }

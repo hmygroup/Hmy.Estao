@@ -34,6 +34,8 @@ internal sealed class TaskbarUsageOverlay : Form
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
     private IReadOnlyList<UsageHistoryPoint> _history = [];
     private TaskbarOverlayConfig _config = new();
+    private IReadOnlyDictionary<string, UsageColorConfig> _usageColorsByProvider =
+        new Dictionary<string, UsageColorConfig>(StringComparer.OrdinalIgnoreCase);
     private Rectangle _regionBounds;
     private bool _dragging;
     private Point _dragOffset;
@@ -76,17 +78,21 @@ internal sealed class TaskbarUsageOverlay : Form
     public void Update(
         IReadOnlyList<UsageSnapshot> snapshots,
         IReadOnlyList<UsageHistoryPoint> history,
-        TaskbarOverlayConfig config)
+        TaskbarOverlayConfig config,
+        IReadOnlyList<ProviderConfig> providers)
     {
         if (InvokeRequired)
         {
-            BeginInvoke(() => Update(snapshots, history, config));
+            BeginInvoke(() => Update(snapshots, history, config, providers));
             return;
         }
 
         _snapshots = snapshots;
         _history = history;
         _config = CloneConfig(config);
+        _usageColorsByProvider = providers
+            .GroupBy(provider => ProviderCatalog.NormalizeId(provider.Id), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().UsageColors, StringComparer.OrdinalIgnoreCase);
         RefreshPlacement();
         Invalidate();
     }
@@ -230,8 +236,10 @@ internal sealed class TaskbarUsageOverlay : Form
     {
         var window = snapshot.Windows.FirstOrDefault();
         var used = window?.PercentUsed is double value ? Math.Clamp(value, 0D, 1D) : 0D;
-        var accent = used >= .9D ? theme.Danger : used >= .75D ? theme.Warning : theme.Accent;
         var provider = ProviderCatalog.NormalizeId(snapshot.Provider);
+        var indicatorColor = ZarpaUsageColorResolver.OverrideFor(
+            _usageColorsByProvider.GetValueOrDefault(provider), window?.PercentUsed);
+        if (indicatorColor.IsEmpty) indicatorColor = theme.Accent;
         var showIcon = !string.Equals(_config.DisplayMode, "title", StringComparison.OrdinalIgnoreCase);
         var showTitle = !string.Equals(_config.DisplayMode, "icon", StringComparison.OrdinalIgnoreCase);
         var moduleWidth = ModuleWidth();
@@ -263,19 +271,19 @@ internal sealed class TaskbarUsageOverlay : Form
         {
             var bar = new Rectangle(moduleX, moduleY + 5, 42, 4);
             ZarpaPopoverPaint.FillRounded(graphics, Color.FromArgb(70, theme.TextMuted), bar, 3);
-            ZarpaPopoverPaint.FillRounded(graphics, accent,
+            ZarpaPopoverPaint.FillRounded(graphics, indicatorColor,
                 new Rectangle(bar.Left, bar.Top, Math.Max(2, (int)Math.Round(bar.Width * used)), bar.Height), 3);
             moduleX += 46;
         }
 
         if (HasControl("pie"))
         {
-            DrawDonut(graphics, used, accent, new Rectangle(moduleX, moduleY - 1, 18, 18));
+            DrawDonut(graphics, used, indicatorColor, new Rectangle(moduleX, moduleY - 1, 18, 18));
             moduleX += 24;
         }
         if (HasControl("chart"))
         {
-            DrawSparkline(graphics, snapshot, accent, new Rectangle(moduleX, moduleY + 3, 48, 10), theme);
+            DrawSparkline(graphics, snapshot, theme.Accent, new Rectangle(moduleX, moduleY + 3, 48, 10), theme);
             moduleX += 52;
         }
         if (HasControl("usedTotal") && window?.Used is double actual && window.Limit is double limit)
