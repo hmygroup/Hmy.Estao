@@ -19,6 +19,7 @@ internal sealed class TaskbarUsageOverlay : Form
     private const int StandardOverlayHeight = 38;
     private const int TaskbarReservedLeft = 120;
     private const int TaskbarGap = 6;
+    private const int DragHandleWidth = 18;
     private const int WmNcHitTest = 0x0084;
     private const int HtTransparent = -1;
     private const int HtClient = 1;
@@ -35,9 +36,13 @@ internal sealed class TaskbarUsageOverlay : Form
     private Action<Point>? _positionChanged;
     private bool _moveMode;
     private bool _dragging;
+    private bool _directDrag;
     private Point _dragOffset;
+    private Point _dragStartLocation;
     private bool _restoreDisabledWindowAfterMove;
     private bool _suppressPositionNotification;
+
+    public event Action<Point>? PositionCommitted;
 
     public TaskbarUsageOverlay()
     {
@@ -58,6 +63,7 @@ internal sealed class TaskbarUsageOverlay : Form
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
         Text = "Estao taskbar usage";
+        Cursor = Cursors.SizeAll;
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -120,7 +126,7 @@ internal sealed class TaskbarUsageOverlay : Form
             EnableWindow(Handle, false);
             _restoreDisabledWindowAfterMove = false;
         }
-        Cursor = Cursors.Default;
+        Cursor = Cursors.SizeAll;
         Invalidate();
     }
 
@@ -149,21 +155,24 @@ internal sealed class TaskbarUsageOverlay : Form
     protected override void OnLocationChanged(EventArgs e)
     {
         base.OnLocationChanged(e);
-        if (!_moveMode || _suppressPositionNotification || WindowState != FormWindowState.Normal) return;
+        if ((!_moveMode && !_dragging) || _suppressPositionNotification || WindowState != FormWindowState.Normal) return;
 
         _config.PositionX = Left;
         _config.PositionY = Top;
-        _positionChanged?.Invoke(Location);
+        if (_moveMode) _positionChanged?.Invoke(Location);
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
-        if (!_moveMode || e.Button != MouseButtons.Left) return;
+        if (e.Button != MouseButtons.Left || (!_moveMode && !DragHandleBounds.Contains(e.Location))) return;
 
         _dragging = true;
+        _directDrag = !_moveMode;
         _dragOffset = e.Location;
+        _dragStartLocation = Location;
         Capture = true;
+        Invalidate();
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -190,7 +199,7 @@ internal sealed class TaskbarUsageOverlay : Form
     protected override void OnMouseCaptureChanged(EventArgs e)
     {
         base.OnMouseCaptureChanged(e);
-        if (!Capture) _dragging = false;
+        if (!Capture && _dragging) StopDragging();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -211,15 +220,17 @@ internal sealed class TaskbarUsageOverlay : Form
         var theme = _palette;
         var card = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
         ZarpaPopoverPaint.FillRounded(e.Graphics, theme.Surface, card, 8);
-        using (var outline = new Pen(_moveMode ? theme.Accent : theme.Border, _moveMode ? 2F : 1F))
+        using (var outline = new Pen(_moveMode || _dragging ? theme.Accent : theme.Border, _moveMode || _dragging ? 2F : 1F))
         using (var path = ZarpaPopoverPaint.RoundedPath(card, 8))
             e.Graphics.DrawPath(outline, path);
+
+        DrawDragHandle(e.Graphics, theme);
 
         var providers = VisibleSnapshots();
         var segmentWidth = SegmentWidth();
         for (var index = 0; index < providers.Count; index++)
         {
-            var bounds = new Rectangle(7 + index * segmentWidth, 0, segmentWidth - 4, Height);
+            var bounds = new Rectangle(DragHandleWidth + 7 + index * segmentWidth, 0, segmentWidth - 4, Height);
             DrawProvider(e.Graphics, providers[index], bounds, theme);
             if (index < providers.Count - 1)
             {
@@ -254,7 +265,11 @@ internal sealed class TaskbarUsageOverlay : Form
     {
         if (m.Msg == WmNcHitTest)
         {
-            m.Result = (IntPtr)(_moveMode ? HtClient : HtTransparent);
+            var packedPoint = m.LParam.ToInt64();
+            var screenPoint = new Point(unchecked((short)(packedPoint & 0xffff)),
+                unchecked((short)((packedPoint >> 16) & 0xffff)));
+            var clientPoint = PointToClient(screenPoint);
+            m.Result = (IntPtr)(_moveMode || DragHandleBounds.Contains(clientPoint) ? HtClient : HtTransparent);
             return;
         }
 
@@ -324,6 +339,24 @@ internal sealed class TaskbarUsageOverlay : Form
             DrawText(graphics, ResetText(resetAt), new Font("Segoe UI", 7F),
                 new RectangleF(moduleX, moduleY, 54, 14), theme.TextMuted);
         }
+    }
+
+    private void DrawDragHandle(Graphics graphics, WindowsTaskbarPalette theme)
+    {
+        using var separator = new Pen(Color.FromArgb(90, theme.Border), 1F);
+        graphics.DrawLine(separator, DragHandleWidth, 9, DragHandleWidth, Height - 9);
+
+        using var dot = new SolidBrush(_dragging ? theme.Accent : theme.TextMuted);
+        const int dotSize = 2;
+        const int gap = 3;
+        const int rows = 4;
+        var groupWidth = dotSize * 2 + gap;
+        var groupHeight = dotSize * rows + gap * (rows - 1);
+        var left = (DragHandleWidth - groupWidth) / 2;
+        var top = (Height - groupHeight) / 2;
+        for (var row = 0; row < rows; row++)
+        for (var column = 0; column < 2; column++)
+            graphics.FillEllipse(dot, left + column * (dotSize + gap), top + row * (dotSize + gap), dotSize, dotSize);
     }
 
     private void DrawSparkline(Graphics graphics, UsageSnapshot snapshot, Color color, Rectangle bounds, WindowsTaskbarPalette theme)
@@ -438,7 +471,7 @@ internal sealed class TaskbarUsageOverlay : Form
     private bool TryPlace(int providerCount, out Rectangle placement)
     {
         placement = Rectangle.Empty;
-        var size = new Size(14 + providerCount * SegmentWidth(), OverlayHeight());
+        var size = new Size(DragHandleWidth + 14 + providerCount * SegmentWidth(), OverlayHeight());
         ClientSize = size;
         if (_config.PositionX is int x && _config.PositionY is int y)
         {
@@ -496,9 +529,15 @@ internal sealed class TaskbarUsageOverlay : Form
 
     private void StopDragging()
     {
+        var commitPosition = _dragging && _directDrag && Location != _dragStartLocation;
         _dragging = false;
+        _directDrag = false;
         if (Capture) Capture = false;
+        Invalidate();
+        if (commitPosition) PositionCommitted?.Invoke(Location);
     }
+
+    private Rectangle DragHandleBounds => new(0, 0, DragHandleWidth, Height);
 
     private static TaskbarOverlayConfig CloneConfig(TaskbarOverlayConfig value) => new()
     {

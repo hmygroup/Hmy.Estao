@@ -32,6 +32,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _pacingStateStore = new PacingStateStore(configStore.Path);
         ApplyConfiguredTheme(_config);
         _taskbarOverlay = new TaskbarUsageOverlay();
+        _taskbarOverlay.PositionCommitted += SaveTaskbarOverlayPosition;
         _refreshService = serviceFactory(configStore);
         _refreshService.Refreshed += (_, snapshots) => PostMenuRebuild(snapshots);
         _refreshLoop = new AdaptiveRefreshLoop(
@@ -234,6 +235,21 @@ public sealed class TrayApplicationContext : ApplicationContext
         ApplyConfiguredTheme(previewConfig);
         _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay(previewConfig));
         _taskbarOverlay.BeginMove(positionChanged);
+    }
+
+    private async void SaveTaskbarOverlayPosition(Point position)
+    {
+        _config.TaskbarOverlay.PositionX = position.X;
+        _config.TaskbarOverlay.PositionY = position.Y;
+        try
+        {
+            await _configStore.SaveAsync(_config).ConfigureAwait(true);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show($"Could not save the overlay position.\n\n{exception.Message}", EstaoConstants.DisplayName,
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void ApplyConfiguredTheme(EstaoConfig config)

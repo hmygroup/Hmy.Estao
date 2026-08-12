@@ -91,7 +91,7 @@ public sealed class TaskbarOverlayConfig
     public string Size { get; set; } = "normal";
 
     // Null coordinates keep the adaptive taskbar placement. Both values are
-    // populated only after the user drags the overlay from Settings.
+    // populated after the user drags the overlay by its handle or from Settings.
     [JsonPropertyName("positionX")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? PositionX { get; set; }
