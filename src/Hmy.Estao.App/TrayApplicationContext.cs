@@ -19,11 +19,14 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _notifyIcon;
     private readonly ZarpaThemeManager _zarpaTheme = new() { Preset = ZarpaThemePreset.Graphite };
     private readonly TaskbarUsageOverlay _taskbarOverlay;
+    private readonly System.Windows.Forms.Timer _hoverPopoverTimer;
     private readonly SynchronizationContext _uiContext;
     private readonly PacingStateStore _pacingStateStore;
     private EstaoConfig _config;
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
     private UsagePopover? _popover;
+    private bool _popoverOpenedFromOverlayHover;
+    private long _popoverHoverLeftAt;
 
     public TrayApplicationContext(ConfigStore configStore, Func<ConfigStore, UsageRefreshService> serviceFactory)
     {
@@ -33,6 +36,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         ApplyConfiguredTheme(_config);
         _taskbarOverlay = new TaskbarUsageOverlay();
         _taskbarOverlay.PositionCommitted += SaveTaskbarOverlayPosition;
+        _taskbarOverlay.ProviderHoverRequested += ShowHoveredUsagePopover;
+        _hoverPopoverTimer = new System.Windows.Forms.Timer { Interval = 100 };
+        _hoverPopoverTimer.Tick += (_, _) => MonitorHoveredUsagePopover();
         _refreshService = serviceFactory(configStore);
         _refreshService.Refreshed += (_, snapshots) => PostMenuRebuild(snapshots);
         _refreshLoop = new AdaptiveRefreshLoop(
@@ -65,6 +71,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             _refreshLoop.Dispose();
             _notifyIcon.Dispose();
             _taskbarOverlay.Dispose();
+            _hoverPopoverTimer.Stop();
+            _hoverPopoverTimer.Dispose();
             _zarpaTheme.Dispose();
         }
 
@@ -134,10 +142,62 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        _popover = new UsagePopover(_snapshots, RefreshAsync, ShowSettings, ExitThread, _zarpaTheme.Preset,
+        OpenUsagePopover(Cursor.Position, null, openedFromOverlayHover: false);
+    }
+
+    private void ShowHoveredUsagePopover(string provider, Point anchor)
+    {
+        if (_popover is { IsDisposed: false, Visible: true })
+        {
+            if (_popoverOpenedFromOverlayHover) _popover.ShowProvider(provider);
+            return;
+        }
+
+        _refreshLoop.MarkInteraction();
+        OpenUsagePopover(anchor, provider, openedFromOverlayHover: true);
+    }
+
+    private void OpenUsagePopover(Point anchor, string? provider, bool openedFromOverlayHover)
+    {
+        var popover = new UsagePopover(_snapshots, RefreshAsync, ShowSettings, ExitThread, _zarpaTheme.Preset,
             _refreshService.History, _config.Providers, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
-        _popover.FormClosed += (_, _) => _popover = null;
-        _popover.ShowAt(Cursor.Position);
+        _popover = popover;
+        _popoverOpenedFromOverlayHover = openedFromOverlayHover;
+        _popoverHoverLeftAt = 0;
+        popover.FormClosed += (_, _) =>
+        {
+            if (!ReferenceEquals(_popover, popover)) return;
+            _popover = null;
+            _popoverOpenedFromOverlayHover = false;
+            _hoverPopoverTimer.Stop();
+        };
+        popover.ShowAt(anchor, provider);
+        if (openedFromOverlayHover) _hoverPopoverTimer.Start();
+    }
+
+    private void MonitorHoveredUsagePopover()
+    {
+        if (!_popoverOpenedFromOverlayHover || _popover is not { IsDisposed: false, Visible: true } popover)
+        {
+            _hoverPopoverTimer.Stop();
+            return;
+        }
+
+        var cursor = Cursor.Position;
+        if (_taskbarOverlay.Bounds.Contains(cursor) || popover.Bounds.Contains(cursor))
+        {
+            _popoverHoverLeftAt = 0;
+            return;
+        }
+
+        if (_popoverHoverLeftAt == 0)
+        {
+            _popoverHoverLeftAt = Environment.TickCount64;
+            return;
+        }
+
+        if (Environment.TickCount64 - _popoverHoverLeftAt < 300) return;
+        popover.Close();
     }
 
     private async Task RefreshAsync()
@@ -207,10 +267,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowSettings()
     {
-        using var form = new SettingsForm(_configStore,
-            previewOverlay: PreviewOverlay,
-            beginMoveOverlay: BeginMoveOverlay,
-            endMoveOverlay: _taskbarOverlay.EndMove);
+        using var form = new SettingsForm(_configStore, previewOverlay: PreviewOverlay);
         form.ShowDialog();
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         ApplyConfiguredTheme(_config);
@@ -228,13 +285,6 @@ public sealed class TrayApplicationContext : ApplicationContext
             _popover.ApplyTheme(_zarpaTheme.Preset, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
         else
             ShowUsagePopover();
-    }
-
-    private void BeginMoveOverlay(EstaoConfig previewConfig, Action<Point> positionChanged)
-    {
-        ApplyConfiguredTheme(previewConfig);
-        _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay(previewConfig));
-        _taskbarOverlay.BeginMove(positionChanged);
     }
 
     private async void SaveTaskbarOverlayPosition(Point position)
@@ -268,6 +318,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             Controls = config.TaskbarOverlay.Controls.ToList(),
             DisplayMode = config.TaskbarOverlay.DisplayMode,
             Size = config.TaskbarOverlay.Size,
+            MoveEnabled = config.TaskbarOverlay.MoveEnabled,
             PositionX = config.TaskbarOverlay.PositionX,
             PositionY = config.TaskbarOverlay.PositionY
         };

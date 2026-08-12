@@ -123,8 +123,9 @@ internal sealed class UsagePopover : ZarpaModernForm
         base.OnResize(e);
     }
 
-    public void ShowAt(Point anchor)
+    public void ShowAt(Point anchor, string? provider = null)
     {
+        if (!string.IsNullOrWhiteSpace(provider)) SelectProvider(provider);
         var working = Screen.FromPoint(anchor).WorkingArea;
         var width = Math.Min(WidgetWidth, working.Width);
         var height = Math.Min(WidgetHeight, working.Height);
@@ -133,6 +134,17 @@ internal sealed class UsagePopover : ZarpaModernForm
             Math.Clamp(anchor.X - width / 2, working.Left, working.Right - width),
             Math.Clamp(anchor.Y - height, working.Top, working.Bottom - height));
         Show();
+    }
+
+    public void ShowProvider(string provider)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => ShowProvider(provider));
+            return;
+        }
+
+        SelectProvider(provider);
     }
 
     public void UpdateSnapshots(IReadOnlyList<UsageSnapshot> snapshots, IReadOnlyList<UsageHistoryPoint>? history = null)

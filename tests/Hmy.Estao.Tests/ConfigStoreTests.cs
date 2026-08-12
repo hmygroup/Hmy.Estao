@@ -14,6 +14,7 @@ public sealed class ConfigStoreTests
 
         Assert.Contains(config.Providers, provider => provider.Id == "codex" && provider.Enabled == true);
         Assert.Contains(config.Providers, provider => provider.Id == "claude");
+        Assert.True(config.TaskbarOverlay.MoveEnabled);
     }
 
     [Fact]
@@ -113,6 +114,7 @@ public sealed class ConfigStoreTests
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "config.json");
         var store = new ConfigStore(path);
         var config = ConfigStore.CreateDefaultConfig();
+        config.TaskbarOverlay.MoveEnabled = false;
         config.TaskbarOverlay.PositionX = 420;
         config.TaskbarOverlay.PositionY = 180;
 
@@ -121,6 +123,7 @@ public sealed class ConfigStoreTests
 
         Assert.Equal(420, loaded.TaskbarOverlay.PositionX);
         Assert.Equal(180, loaded.TaskbarOverlay.PositionY);
+        Assert.False(loaded.TaskbarOverlay.MoveEnabled);
 
         loaded.TaskbarOverlay.PositionY = null;
         await store.SaveAsync(loaded);

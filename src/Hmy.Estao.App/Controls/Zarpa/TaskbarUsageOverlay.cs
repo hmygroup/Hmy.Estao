@@ -20,6 +20,7 @@ internal sealed class TaskbarUsageOverlay : Form
     private const int TaskbarReservedLeft = 120;
     private const int TaskbarGap = 6;
     private const int DragHandleWidth = 18;
+    private const int ProviderHoverDelay = 350;
     private const int WmNcHitTest = 0x0084;
     private const int HtTransparent = -1;
     private const int HtClient = 1;
@@ -29,20 +30,21 @@ internal sealed class TaskbarUsageOverlay : Form
 
     private WindowsTaskbarPalette _palette;
     private readonly System.Windows.Forms.Timer _placementTimer;
+    private readonly System.Windows.Forms.Timer _hoverTimer;
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
     private IReadOnlyList<UsageHistoryPoint> _history = [];
     private TaskbarOverlayConfig _config = new();
     private Rectangle _regionBounds;
-    private Action<Point>? _positionChanged;
-    private bool _moveMode;
     private bool _dragging;
-    private bool _directDrag;
     private Point _dragOffset;
     private Point _dragStartLocation;
-    private bool _restoreDisabledWindowAfterMove;
     private bool _suppressPositionNotification;
+    private string? _hoverCandidate;
+    private string? _reportedHoverProvider;
+    private long _hoverStartedAt;
 
     public event Action<Point>? PositionCommitted;
+    public event Action<string, Point>? ProviderHoverRequested;
 
     public TaskbarUsageOverlay()
     {
@@ -51,6 +53,9 @@ internal sealed class TaskbarUsageOverlay : Form
         _placementTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         _placementTimer.Tick += (_, _) => RefreshPlacement();
         _placementTimer.Start();
+        _hoverTimer = new System.Windows.Forms.Timer { Interval = 100 };
+        _hoverTimer.Tick += (_, _) => PollProviderHover();
+        _hoverTimer.Start();
 
         AutoScaleMode = AutoScaleMode.None;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
@@ -86,50 +91,6 @@ internal sealed class TaskbarUsageOverlay : Form
         Invalidate();
     }
 
-    public void BeginMove(Action<Point> positionChanged)
-    {
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => BeginMove(positionChanged));
-            return;
-        }
-
-        var enteringMoveMode = !_moveMode;
-        _positionChanged = positionChanged;
-        _moveMode = true;
-        Cursor = Cursors.SizeAll;
-        RefreshPlacement();
-        if (enteringMoveMode && IsHandleCreated && !IsWindowEnabled(Handle))
-        {
-            // ShowDialog disables every other form on the UI thread. The
-            // overlay must be enabled temporarily or Windows sends the click
-            // straight through to the taskbar/window underneath it.
-            _restoreDisabledWindowAfterMove = true;
-            EnableWindow(Handle, true);
-        }
-        Invalidate();
-    }
-
-    public void EndMove()
-    {
-        if (InvokeRequired)
-        {
-            BeginInvoke(new Action(EndMove));
-            return;
-        }
-
-        _moveMode = false;
-        _positionChanged = null;
-        StopDragging();
-        if (_restoreDisabledWindowAfterMove && IsHandleCreated)
-        {
-            EnableWindow(Handle, false);
-            _restoreDisabledWindowAfterMove = false;
-        }
-        Cursor = Cursors.SizeAll;
-        Invalidate();
-    }
-
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -137,6 +98,8 @@ internal sealed class TaskbarUsageOverlay : Form
             SystemEvents.UserPreferenceChanged -= OnWindowsPreferenceChanged;
             _placementTimer.Stop();
             _placementTimer.Dispose();
+            _hoverTimer.Stop();
+            _hoverTimer.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -155,20 +118,18 @@ internal sealed class TaskbarUsageOverlay : Form
     protected override void OnLocationChanged(EventArgs e)
     {
         base.OnLocationChanged(e);
-        if ((!_moveMode && !_dragging) || _suppressPositionNotification || WindowState != FormWindowState.Normal) return;
+        if (!_dragging || _suppressPositionNotification || WindowState != FormWindowState.Normal) return;
 
         _config.PositionX = Left;
         _config.PositionY = Top;
-        if (_moveMode) _positionChanged?.Invoke(Location);
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
-        if (e.Button != MouseButtons.Left || (!_moveMode && !DragHandleBounds.Contains(e.Location))) return;
+        if (e.Button != MouseButtons.Left || !_config.MoveEnabled || !DragHandleBounds.Contains(e.Location)) return;
 
         _dragging = true;
-        _directDrag = !_moveMode;
         _dragOffset = e.Location;
         _dragStartLocation = Location;
         Capture = true;
@@ -220,7 +181,7 @@ internal sealed class TaskbarUsageOverlay : Form
         var theme = _palette;
         var card = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
         ZarpaPopoverPaint.FillRounded(e.Graphics, theme.Surface, card, 8);
-        using (var outline = new Pen(_moveMode || _dragging ? theme.Accent : theme.Border, _moveMode || _dragging ? 2F : 1F))
+        using (var outline = new Pen(_dragging ? theme.Accent : theme.Border, _dragging ? 2F : 1F))
         using (var path = ZarpaPopoverPaint.RoundedPath(card, 8))
             e.Graphics.DrawPath(outline, path);
 
@@ -237,17 +198,6 @@ internal sealed class TaskbarUsageOverlay : Form
                 using var separator = new Pen(Color.FromArgb(110, theme.Border), 1F);
                 e.Graphics.DrawLine(separator, bounds.Right + 1, 10, bounds.Right + 1, Height - 10);
             }
-        }
-
-
-        if (_moveMode)
-        {
-            var prompt = new Rectangle(2, 2, Math.Max(1, Width - 4), Math.Max(1, Height - 4));
-            using var wash = new SolidBrush(Color.FromArgb(225, theme.Surface));
-            using var promptFont = new Font("Segoe UI", 8F, FontStyle.Bold);
-            e.Graphics.FillRectangle(wash, prompt);
-            TextRenderer.DrawText(e.Graphics, "Drag to move", promptFont, prompt,
-                theme.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
 
@@ -269,7 +219,7 @@ internal sealed class TaskbarUsageOverlay : Form
             var screenPoint = new Point(unchecked((short)(packedPoint & 0xffff)),
                 unchecked((short)((packedPoint >> 16) & 0xffff)));
             var clientPoint = PointToClient(screenPoint);
-            m.Result = (IntPtr)(_moveMode || DragHandleBounds.Contains(clientPoint) ? HtClient : HtTransparent);
+            m.Result = (IntPtr)(_config.MoveEnabled && DragHandleBounds.Contains(clientPoint) ? HtClient : HtTransparent);
             return;
         }
 
@@ -346,7 +296,12 @@ internal sealed class TaskbarUsageOverlay : Form
         using var separator = new Pen(Color.FromArgb(90, theme.Border), 1F);
         graphics.DrawLine(separator, DragHandleWidth, 9, DragHandleWidth, Height - 9);
 
-        using var dot = new SolidBrush(_dragging ? theme.Accent : theme.TextMuted);
+        var dotColor = _dragging
+            ? theme.Accent
+            : _config.MoveEnabled
+                ? theme.TextMuted
+                : Color.FromArgb(80, theme.TextMuted);
+        using var dot = new SolidBrush(dotColor);
         const int dotSize = 2;
         const int gap = 3;
         const int rows = 4;
@@ -433,6 +388,52 @@ internal sealed class TaskbarUsageOverlay : Form
         // available yet; the same bar will fill as soon as data arrives.
         return configured.Take(4).Select(provider => new UsageSnapshot(
             provider, ProviderCatalog.DisplayName(provider), "waiting", DateTimeOffset.UtcNow, [])).ToArray();
+    }
+
+    private void PollProviderHover()
+    {
+        if (!Visible || _dragging)
+        {
+            ResetProviderHover();
+            return;
+        }
+
+        var cursor = Cursor.Position;
+        var clientPoint = PointToClient(cursor);
+        var providers = VisibleSnapshots();
+        var segmentWidth = SegmentWidth();
+        var firstSegmentLeft = DragHandleWidth + 7;
+        var index = (clientPoint.X - firstSegmentLeft) / Math.Max(1, segmentWidth);
+        var insideSegments = clientPoint.Y >= 0 && clientPoint.Y < Height &&
+            clientPoint.X >= firstSegmentLeft && index >= 0 && index < providers.Count;
+        var provider = insideSegments ? ProviderCatalog.NormalizeId(providers[index].Provider) : null;
+        if (provider is null)
+        {
+            ResetProviderHover();
+            return;
+        }
+
+        if (!string.Equals(provider, _hoverCandidate, StringComparison.OrdinalIgnoreCase))
+        {
+            _hoverCandidate = provider;
+            _reportedHoverProvider = null;
+            _hoverStartedAt = Environment.TickCount64;
+            return;
+        }
+
+        if (_reportedHoverProvider is not null || Environment.TickCount64 - _hoverStartedAt < ProviderHoverDelay) return;
+
+        _reportedHoverProvider = provider;
+        var segmentLeft = firstSegmentLeft + index * segmentWidth;
+        var anchor = PointToScreen(new Point(segmentLeft + segmentWidth / 2, 0));
+        ProviderHoverRequested?.Invoke(provider, anchor);
+    }
+
+    private void ResetProviderHover()
+    {
+        _hoverCandidate = null;
+        _reportedHoverProvider = null;
+        _hoverStartedAt = 0;
     }
 
     private int SegmentWidth()
@@ -529,9 +530,8 @@ internal sealed class TaskbarUsageOverlay : Form
 
     private void StopDragging()
     {
-        var commitPosition = _dragging && _directDrag && Location != _dragStartLocation;
+        var commitPosition = _dragging && Location != _dragStartLocation;
         _dragging = false;
-        _directDrag = false;
         if (Capture) Capture = false;
         Invalidate();
         if (commitPosition) PositionCommitted?.Invoke(Location);
@@ -546,6 +546,7 @@ internal sealed class TaskbarUsageOverlay : Form
         Controls = value.Controls?.ToList() ?? TaskbarOverlayControlCatalog.Default.ToList(),
         DisplayMode = value.DisplayMode,
         Size = value.Size,
+        MoveEnabled = value.MoveEnabled,
         PositionX = value.PositionX,
         PositionY = value.PositionY
     };
@@ -613,14 +614,6 @@ internal sealed class TaskbarUsageOverlay : Form
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnableWindow(IntPtr handle, [MarshalAs(UnmanagedType.Bool)] bool enable);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsWindowEnabled(IntPtr handle);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr handle, int attribute, ref int value, int valueSize);

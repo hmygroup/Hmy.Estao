@@ -90,8 +90,11 @@ public sealed class TaskbarOverlayConfig
     [JsonPropertyName("size")]
     public string Size { get; set; } = "normal";
 
+    [JsonPropertyName("moveEnabled")]
+    public bool MoveEnabled { get; set; } = true;
+
     // Null coordinates keep the adaptive taskbar placement. Both values are
-    // populated after the user drags the overlay by its handle or from Settings.
+    // populated after the user drags the overlay by its handle.
     [JsonPropertyName("positionX")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? PositionX { get; set; }

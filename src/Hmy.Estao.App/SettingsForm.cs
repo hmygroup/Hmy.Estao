@@ -25,20 +25,13 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly IOAuthTokenStore _oauthTokenStore = new SecureOAuthTokenStore();
 
     private readonly Action<EstaoConfig>? _previewOverlay;
-    private readonly Action<EstaoConfig, Action<Point>>? _beginMoveOverlay;
-    private readonly Action? _endMoveOverlay;
-    private bool _movingOverlay;
 
     public SettingsForm(ConfigStore configStore, ICookieSecretStore? cookieStore = null,
-        Action<EstaoConfig>? previewOverlay = null,
-        Action<EstaoConfig, Action<Point>>? beginMoveOverlay = null,
-        Action? endMoveOverlay = null)
+        Action<EstaoConfig>? previewOverlay = null)
     {
         _configStore = configStore;
         _cookieStore = cookieStore ?? new SecureCookieStore();
         _previewOverlay = previewOverlay;
-        _beginMoveOverlay = beginMoveOverlay;
-        _endMoveOverlay = endMoveOverlay;
 
         Text = "Estao Settings";
         ContextText = "Providers";
@@ -61,8 +54,6 @@ public sealed class SettingsForm : ZarpaModernForm
 
         _previewButton.Click += (_, _) => PreviewOverlay();
         _saveButton.Click += async (_, _) => await SaveAsync().ConfigureAwait(true);
-        _overlaySettings.SetMovementAvailable(_beginMoveOverlay is not null);
-        _overlaySettings.MoveModeChanged += SetOverlayMoveMode;
         _overlaySettings.ResetPositionRequested += ResetOverlayPosition;
         foreach (var preset in ZarpaThemePreferences.Available) _themePicker.Items.Add(ZarpaThemePreferences.DisplayName(preset));
         foreach (var backdrop in ZarpaThemePreferences.AvailableBackdrops) _backdropPicker.Items.Add(backdrop.ToString());
@@ -79,7 +70,6 @@ public sealed class SettingsForm : ZarpaModernForm
     {
         if (disposing)
         {
-            StopMovingOverlay();
             _theme.Dispose();
         }
         base.Dispose(disposing);
@@ -236,37 +226,13 @@ public sealed class SettingsForm : ZarpaModernForm
         _previewOverlay?.Invoke(_config);
     }
 
-    private void SetOverlayMoveMode(bool enabled)
-    {
-        if (!enabled)
-        {
-            StopMovingOverlay();
-            return;
-        }
-
-        ApplyOverlayEditorValues();
-        _movingOverlay = true;
-        _beginMoveOverlay?.Invoke(_config, OnOverlayPositionChanged);
-    }
-
     private void ResetOverlayPosition()
     {
         _config.TaskbarOverlay.PositionX = null;
         _config.TaskbarOverlay.PositionY = null;
         _overlaySettings.ShowPosition(null, null);
-
-        var keepMoving = _movingOverlay;
         ApplyOverlayEditorValues();
-        _beginMoveOverlay?.Invoke(_config, OnOverlayPositionChanged);
-        if (!keepMoving) _endMoveOverlay?.Invoke();
-    }
-
-    private void OnOverlayPositionChanged(Point position)
-    {
-        if (IsDisposed) return;
-        _config.TaskbarOverlay.PositionX = position.X;
-        _config.TaskbarOverlay.PositionY = position.Y;
-        _overlaySettings.ShowPosition(position.X, position.Y);
+        _previewOverlay?.Invoke(_config);
     }
 
     private void ApplyOverlayEditorValues()
@@ -275,14 +241,6 @@ public sealed class SettingsForm : ZarpaModernForm
         _overlaySettings.Apply(_config.TaskbarOverlay);
         _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
         _config.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text).ToString();
-    }
-
-    private void StopMovingOverlay()
-    {
-        if (!_movingOverlay) return;
-        _movingOverlay = false;
-        _overlaySettings.SetMoving(false);
-        _endMoveOverlay?.Invoke();
     }
 
     private async Task<string> CookieStatusAsync(ProviderConfig provider)
