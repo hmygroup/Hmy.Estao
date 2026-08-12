@@ -13,6 +13,7 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly Panel _providersHost = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, AutoScroll = false, Padding = new Padding(22, 8, 22, 18) };
     private readonly ZarpaSettingsScrollHost _providersViewport = new() { Dock = DockStyle.Fill };
     private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
+    private readonly UsageColorsSettingsPanel _usageColorsSettings = new();
     private readonly RefreshSettingsPanel _refreshSettings = new();
     private readonly Panel _appearanceSettings = new() { Dock = DockStyle.Top, Height = 280, Padding = new Padding(6, 8, 6, 10) };
     private readonly Label _providerCount = new() { AutoSize = true };
@@ -58,6 +59,7 @@ public sealed class SettingsForm : ZarpaModernForm
         _providersHost.Controls.Add(_overlaySettings);
         _providersHost.Controls.Add(_refreshSettings);
         _providersHost.Controls.Add(_appearanceSettings);
+        _providersHost.Controls.Add(_usageColorsSettings);
         _providersViewport.Content = _providersHost;
         Controls.Add(_providersViewport);
         Controls.Add(footer);
@@ -176,6 +178,7 @@ public sealed class SettingsForm : ZarpaModernForm
         {
             _config = await _configStore.LoadAsync().ConfigureAwait(true);
             _overlaySettings.LoadConfig(_config);
+            _usageColorsSettings.LoadConfig(_config);
             _refreshSettings.LoadConfig(_config);
             var selectedTheme = ZarpaThemePreferences.DisplayName(ZarpaThemePreferences.Parse(_config.Theme));
             _themePicker.SelectedIndex = Math.Max(0, _themePicker.Items.IndexOf(selectedTheme));
@@ -194,8 +197,9 @@ public sealed class SettingsForm : ZarpaModernForm
                 _providersHost.Controls.SetChildIndex(row, 0);
             }
             _providersHost.Controls.SetChildIndex(_appearanceSettings, 0);
-            _providersHost.Controls.SetChildIndex(_refreshSettings, 1);
-            _providersHost.Controls.SetChildIndex(_overlaySettings, 2);
+            _providersHost.Controls.SetChildIndex(_usageColorsSettings, 1);
+            _providersHost.Controls.SetChildIndex(_refreshSettings, 2);
+            _providersHost.Controls.SetChildIndex(_overlaySettings, 3);
 
             var enabled = _providerRows.Count(row => row.EnabledProvider);
             _providerCount.Text = $"{enabled} of {_providerRows.Count} enabled  ·  Credentials stay encrypted on this device";
@@ -222,6 +226,7 @@ public sealed class SettingsForm : ZarpaModernForm
             }
 
             _overlaySettings.Apply(_config.TaskbarOverlay);
+            _usageColorsSettings.Apply(_config);
             _refreshSettings.Apply(_config.Refresh);
             _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
             _config.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text).ToString();
@@ -240,6 +245,7 @@ public sealed class SettingsForm : ZarpaModernForm
     {
         foreach (var row in _providerRows) row.Apply();
         _overlaySettings.Apply(_config.TaskbarOverlay);
+        _usageColorsSettings.Apply(_config);
         _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
         _config.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text).ToString();
         _config.BackdropOpacity = (int)_backdropOpacity.Value;
@@ -259,6 +265,7 @@ public sealed class SettingsForm : ZarpaModernForm
     {
         foreach (var row in _providerRows) row.Apply();
         _overlaySettings.Apply(_config.TaskbarOverlay);
+        _usageColorsSettings.Apply(_config);
         _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
         _config.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text).ToString();
         _config.BackdropOpacity = (int)_backdropOpacity.Value;
@@ -324,7 +331,8 @@ public sealed class SettingsForm : ZarpaModernForm
         {
             if (!ReferenceEquals(_providersHost.Controls[index], _overlaySettings) &&
                 !ReferenceEquals(_providersHost.Controls[index], _refreshSettings) &&
-                !ReferenceEquals(_providersHost.Controls[index], _appearanceSettings))
+                !ReferenceEquals(_providersHost.Controls[index], _appearanceSettings) &&
+                !ReferenceEquals(_providersHost.Controls[index], _usageColorsSettings))
                 _providersHost.Controls[index].Dispose();
         }
     }
@@ -347,11 +355,6 @@ public sealed class SettingsForm : ZarpaModernForm
         private readonly ZarpaToggleSwitch _pacingEnabled;
         private readonly ZarpaNumericUpDown _pacingTarget;
         private readonly ZarpaToggleSwitch _pacingNotify;
-        private readonly ZarpaToggleSwitch _usageColorsEnabled;
-        private readonly ZarpaNumericUpDown _warningThreshold;
-        private readonly UsageColorButton _warningColor;
-        private readonly ZarpaNumericUpDown _criticalThreshold;
-        private readonly UsageColorButton _criticalColor;
         private readonly Func<string, IProgress<string>, Task> _signInAction;
         private readonly ProviderSignInButton? _signInButton;
         private readonly int _expandedHeight;
@@ -474,36 +477,6 @@ public sealed class SettingsForm : ZarpaModernForm
                 Checked = model.Pacing.NotifyOnExceed,
                 Margin = new Padding(6, 12, 6, 3)
             };
-            _usageColorsEnabled = new ZarpaToggleSwitch
-            {
-                Dock = DockStyle.Fill,
-                Text = "Change usage colors at thresholds",
-                Checked = model.UsageColors.Enabled,
-                Margin = new Padding(6, 12, 6, 3)
-            };
-            _warningThreshold = PercentageField("Warning starts at", model.UsageColors.WarningPercent);
-            _warningThreshold.Maximum = (decimal)UsageColorCatalog.MaximumWarningPercent;
-            _warningColor = new UsageColorButton("Warning color", model.UsageColors.WarningColor)
-            {
-                Dock = DockStyle.Fill,
-                Margin = new Padding(6, 12, 6, 3)
-            };
-            _criticalThreshold = PercentageField("Critical starts at", model.UsageColors.CriticalPercent);
-            _criticalColor = new UsageColorButton("Critical color", model.UsageColors.CriticalColor)
-            {
-                Dock = DockStyle.Fill,
-                Margin = new Padding(6, 12, 6, 3)
-            };
-            _criticalThreshold.Minimum = _warningThreshold.Value + 1;
-            _usageColorsEnabled.CheckedChanged += (_, _) => UpdateUsageColorFields();
-            _warningThreshold.ValueChanged += (_, _) =>
-            {
-                if (_criticalThreshold.Value <= _warningThreshold.Value)
-                    _criticalThreshold.Value = _warningThreshold.Value + 1;
-                _criticalThreshold.Minimum = _warningThreshold.Value + 1;
-            };
-            UpdateUsageColorFields();
-
             if (SupportsOAuth(model.ProviderId))
             {
                 _signInButton = new ProviderSignInButton(model.ProviderId)
@@ -547,11 +520,6 @@ public sealed class SettingsForm : ZarpaModernForm
             _model.Pacing.Enabled = _pacingEnabled.Checked;
             _model.Pacing.DailyTargetPercent = (double)_pacingTarget.Value;
             _model.Pacing.NotifyOnExceed = _pacingNotify.Checked;
-            _model.UsageColors.Enabled = _usageColorsEnabled.Checked;
-            _model.UsageColors.WarningPercent = (double)_warningThreshold.Value;
-            _model.UsageColors.WarningColor = _warningColor.HexColor;
-            _model.UsageColors.CriticalPercent = (double)_criticalThreshold.Value;
-            _model.UsageColors.CriticalColor = _criticalColor.HexColor;
             _model.Apply();
         }
 
@@ -586,8 +554,7 @@ public sealed class SettingsForm : ZarpaModernForm
         });
 
         private IReadOnlyList<Control> WithPacing(IReadOnlyList<Control> fields) =>
-            [.. fields, _pacingEnabled, _pacingTarget, _pacingNotify,
-                _usageColorsEnabled, _warningThreshold, _warningColor, _criticalThreshold, _criticalColor];
+            [.. fields, _pacingEnabled, _pacingTarget, _pacingNotify];
 
         private IReadOnlyList<Control> WithSignIn(IReadOnlyList<Control> fields) => _signInButton is null
             ? fields
@@ -647,120 +614,6 @@ public sealed class SettingsForm : ZarpaModernForm
             Margin = new Padding(6, 3, 6, 3)
         };
 
-        private static ZarpaNumericUpDown PercentageField(string label, double value) => new()
-        {
-            Dock = DockStyle.Fill,
-            LabelText = label,
-            Minimum = 0,
-            Maximum = 100,
-            Increment = 1,
-            DecimalPlaces = 0,
-            Suffix = "% used",
-            Value = (decimal)Math.Clamp(value, 0D, 100D),
-            Margin = new Padding(6, 3, 6, 3)
-        };
-
-        private void UpdateUsageColorFields()
-        {
-            var enabled = _usageColorsEnabled.Checked;
-            _warningThreshold.Enabled = enabled;
-            _warningColor.Enabled = enabled;
-            _criticalThreshold.Enabled = enabled;
-            _criticalColor.Enabled = enabled;
-        }
-    }
-
-    private sealed class UsageColorButton : Control, IZarpaThemeAware
-    {
-        private ZarpaThemeTokens? _theme;
-        private Font? _ownedFont;
-        private bool _hot;
-        private string _hexColor;
-
-        public UsageColorButton(string label, string color)
-        {
-            Label = label;
-            _hexColor = UsageColorCatalog.NormalizeColor(color, UsageColorCatalog.DefaultWarningColor);
-            Cursor = Cursors.Hand;
-            Height = 44;
-            AccessibleName = label;
-            AccessibleRole = AccessibleRole.PushButton;
-            TabStop = true;
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
-                ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.Selectable, true);
-        }
-
-        public string Label { get; }
-        public string HexColor => _hexColor;
-
-        public void ApplyTheme(ZarpaThemeTokens value)
-        {
-            _theme = value;
-            BackColor = value.Canvas;
-            ForeColor = value.Text;
-            var previousFont = _ownedFont;
-            _ownedFont = new Font(value.FontFamily, value.FontSize);
-            Font = _ownedFont;
-            previousFont?.Dispose();
-            Invalidate();
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) _ownedFont?.Dispose();
-            base.Dispose(disposing);
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            var surface = _theme?.SurfaceRaised ?? SystemColors.Control;
-            var border = _hot || Focused
-                ? _theme?.Accent ?? SystemColors.Highlight
-                : _theme?.Border ?? SystemColors.ControlDark;
-            var text = Enabled ? _theme?.Text ?? SystemColors.ControlText : _theme?.TextMuted ?? SystemColors.GrayText;
-            var bounds = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
-            ZarpaPopoverPaint.FillRounded(e.Graphics, surface, bounds, 7);
-            using (var outline = new Pen(border))
-            using (var path = ZarpaPopoverPaint.RoundedPath(bounds, 7))
-                e.Graphics.DrawPath(outline, path);
-            var swatch = new Rectangle(10, 10, 24, 24);
-            using (var brush = new SolidBrush(ParseColor(_hexColor))) e.Graphics.FillEllipse(brush, swatch);
-            using (var outline = new Pen(Color.FromArgb(110, text))) e.Graphics.DrawEllipse(outline, swatch);
-            TextRenderer.DrawText(e.Graphics, $"{Label}  {_hexColor}", Font,
-                new Rectangle(swatch.Right + 9, 0, Math.Max(1, Width - swatch.Right - 14), Height), text,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-        }
-
-        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); _hot = true; Invalidate(); }
-        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); _hot = false; Invalidate(); }
-        protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); if (Enabled) Focus(); }
-        protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
-        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
-        protected override void OnMouseUp(MouseEventArgs e)
-        {
-            base.OnMouseUp(e);
-            if (!Enabled || e.Button != MouseButtons.Left || !ClientRectangle.Contains(e.Location)) return;
-            PickColor();
-        }
-
-        protected override void OnKeyDown(KeyEventArgs e)
-        {
-            base.OnKeyDown(e);
-            if (!Enabled || e.KeyCode is not (Keys.Enter or Keys.Space)) return;
-            PickColor();
-            e.Handled = true;
-        }
-
-        private void PickColor()
-        {
-            using var dialog = new ColorDialog { Color = ParseColor(_hexColor), FullOpen = true };
-            if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
-            _hexColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
-            Invalidate();
-        }
-
-        private static Color ParseColor(string value) => ColorTranslator.FromHtml(value);
     }
 
     private sealed class ProviderBrandIcon(string provider) : Control
@@ -845,7 +698,6 @@ public sealed class SettingsForm : ZarpaModernForm
         public string ApiKey { get; set; }
         public string WorkspaceOrHost { get; set; }
         public PacingConfig Pacing => _provider.Pacing;
-        public UsageColorConfig UsageColors => _provider.UsageColors;
         public ProviderStatus Status => !Enabled
             ? ProviderStatus.Disabled
             : IsConfigured ? ProviderStatus.Ready : ProviderStatus.NeedsSetup;
