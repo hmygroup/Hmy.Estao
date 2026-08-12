@@ -15,6 +15,7 @@ public sealed class ConfigStoreTests
         Assert.Contains(config.Providers, provider => provider.Id == "codex" && provider.Enabled == true);
         Assert.Contains(config.Providers, provider => provider.Id == "claude");
         Assert.True(config.TaskbarOverlay.MoveEnabled);
+        Assert.All(config.Providers, provider => Assert.False(provider.UsageColors.Enabled));
     }
 
     [Fact]
@@ -131,6 +132,44 @@ public sealed class ConfigStoreTests
         var overlay = saved.RootElement.GetProperty("taskbarOverlay");
         Assert.False(overlay.TryGetProperty("positionX", out _));
         Assert.False(overlay.TryGetProperty("positionY", out _));
+    }
+
+    [Fact]
+    public async Task provider_usage_colors_are_normalized_and_round_trip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "config.json");
+        var store = new ConfigStore(path);
+        var config = ConfigStore.CreateDefaultConfig();
+        var codex = config.Providers.Single(provider => provider.Id == "codex");
+        codex.UsageColors.Enabled = true;
+        codex.UsageColors.WarningPercent = 82;
+        codex.UsageColors.WarningColor = "#a1b2c3";
+        codex.UsageColors.CriticalPercent = 40;
+        codex.UsageColors.CriticalColor = "not-a-color";
+
+        await store.SaveAsync(config);
+        var loaded = await store.LoadAsync();
+        var colors = loaded.Providers.Single(provider => provider.Id == "codex").UsageColors;
+
+        Assert.True(colors.Enabled);
+        Assert.Equal(82D, colors.WarningPercent);
+        Assert.Equal("#A1B2C3", colors.WarningColor);
+        Assert.Equal(83D, colors.CriticalPercent);
+        Assert.Equal(UsageColorCatalog.DefaultCriticalColor, colors.CriticalColor);
+    }
+
+    [Fact]
+    public void provider_usage_color_thresholds_remain_distinct_at_the_upper_limit()
+    {
+        var config = ConfigStore.CreateDefaultConfig();
+        var colors = config.Providers[0].UsageColors;
+        colors.WarningPercent = 100;
+        colors.CriticalPercent = 20;
+
+        ConfigStore.Normalize(config);
+
+        Assert.Equal(99D, colors.WarningPercent);
+        Assert.Equal(100D, colors.CriticalPercent);
     }
 
     [Fact]

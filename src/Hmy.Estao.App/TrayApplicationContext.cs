@@ -92,7 +92,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _snapshots = snapshots;
         if (_popover is { IsDisposed: false }) _popover.UpdateSnapshots(snapshots, _refreshService.History);
-        _taskbarOverlay.Update(snapshots, _refreshService.History, OverlayConfigForDisplay());
+        _taskbarOverlay.Update(snapshots, _refreshService.History, OverlayConfigForDisplay(), _config.Providers);
         if (_config.Providers.Any(provider => provider.Pacing is { Enabled: true, NotifyOnExceed: true }))
             _ = CheckPacingWarningsAsync(snapshots);
 
@@ -161,10 +161,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         OpenUsagePopover(anchor, provider, openedFromOverlayHover: true);
     }
 
-    private void OpenUsagePopover(Point anchor, string? provider, bool openedFromOverlayHover)
+    private void OpenUsagePopover(Point anchor, string? provider, bool openedFromOverlayHover,
+        IReadOnlyList<ProviderConfig>? providerConfigs = null)
     {
         var popover = new UsagePopover(_snapshots, RefreshAsync, ShowSettings, ExitThread, _zarpaTheme.Preset,
-            _refreshService.History, _config.Providers, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
+            _refreshService.History, providerConfigs ?? _config.Providers,
+            _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
         _popover = popover;
         _popoverOpenedFromOverlayHover = openedFromOverlayHover;
         _popoverHoverLeftAt = 0;
@@ -276,19 +278,22 @@ public sealed class TrayApplicationContext : ApplicationContext
         _config = _configStore.LoadAsync().GetAwaiter().GetResult();
         ApplyConfiguredTheme(_config);
         _popover?.ApplyTheme(_zarpaTheme.Preset, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
-        _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay());
-        if (_popover is { IsDisposed: false }) _popover.UpdatePacing(_config.Providers);
+        _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay(), _config.Providers);
+        if (_popover is { IsDisposed: false }) _popover.UpdateProviderConfigs(_config.Providers);
         _refreshLoop.Restart();
     }
 
     private void PreviewOverlay(EstaoConfig previewConfig)
     {
         ApplyConfiguredTheme(previewConfig);
-        _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay(previewConfig));
+        _taskbarOverlay.Update(_snapshots, _refreshService.History, OverlayConfigForDisplay(previewConfig), previewConfig.Providers);
         if (_popover is { IsDisposed: false, Visible: true })
+        {
             _popover.ApplyTheme(_zarpaTheme.Preset, _zarpaTheme.BackdropStyle, _zarpaTheme.BackdropOpacity);
+            _popover.UpdateProviderConfigs(previewConfig.Providers);
+        }
         else
-            ShowUsagePopover();
+            OpenUsagePopover(Cursor.Position, null, openedFromOverlayHover: false, previewConfig.Providers);
     }
 
     private async void SaveTaskbarOverlayPosition(Point position)
