@@ -3,40 +3,18 @@ using ZarpaSuite.Controls;
 
 namespace Hmy.Estao.App.Controls.Zarpa;
 
-internal sealed class RefreshSettingsPanel : Panel
+internal sealed class RefreshSettingsPanel : ZarpaSettingsSection
 {
-    private readonly ZarpaToggleSwitch _enabled = new() { Text = "Refresh usage automatically", Width = 260 };
-    private readonly ZarpaComboBox _interval = new() { LabelText = "Every", DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
+    private readonly ZarpaToggleSwitch _enabled = new() { Text = string.Empty, Width = 58 };
+    private readonly ZarpaComboBox _interval = new() { LabelText = string.Empty, DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
 
-    public RefreshSettingsPanel()
+    public RefreshSettingsPanel() : base("Data refresh", "Control how often provider usage is updated in the background.")
     {
-        Dock = DockStyle.Top;
-        Height = 104;
-        Padding = new Padding(6, 8, 6, 10);
-
-        var title = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 24,
-            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-            Text = "Refresh",
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        var options = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            WrapContents = false,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty
-        };
-        options.Controls.Add(_enabled);
-        options.Controls.Add(_interval);
-        Controls.Add(new ZarpaSettingsSectionSeparator());
-        Controls.Add(options);
-        Controls.Add(title);
-
         foreach (var minutes in RefreshIntervalCatalog.Minutes)
             _interval.Items.Add($"{minutes} minutes");
+
+        AddRow("Automatic refresh", "Keep usage data current without opening the popover.",
+            ZarpaSettingsLayout.Inline(_enabled, _interval), 230);
     }
 
     public void LoadConfig(EstaoConfig config)

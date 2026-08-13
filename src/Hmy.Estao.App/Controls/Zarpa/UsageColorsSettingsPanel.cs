@@ -3,32 +3,13 @@ using ZarpaSuite.Controls;
 
 namespace Hmy.Estao.App.Controls.Zarpa;
 
-internal sealed class UsageColorsSettingsPanel : Panel
+internal sealed class UsageColorsSettingsPanel : ZarpaSettingsSection
 {
     private readonly Dictionary<string, ProviderUsageColorRow> _rows = new(StringComparer.OrdinalIgnoreCase);
 
-    public UsageColorsSettingsPanel()
+    public UsageColorsSettingsPanel() : base("Usage alerts",
+        "Choose when each provider changes to warning or critical and which colors are shown.")
     {
-        Dock = DockStyle.Top;
-        Height = 360;
-        Padding = new Padding(6, 8, 6, 10);
-
-        var title = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 25,
-            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-            Text = "Usage colors",
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        var helper = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 28,
-            Text = "Change progress bars and donuts when each provider reaches the configured usage levels.",
-            TextAlign = ContentAlignment.MiddleLeft,
-            AutoEllipsis = true
-        };
         var table = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -43,16 +24,16 @@ internal sealed class UsageColorsSettingsPanel : Panel
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 18F));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 17F));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 19F));
-        table.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        table.RowStyles.Add(new RowStyle(SizeType.Absolute, ZarpaSettingsMetrics.TableHeaderHeight));
         foreach (var _ in ProviderCatalog.InitialProviderIds)
-            table.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, ZarpaSettingsMetrics.TableRowHeight));
 
         AddHeader(table, "Provider", 0);
-        AddHeader(table, "Thresholds", 1);
-        AddHeader(table, "Warning", 2);
-        AddHeader(table, "Color", 3);
-        AddHeader(table, "Critical", 4);
-        AddHeader(table, "Color", 5);
+        AddHeader(table, "Custom", 1);
+        AddHeader(table, "Warning at", 2);
+        AddHeader(table, "Warning color", 3);
+        AddHeader(table, "Critical at", 4);
+        AddHeader(table, "Critical color", 5);
 
         for (var index = 0; index < ProviderCatalog.InitialProviderIds.Length; index++)
         {
@@ -62,10 +43,8 @@ internal sealed class UsageColorsSettingsPanel : Panel
             row.AddTo(table, index + 1);
         }
 
-        Controls.Add(new ZarpaSettingsSectionSeparator());
-        Controls.Add(table);
-        Controls.Add(helper);
-        Controls.Add(title);
+        AddContent(table, ZarpaSettingsMetrics.TableHeaderHeight +
+            ProviderCatalog.InitialProviderIds.Length * ZarpaSettingsMetrics.TableRowHeight);
     }
 
     public void LoadConfig(EstaoConfig config)

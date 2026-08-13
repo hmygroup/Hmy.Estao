@@ -136,13 +136,19 @@ namespace ZarpaSuite.Controls
         {
             base.OnPaint(e); e.Graphics.Clear(theme.Surface);
             using (Pen pen = new Pen(theme.Border, dpiScale.Stroke(theme.BorderThickness))) e.Graphics.DrawLine(pen, Width - dpiScale.Stroke(1), 0, Width - dpiScale.Stroke(1), Height);
-            if (!compact) using (Font f = new Font(Font.FontFamily, 8F, FontStyle.Bold)) TextRenderer.DrawText(e.Graphics, headerText, f, new Rectangle(SX(16), 0, Width - SX(64), SY(48)), theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            collapseBounds = new Rectangle(Width - SX(42), SY(8), SX(34), SY(32));
+            int navigationHeaderHeight = NavigationHeaderHeight;
+            if (!compact) using (Font f = new Font(Font.FontFamily, 8F, FontStyle.Bold)) TextRenderer.DrawText(e.Graphics, headerText, f, new Rectangle(SX(16), 0, Width - SX(64), SY(navigationHeaderHeight)), theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            int collapseSize = theme.ControlHeight;
+            collapseBounds = new Rectangle(Width - SX(collapseSize + theme.SpacingMedium),
+                SY((navigationHeaderHeight - collapseSize) / 2), SX(collapseSize), SY(collapseSize));
             ZarpaPaint.FillRounded(e.Graphics, theme.SurfaceOverlay,
                 collapseBounds, SX(theme.CornerRadius));
             ZarpaPaint.DrawRounded(e.Graphics, collapseHot ? theme.Accent : theme.BorderStrong,
                 collapseBounds, SX(theme.CornerRadius), dpiScale.Stroke(1));
-            Rectangle collapseIcon = new Rectangle(collapseBounds.Left + SX(7), collapseBounds.Top + SY(6), SX(20), SY(20));
+            int collapseIconSize = theme.IconSize;
+            Rectangle collapseIcon = new Rectangle(collapseBounds.Left + (collapseBounds.Width - SX(collapseIconSize)) / 2,
+                collapseBounds.Top + (collapseBounds.Height - SY(collapseIconSize)) / 2,
+                SX(collapseIconSize), SY(collapseIconSize));
             Color collapseColor = collapseHot ? theme.Accent : theme.Text;
             DrawChevron(e.Graphics, collapseIcon, compact, collapseColor);
             UpdateItemBounds();
@@ -166,7 +172,9 @@ namespace ZarpaSuite.Controls
                     if (!string.IsNullOrEmpty(item.BadgeText))
                     {
                         Size badgeSize = TextRenderer.MeasureText(item.BadgeText, Font);
-                        Rectangle badge = new Rectangle(bounds.Right - badgeSize.Width - SX(15), bounds.Top + SY(10), badgeSize.Width + SX(8), SY(20));
+                        int badgeHeight = Math.Min(SY(20), Math.Max(SY(16), bounds.Height - SY(8)));
+                        Rectangle badge = new Rectangle(bounds.Right - badgeSize.Width - SX(15),
+                            bounds.Top + (bounds.Height - badgeHeight) / 2, badgeSize.Width + SX(8), badgeHeight);
                         ZarpaPaint.FillRounded(e.Graphics, theme.Accent, badge, SX(Math.Min(theme.CornerRadius, 8)));
                         TextRenderer.DrawText(e.Graphics, item.BadgeText, Font, badge, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                     }
@@ -239,7 +247,7 @@ namespace ZarpaSuite.Controls
         }
         private void UpdateItemBounds()
         {
-            int y = SY(52);
+            int y = SY(NavigationHeaderHeight);
             if (itemBounds.Length != items.Count) itemBounds = new Rectangle[items.Count];
             else Array.Clear(itemBounds, 0, itemBounds.Length);
             for (int index = 0; index < items.Count; index++)
@@ -248,13 +256,15 @@ namespace ZarpaSuite.Controls
                 if (!item.Visible) continue;
                 if (item.Kind == ZarpaNavigationItemKind.Separator)
                 {
-                    itemBounds[index] = new Rectangle(SX(8), y, Math.Max(1, Width - SX(16)), SY(18));
-                    y += SY(18);
+                    int separatorHeight = ZarpaDensityMetrics.Select(theme, 12, 14, 18, 22);
+                    itemBounds[index] = new Rectangle(SX(8), y, Math.Max(1, Width - SX(16)), SY(separatorHeight));
+                    y += SY(separatorHeight);
                 }
                 else if (item.Kind == ZarpaNavigationItemKind.Header)
                 {
-                    itemBounds[index] = new Rectangle(SX(8), y, Math.Max(1, Width - SX(16)), SY(30));
-                    y += SY(32);
+                    int headerHeight = ZarpaDensityMetrics.Select(theme, 24, 28, 30, 36);
+                    itemBounds[index] = new Rectangle(SX(8), y, Math.Max(1, Width - SX(16)), SY(headerHeight));
+                    y += SY(headerHeight + theme.SpacingSmall);
                 }
                 else
                 {
@@ -263,6 +273,10 @@ namespace ZarpaSuite.Controls
                     y += itemHeight + SY(theme.SpacingSmall);
                 }
             }
+        }
+        private int NavigationHeaderHeight
+        {
+            get { return ZarpaDensityMetrics.Select(theme, 44, 48, 52, 60); }
         }
         private Rectangle GetItemBounds(int index)
         {

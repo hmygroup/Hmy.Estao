@@ -62,6 +62,31 @@ internal sealed class ZarpaSettingsScrollHost : Panel, IZarpaThemeAware
         Invalidate();
     }
 
+    public void ScrollTo(Control control)
+    {
+        if (control is null || control.IsDisposed) return;
+        _content.PerformLayout();
+        var offset = 0;
+        if (IsHandleCreated && control.IsHandleCreated)
+        {
+            var targetPoint = control.PointToScreen(Point.Empty);
+            var viewportPoint = PointToScreen(Point.Empty);
+            offset = _scrollBar.Value + targetPoint.Y - viewportPoint.Y;
+        }
+        else
+        {
+            Control? current = control;
+            while (current is not null && !ReferenceEquals(current, _content))
+            {
+                offset += current.Top;
+                current = current.Parent;
+            }
+            if (current is null) return;
+        }
+        _scrollBar.Value = Math.Clamp(offset, 0, _scrollBar.MaximumValue);
+        LayoutContent();
+    }
+
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);

@@ -209,6 +209,7 @@ namespace ZarpaSuite.Controls
         internal string ValueMember { get { return store.ValueMember; } set { store.ValueMember = value ?? string.Empty; list.ValueMember = store.ValueMember; } }
         internal int SelectedIndex { get { return store.SelectedIndex; } set { store.SelectedIndex = value; } }
         internal object SelectedItem { get { return store.SelectedItem; } }
+        internal object SelectedValue { get { return store.SelectedValue; } }
         internal ComboBoxStyle DropDownStyle { get { return store.DropDownStyle; } set { store.DropDownStyle = value; Invalidate(); } }
         internal new string Text { get { return store.Text; } set { store.Text = value ?? string.Empty; Invalidate(); } }
         internal event EventHandler SelectedIndexChanged;
@@ -227,6 +228,8 @@ namespace ZarpaSuite.Controls
             list.ForeColor = theme.Text;
             dropDown.BackColor = theme.BorderStrong;
             filterHost.BackColor = theme.Surface;
+            filterHost.Padding = new Padding(theme.SpacingMedium, theme.SpacingSmall,
+                theme.SpacingMedium, theme.SpacingSmall);
             listHost.BackColor = theme.SurfaceOverlay;
             list.Invalidate();
         }
@@ -285,11 +288,12 @@ namespace ZarpaSuite.Controls
 
         private void ShowPopulatedDropDown(bool focusList)
         {
-            list.ItemHeight = Math.Max(30, Font.Height + 13);
+            list.ItemHeight = Math.Max(theme.ControlHeight, Font.Height + theme.SpacingMedium * 2);
             int visible = Math.Min(8, Math.Max(1, list.Items.Count));
             Control anchor; Rectangle anchorBounds; ResolvePopupAnchor(out anchor, out anchorBounds);
             int popupWidth = Math.Max(anchorBounds.Width - 2, 160);
-            filterHost.Size = new Size(popupWidth, Math.Max(34, textEditor.PreferredHeight + 12));
+            filterHost.Size = new Size(popupWidth, Math.Max(theme.ControlHeight,
+                textEditor.PreferredHeight + theme.SpacingSmall * 2));
             listHost.Size = new Size(popupWidth, visible * list.ItemHeight + 4);
             popupController.Show(anchor, anchorBounds);
             if (list.SelectedIndex >= 0)
@@ -321,11 +325,21 @@ namespace ZarpaSuite.Controls
 
         private void SetHotIndex(int value)
         {
-            if (hotIndex == value) return;
+            // La lista se reconstruye mientras se escribe el filtro. En ese momento
+            // el índice anterior puede dejar de existir; nunca se debe pedir a
+            // ListBox.GetItemRectangle un índice fuera de su colección actual.
+            int itemCount = list.Items.Count;
+            int next = value >= 0 && value < itemCount ? value : -1;
             int previous = hotIndex;
-            hotIndex = value;
-            if (previous >= 0) list.Invalidate(list.GetItemRectangle(previous));
-            if (hotIndex >= 0) list.Invalidate(list.GetItemRectangle(hotIndex));
+            hotIndex = next;
+            InvalidateListItem(previous);
+            InvalidateListItem(hotIndex);
+        }
+
+        private void InvalidateListItem(int index)
+        {
+            if (index < 0 || index >= list.Items.Count || list.IsDisposed) return;
+            list.Invalidate(list.GetItemRectangle(index));
         }
 
         private void DrawListItem(object sender, DrawItemEventArgs e)
@@ -384,6 +398,9 @@ namespace ZarpaSuite.Controls
         private void PopulateList(string filter)
         {
             object selected = store.SelectedItem;
+            // El índice caliente pertenece a la lista anterior y deja de ser
+            // válido en cuanto se vacía para aplicar el nuevo filtro.
+            SetHotIndex(-1);
             list.BeginUpdate();
             list.Items.Clear();
             foreach (object item in store.Items)
@@ -392,7 +409,14 @@ namespace ZarpaSuite.Controls
                 if (string.IsNullOrEmpty(filter) || itemText.IndexOf(filter, StringComparison.CurrentCultureIgnoreCase) >= 0)
                     list.Items.Add(item);
             }
-            list.SelectedItem = selected;
+            // Si el valor seleccionado no coincide con el filtro, no existe en
+            // la colección temporal. Asignarlo directamente puede provocar una
+            // excepción en algunas versiones de WinForms; en ese caso dejamos
+            // la lista sin selección, sin tocar el valor del combo.
+            if (selected != null && list.Items.Contains(selected))
+                list.SelectedItem = selected;
+            else
+                list.SelectedIndex = -1;
             list.EndUpdate();
         }
 

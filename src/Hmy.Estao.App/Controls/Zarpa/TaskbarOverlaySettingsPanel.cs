@@ -3,12 +3,12 @@ using ZarpaSuite.Controls;
 
 namespace Hmy.Estao.App.Controls.Zarpa;
 
-internal sealed class TaskbarOverlaySettingsPanel : Panel
+internal sealed class TaskbarOverlaySettingsPanel : ZarpaSettingsSection
 {
-    private readonly ZarpaToggleSwitch _enabled = new() { Text = "Show usage on the Windows taskbar", Width = 330 };
-    private readonly ZarpaComboBox _displayMode = new() { LabelText = "Identity", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
-    private readonly ZarpaComboBox _size = new() { LabelText = "Size", DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
-    private readonly ZarpaToggleSwitch _moveEnabled = new() { Text = "Allow moving the overlay", Width = 210 };
+    private readonly ZarpaToggleSwitch _enabled = new() { Text = string.Empty, Width = 58 };
+    private readonly ZarpaComboBox _displayMode = new() { LabelText = string.Empty, DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+    private readonly ZarpaComboBox _size = new() { LabelText = string.Empty, DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
+    private readonly ZarpaToggleSwitch _moveEnabled = new() { Text = string.Empty, Width = 58 };
     private readonly ZarpaButton _resetPosition = new() { Text = "Reset position", ButtonStyle = ZarpaButtonStyle.Subtle, Width = 120, Enabled = false };
     private readonly Label _position = new() { AutoSize = false, Width = 230, Height = 34, TextAlign = ContentAlignment.MiddleLeft };
     private readonly FlowLayoutPanel _providers = new() { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = false, Margin = Padding.Empty };
@@ -18,57 +18,9 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
 
     public event Action? ResetPositionRequested;
 
-    public TaskbarOverlaySettingsPanel()
+    public TaskbarOverlaySettingsPanel() : base("Taskbar overlay",
+        "Show live provider usage in the free taskbar area; it hides automatically when space is limited.")
     {
-        Height = 410;
-        Dock = DockStyle.Top;
-        Padding = new Padding(6, 8, 6, 10);
-
-        var title = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 25,
-            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-            Text = "Taskbar overlay",
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        var helper = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 24,
-            Text = "Shown in the free taskbar area; hidden automatically when space is limited.",
-            TextAlign = ContentAlignment.MiddleLeft,
-            AutoEllipsis = true,
-            AutoSize = false
-        };
-        var header = new Panel { Dock = DockStyle.Top, Height = 49 };
-        header.Controls.Add(_enabled);
-
-        var options = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 70,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            Padding = Padding.Empty,
-            Margin = Padding.Empty
-        };
-        options.Controls.Add(_displayMode);
-        options.Controls.Add(_size);
-
-        var positionActions = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 48,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            Padding = new Padding(0, 4, 0, 4),
-            Margin = Padding.Empty
-        };
-        positionActions.Controls.Add(_moveEnabled);
-        positionActions.Controls.Add(_resetPosition);
-        positionActions.Controls.Add(_position);
-
         var providersLabel = SectionLabel("Providers");
         var controlsLabel = SectionLabel("Modules");
         var rows = new TableLayoutPanel
@@ -81,24 +33,24 @@ internal sealed class TaskbarOverlaySettingsPanel : Panel
         };
         rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
         rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-        rows.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        rows.RowStyles.Add(new RowStyle(SizeType.Absolute, ZarpaSettingsMetrics.TableHeaderHeight));
         rows.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         rows.Controls.Add(providersLabel, 0, 0);
         rows.Controls.Add(controlsLabel, 1, 0);
         rows.Controls.Add(_providers, 0, 1);
         rows.Controls.Add(_controls, 1, 1);
 
-        Controls.Add(new ZarpaSettingsSectionSeparator());
-        Controls.Add(rows);
-        Controls.Add(positionActions);
-        Controls.Add(options);
-        Controls.Add(header);
-        Controls.Add(helper);
-        Controls.Add(title);
-
         BuildChecks();
         foreach (var mode in TaskbarOverlayDisplayCatalog.DisplayModes) _displayMode.Items.Add(mode);
         foreach (var size in TaskbarOverlayDisplayCatalog.Sizes) _size.Items.Add(size);
+
+        AddRow("Show overlay", "Display the selected providers and modules on the Windows taskbar.", _enabled, 72);
+        AddRow("Presentation", "Choose how provider identity is shown and the overall overlay size.",
+            ZarpaSettingsLayout.Inline(_displayMode, _size), 320);
+        AddRow("Position", "Allow drag repositioning or restore the default taskbar location.",
+            ZarpaSettingsLayout.Inline(_moveEnabled, _resetPosition, _position), 430);
+        AddContent(rows, ZarpaSettingsMetrics.TableHeaderHeight + ZarpaSettingsMetrics.TableRowHeight * 2);
+
         _resetPosition.Click += (_, _) => ResetPositionRequested?.Invoke();
         _enabled.CheckedChanged += (_, _) => UpdateMovementAvailability();
     }

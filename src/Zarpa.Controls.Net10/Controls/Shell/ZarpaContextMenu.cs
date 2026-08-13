@@ -76,7 +76,7 @@ namespace ZarpaSuite.Controls
             ShowImageMargin = true;
             ShowCheckMargin = false;
             DropShadowEnabled = true;
-            Padding = new Padding(4);
+            Padding = new Padding(6);
             MinimumSize = new Size(224, 0);
             Font = new Font("Segoe UI", 9F);
             motionTimer = new System.Threading.Timer(MotionClockPulse, null,
@@ -101,8 +101,7 @@ namespace ZarpaSuite.Controls
             BackColor = theme.Surface;
             ForeColor = theme.Text;
             Font = new Font(theme.FontFamily, theme.FontSize);
-            ImageScalingSize = new Size(theme.IconSize, theme.IconSize);
-            Padding = new Padding(Math.Max(4, theme.SpacingSmall));
+            Padding = new Padding(Math.Max(4, theme.SpacingSmall + 2));
             ApplyItemAppearance(Items);
             InvalidateMenu();
         }
@@ -201,19 +200,16 @@ namespace ZarpaSuite.Controls
             }
 
             item.AutoSize = true;
-            int contentHeight = Math.Max(Font.Height, ImageScalingSize.Height);
-            int itemHeight = Math.Max(theme.ControlHeight, contentHeight + theme.SpacingMedium);
-            int verticalPadding = Math.Max(3, (itemHeight - contentHeight) / 2);
+            int verticalPadding = ZarpaDensityMetrics.Select(theme, 4, 5, 7, 9);
             item.Padding = new Padding(theme.SpacingMedium, verticalPadding,
                 theme.SpacingMedium, verticalPadding);
-            item.Margin = Padding.Empty;
+            item.Margin = new Padding(0, 1, 0, 1);
             ToolStripMenuItem menuItem = item as ToolStripMenuItem;
             if (menuItem == null) return;
             menuItem.DropDown.BackColor = theme.Surface;
             menuItem.DropDown.ForeColor = theme.Text;
             menuItem.DropDown.Font = Font;
             menuItem.DropDown.Padding = Padding;
-            menuItem.DropDown.ImageScalingSize = ImageScalingSize;
             menuItem.DropDown.Renderer = Renderer;
             menuItem.DropDown.Opened -= ChildDropDownOpened;
             menuItem.DropDown.Opened += ChildDropDownOpened;
@@ -344,7 +340,7 @@ namespace ZarpaSuite.Controls
 
             protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
             {
-                e.Graphics.Clear(owner.theme.Surface);
+                e.Graphics.Clear(Color.Transparent);
                 ZarpaPaint.FillRounded(e.Graphics, owner.theme.Surface,
                     new Rectangle(0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1),
                     owner.theme.GroupCornerRadius);
@@ -352,17 +348,9 @@ namespace ZarpaSuite.Controls
 
             protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
             {
-                Color border = owner.theme.Preset == ZarpaThemePreset.HighContrast
-                    ? owner.theme.Text : owner.theme.Border;
-                ZarpaPaint.DrawRounded(e.Graphics, border,
+                ZarpaPaint.DrawRounded(e.Graphics, owner.theme.Border,
                     new Rectangle(0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1),
                     owner.theme.GroupCornerRadius, owner.theme.BorderThickness);
-            }
-
-            protected override void OnRenderImageMargin(ToolStripRenderEventArgs e)
-            {
-                // El fondo completo ya lo pinta el menú. Evita la franja con colores
-                // del renderer profesional de Windows detrás de los iconos.
             }
 
             protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
@@ -370,32 +358,26 @@ namespace ZarpaSuite.Controls
                 float hover = owner.GetHoverProgress(e.Item);
                 if (hover > 0F)
                 {
-                    Color target = HoverColor(e.Item);
-                    Color color = ZarpaPaint.Blend(owner.theme.Surface, target, hover);
-                    Rectangle bounds = new Rectangle(2, 1, e.Item.Width - 4, e.Item.Height - 2);
+                    Color color = ZarpaPaint.Blend(owner.theme.Surface, owner.theme.SurfaceRaised, hover);
+                    Rectangle bounds = new Rectangle(2, 0, e.Item.Width - 4, e.Item.Height);
                     ZarpaPaint.FillRounded(e.Graphics, color, bounds, owner.theme.CornerRadius);
-                    if (owner.theme.Preset == ZarpaThemePreset.HighContrast)
+                    if (hover > .72F)
                     {
-                        Color border = ZarpaPaint.Blend(owner.theme.Surface, owner.theme.Text, hover);
-                        ZarpaPaint.DrawRounded(e.Graphics, border, bounds,
-                            owner.theme.CornerRadius, owner.theme.BorderThickness);
+                        Color border = ZarpaPaint.Blend(color, owner.theme.Border, (hover - .72F) / .28F);
+                        ZarpaPaint.DrawRounded(e.Graphics, border, bounds, owner.theme.CornerRadius, 1);
                     }
                 }
+
             }
 
             protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
             {
                 ZarpaMenuItem item = e.Item as ZarpaMenuItem;
                 Color text = !e.Item.Enabled ? owner.theme.TextMuted : item != null && item.Tone == ZarpaMenuItemTone.Danger
-                    ? ReadableDanger() : item != null && item.Tone == ZarpaMenuItemTone.Accent
+                    ? owner.theme.Danger : item != null && item.Tone == ZarpaMenuItemTone.Accent
                     ? owner.theme.Accent : owner.theme.Text;
                 float reveal = owner.GetRevealProgress(e.Item);
                 e.TextColor = ZarpaPaint.Blend(owner.theme.Surface, text, reveal);
-                Rectangle textBounds = e.TextRectangle;
-                textBounds.Y = 0;
-                textBounds.Height = e.Item.Height;
-                e.TextRectangle = textBounds;
-                e.TextFormat |= TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine;
                 DrawRevealed(e.Graphics, reveal, delegate { base.OnRenderItemText(e); });
             }
 
@@ -406,15 +388,13 @@ namespace ZarpaSuite.Controls
                 if (item != null && !string.IsNullOrEmpty(item.IconKey))
                 {
                     Color icon = !item.Enabled ? owner.theme.TextMuted : item.Tone == ZarpaMenuItemTone.Danger
-                        ? ReadableDanger() : item.Tone == ZarpaMenuItemTone.Accent ? owner.theme.Accent : owner.theme.TextMuted;
-                    if (item.Enabled && item.Tone == ZarpaMenuItemTone.Neutral)
-                        icon = ZarpaPaint.Blend(owner.theme.Text, owner.theme.TextMuted, .38F);
+                        ? owner.theme.Danger : item.Tone == ZarpaMenuItemTone.Accent ? owner.theme.Accent : owner.theme.TextMuted;
                     icon = ZarpaPaint.Blend(owner.theme.Surface, icon, reveal);
-                    Rectangle bounds = CenteredSquare(e.ImageRectangle, e.Item.Height);
+                    Rectangle bounds = new Rectangle(e.ImageRectangle.X + 1, e.ImageRectangle.Y,
+                        owner.theme.IconSize, owner.theme.IconSize);
                     DrawRevealed(e.Graphics, reveal, delegate
                     {
-                        FluentIconCatalog.TryDraw(e.Graphics, item.IconKey, bounds, icon,
-                            Math.Max(12F, Math.Min(bounds.Width, bounds.Height) - 2F));
+                        FluentIconCatalog.TryDraw(e.Graphics, item.IconKey, bounds, icon, owner.theme.IconSize - 2F);
                     });
                     return;
                 }
@@ -423,63 +403,26 @@ namespace ZarpaSuite.Controls
 
             protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
             {
-                Rectangle bounds = CenteredSquare(e.ImageRectangle, e.Item.Height);
+                Rectangle bounds = new Rectangle(e.ImageRectangle.X + 2, e.ImageRectangle.Y + 2,
+                    e.ImageRectangle.Width - 4, e.ImageRectangle.Height - 4);
                 FluentIconCatalog.TryDraw(e.Graphics, "ic_fluent_checkmark_20_regular", bounds,
-                    owner.theme.Accent, Math.Max(12F, bounds.Height - 5F));
+                    owner.theme.Accent, 15F);
             }
 
             protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
             {
-                int size = Math.Max(12, Math.Min(16, e.Item.Height - 10));
-                int centerX = e.ArrowRectangle.Left + e.ArrowRectangle.Width / 2;
-                Rectangle bounds = new Rectangle(centerX - size / 2,
-                    (e.Item.Height - size) / 2, size, size);
-                Color arrow = e.Item.Enabled
-                    ? ZarpaPaint.Blend(owner.theme.Text, owner.theme.TextMuted, .5F)
-                    : owner.theme.BorderStrong;
+                Rectangle bounds = new Rectangle(e.ArrowRectangle.X, e.ArrowRectangle.Y,
+                    e.ArrowRectangle.Width, e.ArrowRectangle.Height);
                 FluentIconCatalog.TryDraw(e.Graphics, "ic_fluent_chevron_right_20_regular", bounds,
-                    arrow, Math.Max(11F, bounds.Height - 3F));
+                    e.Item.Enabled ? owner.theme.TextMuted : owner.theme.BorderStrong, 13F);
             }
 
             protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
             {
                 int y = e.Item.Height / 2;
-                Color separator = owner.theme.Preset == ZarpaThemePreset.HighContrast
-                    ? owner.theme.Text : owner.theme.Border;
-                using (Pen pen = new Pen(separator))
+                using (Pen pen = new Pen(owner.theme.Border))
                     e.Graphics.DrawLine(pen, owner.theme.SpacingMedium, y,
                         e.Item.Width - owner.theme.SpacingMedium, y);
-            }
-
-            private Color HoverColor(ToolStripItem item)
-            {
-                if (owner.theme.Preset == ZarpaThemePreset.HighContrast)
-                    return owner.theme.Selection;
-
-                Color color = ZarpaPaint.Blend(owner.theme.SurfaceRaised,
-                    owner.theme.Selection, .32F);
-                ZarpaMenuItem menuItem = item as ZarpaMenuItem;
-                if (menuItem == null || !item.Enabled) return color;
-                if (menuItem.Tone == ZarpaMenuItemTone.Danger)
-                    return ZarpaPaint.Blend(color, ReadableDanger(), .10F);
-                if (menuItem.Tone == ZarpaMenuItemTone.Accent)
-                    return ZarpaPaint.Blend(color, owner.theme.Accent, .08F);
-                return color;
-            }
-
-            private Color ReadableDanger()
-            {
-                return owner.theme.Surface.GetBrightness() < .35F
-                    ? ZarpaPaint.Blend(owner.theme.Danger, owner.theme.Text, .22F)
-                    : owner.theme.Danger;
-            }
-
-            private static Rectangle CenteredSquare(Rectangle slot, int itemHeight)
-            {
-                int availableHeight = Math.Max(1, itemHeight - 8);
-                int size = Math.Max(1, Math.Min(Math.Min(slot.Width, slot.Height), availableHeight));
-                return new Rectangle(slot.Left + (slot.Width - size) / 2,
-                    (itemHeight - size) / 2, size, size);
             }
 
             private static void DrawRevealed(Graphics graphics, float reveal, MethodInvoker draw)

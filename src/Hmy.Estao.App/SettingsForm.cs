@@ -11,18 +11,40 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly ICookieSecretStore _cookieStore;
     private readonly ZarpaThemeManager _theme = new() { Preset = ZarpaThemePreset.Graphite };
     private readonly Panel _providersHost = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, AutoScroll = false, Padding = new Padding(22, 8, 22, 18) };
+    private readonly Panel _generalPage = SettingsPage();
+    private readonly Panel _providersPage = SettingsPage();
+    private readonly Panel _usagePage = SettingsPage();
+    private readonly Panel _taskbarPage = SettingsPage();
+    private readonly ZarpaSettingsSectionSeparator _generalSeparator = PageSeparator();
+    private readonly ZarpaSettingsSectionSeparator _providersSeparator = PageSeparator();
+    private readonly ZarpaSettingsSectionSeparator _usageSeparator = PageSeparator();
     private readonly ZarpaSettingsScrollHost _providersViewport = new() { Dock = DockStyle.Fill };
+    private readonly ZarpaNavigationView _navigation = new()
+    {
+        Dock = DockStyle.Left,
+        HeaderText = "SETTINGS",
+        ExpandedWidth = 196,
+        CompactWidth = 56
+    };
+    private readonly ZarpaNavigationItem _providersNavigationItem = new()
+    {
+        Key = "providers",
+        Text = "Provider accounts",
+        IconKey = "ic_fluent_people_24_regular"
+    };
     private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
     private readonly UsageColorsSettingsPanel _usageColorsSettings = new();
     private readonly RefreshSettingsPanel _refreshSettings = new();
-    private readonly Panel _appearanceSettings = new() { Dock = DockStyle.Top, Height = 280, Padding = new Padding(6, 8, 6, 10) };
-    private readonly Label _providerCount = new() { AutoSize = true };
-    private readonly ZarpaComboBox _themePicker = new() { LabelText = "Theme", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
-    private readonly ZarpaComboBox _backdropPicker = new() { LabelText = "Backdrop", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+    private readonly ZarpaSettingsSection _appearanceSettings = new("Appearance",
+        "Choose the visual style used by the settings window, popover, and taskbar overlay.");
+    private readonly ZarpaSettingsSection _providersSettings = new("Provider accounts",
+        "Manage data sources, credentials, workspaces, and pacing for each connected provider.");
+    private readonly ZarpaComboBox _themePicker = new() { LabelText = string.Empty, DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+    private readonly ZarpaComboBox _backdropPicker = new() { LabelText = string.Empty, DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
     private readonly ZarpaNumericUpDown _backdropOpacity = new()
     {
-        LabelText = "Backdrop opacity",
-        HelperText = "1% = more transparent · 100% = opaque",
+        LabelText = string.Empty,
+        HelperText = string.Empty,
         Minimum = 1,
         Maximum = 100,
         Increment = 1,
@@ -46,24 +68,38 @@ public sealed class SettingsForm : ZarpaModernForm
         _previewOverlay = previewOverlay;
 
         Text = "Estao Settings";
-        ContextText = "Providers";
+        ContextText = "Preferences";
         TitleIconKey = string.Empty;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(760, 560);
-        Size = new Size(900, 700);
+        MinimumSize = new Size(900, 600);
+        Size = new Size(1080, 740);
         MaximizeBox = true;
 
-        var header = BuildHeader();
         var footer = BuildFooter();
         BuildAppearanceSection();
-        _providersHost.Controls.Add(_overlaySettings);
-        _providersHost.Controls.Add(_refreshSettings);
-        _providersHost.Controls.Add(_appearanceSettings);
-        _providersHost.Controls.Add(_usageColorsSettings);
+        _generalPage.Controls.Add(_refreshSettings);
+        _generalPage.Controls.Add(_appearanceSettings);
+        _providersPage.Controls.Add(_providersSettings);
+        _usagePage.Controls.Add(_usageColorsSettings);
+        _taskbarPage.Controls.Add(_overlaySettings);
+        // DockStyle.Top lays out the last control first. Add the page separators
+        // between the sections in reverse visual order so every major area has
+        // a clear boundary while the whole form remains one scrollable surface.
+        _providersHost.Controls.Add(_taskbarPage);
+        _providersHost.Controls.Add(_usageSeparator);
+        _providersHost.Controls.Add(_usagePage);
+        _providersHost.Controls.Add(_providersSeparator);
+        _providersHost.Controls.Add(_providersPage);
+        _providersHost.Controls.Add(_generalSeparator);
+        _providersHost.Controls.Add(_generalPage);
+        ArrangeSettingsSections();
         _providersViewport.Content = _providersHost;
-        Controls.Add(_providersViewport);
+        BuildSideNavigation();
+        var body = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = Padding.Empty };
+        body.Controls.Add(_providersViewport);
+        body.Controls.Add(_navigation);
+        Controls.Add(body);
         Controls.Add(footer);
-        Controls.Add(header);
 
         _previewButton.Click += (_, _) => PreviewOverlay();
         _saveButton.Click += async (_, _) => await SaveAsync().ConfigureAwait(true);
@@ -81,6 +117,77 @@ public sealed class SettingsForm : ZarpaModernForm
         _theme.Attach(this);
     }
 
+    private void BuildSideNavigation()
+    {
+        _navigation.Items.Add(new ZarpaNavigationItem
+        {
+            Key = "general",
+            Text = "General",
+            IconKey = "ic_fluent_settings_24_regular"
+        });
+        _navigation.Items.Add(_providersNavigationItem);
+        _navigation.Items.Add(new ZarpaNavigationItem
+        {
+            Key = "usage-alerts",
+            Text = "Usage alerts",
+            IconKey = "ic_fluent_data_usage_24_regular"
+        });
+        _navigation.Items.Add(new ZarpaNavigationItem
+        {
+            Key = "taskbar-overlay",
+            Text = "Taskbar overlay",
+            IconKey = "ic_fluent_window_24_regular"
+        });
+        _navigation.SelectedItemChanged += (_, _) => NavigateToSelectedArea();
+        _navigation.SelectedIndex = 0;
+    }
+
+    private void NavigateToSelectedArea()
+    {
+        var page = _navigation.SelectedItem?.Key switch
+        {
+            "providers" => _providersPage,
+            "usage-alerts" => _usagePage,
+            "taskbar-overlay" => _taskbarPage,
+            _ => _generalPage
+        };
+        _providersViewport.ScrollTo(page);
+    }
+
+    private static Panel SettingsPage() => new()
+    {
+        Dock = DockStyle.Top,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Margin = Padding.Empty,
+        Padding = Padding.Empty
+    };
+
+    private static ZarpaSettingsSectionSeparator PageSeparator() => new()
+    {
+        Dock = DockStyle.Top,
+        Height = 1,
+        Margin = new Padding(0, 6, 0, 6)
+    };
+
+    private void ArrangeSettingsSections()
+    {
+        // DockStyle.Top resolves the last child first. Keep this order explicit
+        // so a new section cannot silently appear above the wrong separator.
+        var visualOrder = new Control[]
+        {
+            _generalPage,
+            _generalSeparator,
+            _providersPage,
+            _providersSeparator,
+            _usagePage,
+            _usageSeparator,
+            _taskbarPage
+        };
+        for (var index = 0; index < visualOrder.Length; index++)
+            _providersHost.Controls.SetChildIndex(visualOrder[index], visualOrder.Length - index - 1);
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -90,85 +197,37 @@ public sealed class SettingsForm : ZarpaModernForm
         base.Dispose(disposing);
     }
 
-    private Control BuildHeader()
-    {
-        var header = new Panel { Dock = DockStyle.Top, Height = 104, Padding = new Padding(24, 16, 24, 10) };
-        var actions = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Right,
-            Width = 180,
-            FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(0, 10, 0, 0),
-            WrapContents = false
-        };
-        var import = new ZarpaButton { Text = "Import config", ButtonStyle = ZarpaButtonStyle.Subtle, Width = 126 };
-        import.Click += async (_, _) => await ImportAsync().ConfigureAwait(true);
-        actions.Controls.Add(import);
-
-        var title = new Label
-        {
-            AutoSize = false,
-            Dock = DockStyle.Top,
-            Font = new Font("Segoe UI", 16F, FontStyle.Bold),
-            Height = 35,
-            Text = "Providers",
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        _providerCount.Dock = DockStyle.Top;
-        _providerCount.Height = 24;
-        _providerCount.AutoSize = false;
-        _providerCount.Text = "Loading provider configuration…";
-        var copy = new Panel { Dock = DockStyle.Fill };
-        copy.Controls.Add(_providerCount);
-        copy.Controls.Add(title);
-        header.Controls.Add(copy);
-        header.Controls.Add(actions);
-        return header;
-    }
-
     private Control BuildFooter()
     {
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 66, Padding = new Padding(22, 14, 22, 14) };
-        var actions = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Right,
-            Width = 360,
-            FlowDirection = FlowDirection.RightToLeft,
-            WrapContents = false
-        };
+        var footer = new ZarpaSettingsFooter();
+        var actions = new ZarpaSettingsFooterActions();
         var cancel = new ZarpaButton { Text = "Cancel", ButtonStyle = ZarpaButtonStyle.Subtle, Width = 100 };
         cancel.Click += (_, _) => Close();
         actions.Controls.Add(_previewButton);
         actions.Controls.Add(_saveButton);
         actions.Controls.Add(cancel);
+        var import = new ZarpaButton
+        {
+            Text = "Import config",
+            ButtonStyle = ZarpaButtonStyle.Subtle,
+            Width = 126,
+            Dock = DockStyle.Left,
+            Margin = new Padding(0, 1, 0, 1)
+        };
+        import.Click += async (_, _) => await ImportAsync().ConfigureAwait(true);
         footer.Controls.Add(actions);
+        footer.Controls.Add(import);
         return footer;
     }
 
     private void BuildAppearanceSection()
     {
-        var title = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 24,
-            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-            Text = "Appearance",
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        _themePicker.Dock = DockStyle.Top;
-        _themePicker.Width = 220;
-        _themePicker.Height = 76;
-        _backdropPicker.Dock = DockStyle.Top;
-        _backdropPicker.Width = 220;
-        _backdropPicker.Height = 76;
-        _backdropOpacity.Dock = DockStyle.Top;
-        _backdropOpacity.Width = 220;
-        _backdropOpacity.Height = 76;
-        _appearanceSettings.Controls.Add(new ZarpaSettingsSectionSeparator());
-        _appearanceSettings.Controls.Add(_backdropOpacity);
-        _appearanceSettings.Controls.Add(_backdropPicker);
-        _appearanceSettings.Controls.Add(_themePicker);
-        _appearanceSettings.Controls.Add(title);
+        _appearanceSettings.AddRow("Theme", "Sets the shared color palette for every Estao surface.",
+            _themePicker, 220);
+        _appearanceSettings.AddRow("Window backdrop", "Choose the material shown behind supported windows.",
+            _backdropPicker, 220);
+        _appearanceSettings.AddRow("Backdrop opacity", "1% is more transparent; 100% is fully opaque.",
+            _backdropOpacity, 220);
     }
 
     private async Task LoadAsync()
@@ -193,16 +252,16 @@ public sealed class SettingsForm : ZarpaModernForm
                 var model = new ProviderRow(_config.Providers[index], statuses[index]);
                 var row = new ProviderSettingsRow(model, SignInProviderAsync) { Dock = DockStyle.Top };
                 _providerRows.Insert(0, row);
-                _providersHost.Controls.Add(row);
-                _providersHost.Controls.SetChildIndex(row, 0);
+                _providersPage.Controls.Add(row);
+                _providersPage.Controls.SetChildIndex(row, 0);
             }
-            _providersHost.Controls.SetChildIndex(_appearanceSettings, 0);
-            _providersHost.Controls.SetChildIndex(_usageColorsSettings, 1);
-            _providersHost.Controls.SetChildIndex(_refreshSettings, 2);
-            _providersHost.Controls.SetChildIndex(_overlaySettings, 3);
+            // With DockStyle.Top WinForms lays out the last control first.
+            // Keep the section heading after the account rows in the collection
+            // so it is rendered at the top of the provider page.
+            _providersPage.Controls.SetChildIndex(_providersSettings, _providersPage.Controls.Count - 1);
 
             var enabled = _providerRows.Count(row => row.EnabledProvider);
-            _providerCount.Text = $"{enabled} of {_providerRows.Count} enabled  ·  Credentials stay encrypted on this device";
+            _providersNavigationItem.BadgeText = enabled.ToString();
         }
         finally
         {
@@ -327,19 +386,16 @@ public sealed class SettingsForm : ZarpaModernForm
     {
         foreach (var row in _providerRows) row.Dispose();
         _providerRows.Clear();
-        for (var index = _providersHost.Controls.Count - 1; index >= 0; index--)
+        for (var index = _providersPage.Controls.Count - 1; index >= 0; index--)
         {
-            if (!ReferenceEquals(_providersHost.Controls[index], _overlaySettings) &&
-                !ReferenceEquals(_providersHost.Controls[index], _refreshSettings) &&
-                !ReferenceEquals(_providersHost.Controls[index], _appearanceSettings) &&
-                !ReferenceEquals(_providersHost.Controls[index], _usageColorsSettings))
-                _providersHost.Controls[index].Dispose();
+            if (!ReferenceEquals(_providersPage.Controls[index], _providersSettings))
+                _providersPage.Controls[index].Dispose();
         }
     }
 
     private sealed class ProviderSettingsRow : Panel
     {
-        private const int CollapsedHeight = 74;
+        private const int CollapsedHeight = ZarpaSettingsMetrics.StandardRowHeight + 6;
         private readonly ProviderRow _model;
         private readonly Label _summary;
         private readonly ZarpaToggleSwitch _enabled;
@@ -497,11 +553,12 @@ public sealed class SettingsForm : ZarpaModernForm
                 fields.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / fieldRows));
             for (var index = 0; index < providerFields.Count; index++)
                 fields.Controls.Add(providerFields[index], index % 2, index / 2);
-            _expandedHeight = CollapsedHeight + fieldRows * 78 + 12;
+            _expandedHeight = CollapsedHeight + fieldRows * ZarpaSettingsMetrics.FieldRowHeight + 12;
             _details.Controls.Add(fields);
 
             Controls.Add(_details);
             Controls.Add(header);
+            Controls.Add(new ZarpaSettingsSectionSeparator());
             UpdateSummary();
         }
 
@@ -524,13 +581,6 @@ public sealed class SettingsForm : ZarpaModernForm
         }
 
         public void ClearLegacyCookie() => _model.ClearLegacyCookie();
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            using var separator = new Pen(Color.FromArgb(67, 70, 78));
-            e.Graphics.DrawLine(separator, 6, Height - 1, Width - 6, Height - 1);
-        }
 
         private void ToggleExpanded()
         {

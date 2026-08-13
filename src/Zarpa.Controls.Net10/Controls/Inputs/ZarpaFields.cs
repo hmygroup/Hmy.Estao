@@ -109,6 +109,7 @@ namespace ZarpaSuite.Controls
         public int SelectedIndex { get { return comboBox.SelectedIndex; } set { comboBox.SelectedIndex = value; } }
 
         [Browsable(false)] public object SelectedItem { get { return comboBox.SelectedItem; } }
+        [Browsable(false)] public object SelectedValue { get { return comboBox.SelectedValue; } }
 
         public event EventHandler SelectedIndexChanged
         {

@@ -122,8 +122,7 @@ namespace ZarpaSuite.Controls
 
         protected override void OnPaintBackground(PaintEventArgs e)
         {
-            // Let DWM render the Mica/Acrylic surface behind the client content.
-            // Child controls still paint their own themed surfaces normally.
+            // DWM paints the native Mica/Acrylic surface behind the client area.
             if (backdropApplied) return;
             base.OnPaintBackground(e);
         }
@@ -133,20 +132,13 @@ namespace ZarpaSuite.Controls
             base.OnPaint(e);
             if (!modernChrome) return;
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            Rectangle frame = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
-            using (GraphicsPath framePath = ZarpaPaint.RoundedPath(frame, S(Math.Max(6, theme.GroupCornerRadius))))
+            Rectangle header = new Rectangle(0, 0, ClientSize.Width, ChromeHeight);
+            using (SolidBrush brush = new SolidBrush(theme.Surface)) e.Graphics.FillRectangle(brush, header);
+            using (Pen borderPen = new Pen(theme.Border))
             {
-                GraphicsState state = e.Graphics.Save();
-                e.Graphics.SetClip(framePath, CombineMode.Intersect);
-                Rectangle header = new Rectangle(0, 0, ClientSize.Width, ChromeHeight);
-                using (SolidBrush brush = new SolidBrush(theme.Surface)) e.Graphics.FillRectangle(brush, header);
-                using (Pen borderPen = new Pen(theme.Border))
-                {
-                    borderPen.Width = dpiScale.Stroke(theme.BorderThickness);
-                    e.Graphics.DrawPath(borderPen, framePath);
-                    e.Graphics.DrawLine(borderPen, 0, ChromeHeight - 1, Width, ChromeHeight - 1);
-                }
-                e.Graphics.Restore(state);
+                borderPen.Width = dpiScale.Stroke(theme.BorderThickness);
+                e.Graphics.DrawRectangle(borderPen, 0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1));
+                e.Graphics.DrawLine(borderPen, 0, ChromeHeight - 1, Width, ChromeHeight - 1);
             }
 
             Rectangle iconBounds = new Rectangle(S(14), (ChromeHeight - S(22)) / 2, S(22), S(22));
@@ -291,7 +283,7 @@ namespace ZarpaSuite.Controls
             try
             {
                 int preference = 2; // DWMWCP_ROUND; Windows 10 simply ignores it.
-                DwmSetWindowAttribute(Handle, 33, ref preference, sizeof(int)); // DWMWA_WINDOW_CORNER_PREFERENCE
+                DwmSetWindowAttribute(Handle, 33, ref preference, sizeof(int));
             }
             catch (DllNotFoundException) { }
             catch (EntryPointNotFoundException) { }
@@ -300,7 +292,6 @@ namespace ZarpaSuite.Controls
         private void ApplyDwmBorderColor(Color color)
         {
             if (!IsHandleCreated) return;
-            // DWMWA_BORDER_COLOR expects a COLORREF (0x00BBGGRR), not ARGB.
             int colorRef = color.R | (color.G << 8) | (color.B << 16);
             try
             {
@@ -315,8 +306,6 @@ namespace ZarpaSuite.Controls
             backdropApplied = false;
             if (!IsHandleCreated) return;
 
-            // Keep the existing window-level translucency behavior. The
-            // custom corner handling is independent from the backdrop.
             Opacity = style == ZarpaBackdropStyle.None
                 ? 1D
                 : Math.Max(0.55D, Math.Min(1D, opacity / 100D));
@@ -327,13 +316,18 @@ namespace ZarpaSuite.Controls
             {
                 int backdropType = style == ZarpaBackdropStyle.Mica ? DwmsbtMainWindow :
                     style == ZarpaBackdropStyle.Acrylic ? DwmsbtTransientWindow : DwmsbtNone;
-                systemBackdropApplied = DwmSetWindowAttribute(Handle, DwmwaSystemBackdropType,
-                    ref backdropType, sizeof(int)) == 0;
+                try
+                {
+                    systemBackdropApplied = DwmSetWindowAttribute(Handle, DwmwaSystemBackdropType,
+                        ref backdropType, sizeof(int)) == 0;
+                }
+                catch (DllNotFoundException) { }
+                catch (EntryPointNotFoundException) { }
             }
 
             if (style != ZarpaBackdropStyle.None && !systemBackdropApplied)
             {
-                ApplyAcrylicFallback(style, opacity);
+                ApplyAcrylicFallback(opacity);
                 backdropApplied = true;
             }
             else if (style == ZarpaBackdropStyle.None)
@@ -349,24 +343,22 @@ namespace ZarpaSuite.Controls
             Invalidate(true);
         }
 
-        private void ApplyAcrylicFallback(ZarpaBackdropStyle style, int opacity)
+        private void ApplyAcrylicFallback(int opacity)
         {
             int alpha = (int)Math.Round(Math.Max(1, Math.Min(100, opacity)) * 255D / 100D);
             Color tint = theme.Surface;
             uint gradientColor = (uint)(alpha << 24 | tint.B << 16 | tint.G << 8 | tint.R);
-            AccentPolicy policy = new AccentPolicy
+            SetAccentPolicy(new AccentPolicy
             {
                 AccentState = AccentEnableAcrylicBlurBehind,
                 GradientColor = gradientColor
-            };
-            SetAccentPolicy(policy);
+            });
         }
 
         private void DisableAcrylicFallback()
         {
             if (!IsHandleCreated) return;
-            AccentPolicy policy = new AccentPolicy { AccentState = AccentDisabled };
-            SetAccentPolicy(policy);
+            SetAccentPolicy(new AccentPolicy { AccentState = AccentDisabled });
         }
 
         private void SetAccentPolicy(AccentPolicy policy)

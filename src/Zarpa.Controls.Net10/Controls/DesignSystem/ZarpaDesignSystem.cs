@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace ZarpaSuite.Controls
@@ -47,12 +48,15 @@ namespace ZarpaSuite.Controls
 
     internal sealed class ZarpaPaintAnimator : IDisposable
     {
+        private const int FramePulseInterval = 15;
+        private const int TimerResolution = 1;
         private readonly Control control;
         private readonly Action<float> advanceFrame;
         private readonly System.Threading.Timer timer;
         private long lastTimestamp;
         private bool running;
         private bool disposed;
+        private bool timerResolutionRequested;
         private int tickPending;
 
         internal ZarpaPaintAnimator(Control owner, Action<float> frame)
@@ -74,7 +78,11 @@ namespace ZarpaSuite.Controls
             if (running) return;
             lastTimestamp = Stopwatch.GetTimestamp();
             running = true;
-            timer.Change(0, 15);
+            RequestTimerResolution();
+            // .NET 3.5 can quantize a 15 ms timer to two Windows clock ticks.
+            // The temporary multimedia timer resolution keeps this pulse close
+            // to 60 Hz; tickPending still coalesces callbacks when the UI is busy.
+            timer.Change(0, FramePulseInterval);
         }
 
         internal void Stop()
@@ -83,6 +91,7 @@ namespace ZarpaSuite.Controls
             if (disposed) return;
             timer.Change(System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
             lastTimestamp = 0L;
+            ReleaseTimerResolution();
         }
 
         private void Pulse(object state)
@@ -111,7 +120,27 @@ namespace ZarpaSuite.Controls
             running = false;
             disposed = true;
             timer.Dispose();
+            ReleaseTimerResolution();
         }
+
+        private void RequestTimerResolution()
+        {
+            if (timerResolutionRequested) return;
+            timerResolutionRequested = TimeBeginPeriod(TimerResolution) == 0;
+        }
+
+        private void ReleaseTimerResolution()
+        {
+            if (!timerResolutionRequested) return;
+            TimeEndPeriod(TimerResolution);
+            timerResolutionRequested = false;
+        }
+
+        [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+        private static extern int TimeBeginPeriod(int period);
+
+        [DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+        private static extern int TimeEndPeriod(int period);
     }
 
     internal sealed class ZarpaSizeAnimator : IDisposable
@@ -213,6 +242,15 @@ namespace ZarpaSuite.Controls
         Acrylic
     }
 
+    public enum ZarpaDensity
+    {
+        UltraCompact,
+        Compact,
+        Comfortable,
+        Spacious,
+        Custom
+    }
+
     internal sealed class ZarpaPresetDefinition
     {
         internal Color Canvas, Surface, Raised, Overlay, Border, BorderStrong, Text, Muted;
@@ -285,36 +323,6 @@ namespace ZarpaSuite.Controls
                         Color.FromArgb(222, 205, 202), Color.FromArgb(177, 148, 145), Color.FromArgb(28, 27, 25), Color.FromArgb(104, 98, 93),
                         Color.FromArgb(205, 24, 35), Color.FromArgb(230, 45, 54), Color.FromArgb(161, 14, 24), Color.FromArgb(250, 216, 218), Color.FromArgb(48, 55, 20, 20),
                         "Segoe UI", 9F, 23F, 4, 6, 36, 42, 40, 4, 9, 18, 22, 1, 2, 125, 85, 175);
-                case ZarpaThemePreset.Camel:
-                    return Create(Color.FromArgb(249, 236, 188), Color.FromArgb(255, 248, 220), Color.FromArgb(244, 207, 91), Color.FromArgb(232, 180, 40),
-                        Color.FromArgb(211, 163, 40), Color.FromArgb(141, 104, 26), Color.FromArgb(20, 26, 61), Color.FromArgb(74, 77, 100),
-                        Color.FromArgb(20, 26, 61), Color.FromArgb(42, 54, 103), Color.FromArgb(12, 16, 42), Color.FromArgb(250, 207, 66), Color.FromArgb(48, 48, 20, 20),
-                        "Segoe UI", 9F, 23F, 7, 9, 36, 42, 40, 4, 9, 18, 22, 1, 2, 145, 95, 195);
-                case ZarpaThemePreset.MarlboroGold:
-                    return Create(Color.FromArgb(246, 246, 242), Color.White, Color.FromArgb(247, 239, 216), Color.FromArgb(229, 203, 125),
-                        Color.FromArgb(205, 177, 94), Color.FromArgb(157, 126, 53), Color.FromArgb(27, 27, 25), Color.FromArgb(103, 96, 81),
-                        Color.FromArgb(178, 138, 53), Color.FromArgb(207, 169, 76), Color.FromArgb(126, 91, 25), Color.FromArgb(248, 229, 175), Color.FromArgb(48, 45, 30, 16),
-                        "Segoe UI", 9F, 23F, 6, 8, 36, 42, 40, 4, 9, 18, 22, 1, 2, 140, 90, 190);
-                case ZarpaThemePreset.Lucky:
-                    return Create(Color.FromArgb(17, 54, 40), Color.FromArgb(23, 74, 54), Color.FromArgb(32, 92, 65), Color.FromArgb(43, 111, 76),
-                        Color.FromArgb(78, 126, 92), Color.FromArgb(113, 157, 119), Color.FromArgb(255, 248, 225), Color.FromArgb(198, 193, 157),
-                        Color.FromArgb(201, 43, 46), Color.FromArgb(229, 68, 62), Color.FromArgb(151, 24, 28), Color.FromArgb(215, 177, 72), Color.FromArgb(35, 12, 28, 20),
-                        "Segoe UI", 9F, 22F, 8, 10, 35, 41, 39, 4, 8, 17, 22, 1, 2, 135, 90, 185);
-                case ZarpaThemePreset.Winston:
-                    return Create(Color.FromArgb(240, 243, 247), Color.White, Color.FromArgb(228, 233, 240), Color.FromArgb(211, 219, 231),
-                        Color.FromArgb(188, 199, 216), Color.FromArgb(101, 119, 148), Color.FromArgb(15, 42, 82), Color.FromArgb(88, 106, 136),
-                        Color.FromArgb(200, 16, 46), Color.FromArgb(228, 41, 68), Color.FromArgb(143, 9, 32), Color.FromArgb(221, 231, 246), Color.FromArgb(42, 28, 44, 78),
-                        "Segoe UI", 9F, 22F, 6, 8, 35, 41, 39, 4, 8, 17, 22, 1, 2, 135, 90, 185);
-                case ZarpaThemePreset.Virginia:
-                    return Create(Color.FromArgb(235, 239, 241), Color.FromArgb(255, 255, 255), Color.FromArgb(222, 231, 232), Color.FromArgb(197, 219, 219),
-                        Color.FromArgb(176, 199, 201), Color.FromArgb(104, 141, 145), Color.FromArgb(20, 57, 62), Color.FromArgb(79, 117, 121),
-                        Color.FromArgb(20, 137, 139), Color.FromArgb(46, 166, 165), Color.FromArgb(12, 103, 106), Color.FromArgb(215, 231, 218), Color.FromArgb(38, 27, 72, 76),
-                        "Segoe UI", 9F, 22F, 9, 11, 36, 42, 40, 4, 9, 18, 22, 1, 2, 145, 95, 195);
-                case ZarpaThemePreset.Pueblo:
-                    return Create(Color.FromArgb(246, 226, 137), Color.FromArgb(255, 244, 185), Color.FromArgb(239, 200, 56), Color.FromArgb(0, 140, 149),
-                        Color.FromArgb(0, 112, 120), Color.FromArgb(91, 100, 76), Color.FromArgb(82, 53, 28), Color.FromArgb(117, 88, 55),
-                        Color.FromArgb(0, 115, 124), Color.FromArgb(0, 151, 157), Color.FromArgb(0, 82, 91), Color.FromArgb(240, 206, 83), Color.FromArgb(44, 55, 25, 17),
-                        "Segoe UI", 9F, 22F, 7, 9, 35, 41, 39, 4, 8, 17, 22, 1, 2, 140, 90, 190);
                 default:
                     return Create(Color.FromArgb(247, 248, 252), Color.White, Color.FromArgb(242, 244, 250), Color.FromArgb(234, 236, 246),
                         Color.FromArgb(224, 227, 238), Color.FromArgb(188, 193, 211), Color.FromArgb(28, 29, 36), Color.FromArgb(103, 107, 124),
@@ -330,10 +338,7 @@ namespace ZarpaSuite.Controls
                 preset == ZarpaThemePreset.OceanTeal || preset == ZarpaThemePreset.EmeraldForest ||
                 preset == ZarpaThemePreset.RoseQuartz || preset == ZarpaThemePreset.LavenderMist ||
                 preset == ZarpaThemePreset.MidnightNavy || preset == ZarpaThemePreset.NordFrost ||
-                preset == ZarpaThemePreset.Aubergine || preset == ZarpaThemePreset.Marlboro ||
-                preset == ZarpaThemePreset.Camel || preset == ZarpaThemePreset.MarlboroGold ||
-                preset == ZarpaThemePreset.Lucky || preset == ZarpaThemePreset.Winston ||
-                preset == ZarpaThemePreset.Virginia || preset == ZarpaThemePreset.Pueblo;
+                preset == ZarpaThemePreset.Aubergine || preset == ZarpaThemePreset.Marlboro;
         }
 
         private static ZarpaPresetDefinition Create(Color canvas, Color surface, Color raised, Color overlay,
@@ -371,6 +376,7 @@ namespace ZarpaSuite.Controls
     {
         private readonly Action changed;
         private ZarpaThemePreset preset;
+        private ZarpaDensity density = ZarpaDensity.Compact;
         private Color canvas, surface, surfaceRaised, surfaceOverlay;
         private Color border, borderStrong, text, textMuted;
         private Color accent, accentHover, accentPressed, selection;
@@ -393,6 +399,20 @@ namespace ZarpaSuite.Controls
 
         [Category("Tema"), DefaultValue(ZarpaThemePreset.ZarpaLight)]
         public ZarpaThemePreset Preset { get { return preset; } set { ApplyPreset(value); } }
+
+        [Category("Métricas"), DefaultValue(ZarpaDensity.Compact)]
+        public ZarpaDensity Density
+        {
+            get { return density; }
+            set
+            {
+                if (density == value) return;
+                density = value;
+                if (density != ZarpaDensity.Custom)
+                    ApplyDensityMetrics(CurrentPresetDefinition());
+                Changed();
+            }
+        }
 
         [Category("Superficies")]
         public Color Canvas { get { return canvas; } set { canvas = value; Changed(); } }
@@ -446,24 +466,24 @@ namespace ZarpaSuite.Controls
         [Category("Tipografía"), DefaultValue(22F)]
         public float HeadingFontSize { get { return headingFontSize; } set { headingFontSize = Clamp(value, 12F, 40F); Changed(); } }
 
-        [Category("Métricas"), DefaultValue(4)]
-        public int SpacingSmall { get { return spacingSmall; } set { spacingSmall = Clamp(value, 2, 12); Changed(); } }
-        [Category("Métricas"), DefaultValue(8)]
-        public int SpacingMedium { get { return spacingMedium; } set { spacingMedium = Clamp(value, 4, 24); Changed(); } }
-        [Category("Métricas"), DefaultValue(16)]
-        public int SpacingLarge { get { return spacingLarge; } set { spacingLarge = Clamp(value, 8, 40); Changed(); } }
-        [Category("Métricas"), DefaultValue(34)]
-        public int ControlHeight { get { return controlHeight; } set { controlHeight = Clamp(value, 24, 56); Changed(); } }
+        [Category("Métricas"), DefaultValue(3)]
+        public int SpacingSmall { get { return spacingSmall; } set { spacingSmall = Clamp(value, 2, 12); MarkCustomDensity(); Changed(); } }
+        [Category("Métricas"), DefaultValue(6)]
+        public int SpacingMedium { get { return spacingMedium; } set { spacingMedium = Clamp(value, 4, 24); MarkCustomDensity(); Changed(); } }
+        [Category("Métricas"), DefaultValue(12)]
+        public int SpacingLarge { get { return spacingLarge; } set { spacingLarge = Clamp(value, 8, 40); MarkCustomDensity(); Changed(); } }
+        [Category("Métricas"), DefaultValue(32)]
+        public int ControlHeight { get { return controlHeight; } set { controlHeight = Clamp(value, 24, 56); MarkCustomDensity(); Changed(); } }
         [Category("Métricas"), DefaultValue(8)]
         public int CornerRadius { get { return cornerRadius; } set { cornerRadius = Clamp(value, 0, 16); Changed(); } }
         [Category("Métricas"), DefaultValue(10)]
         public int GroupCornerRadius { get { return groupCornerRadius; } set { groupCornerRadius = Clamp(value, 0, 20); Changed(); } }
-        [Category("Métricas"), DefaultValue(40)]
-        public int HeaderHeight { get { return headerHeight; } set { headerHeight = Clamp(value, 32, 64); Changed(); } }
-        [Category("Métricas"), DefaultValue(38)]
-        public int TabHeight { get { return tabHeight; } set { tabHeight = Clamp(value, 30, 52); Changed(); } }
-        [Category("Métricas"), DefaultValue(22)]
-        public int IconSize { get { return iconSize; } set { iconSize = Clamp(value, 16, 32); Changed(); } }
+        [Category("Métricas"), DefaultValue(36)]
+        public int HeaderHeight { get { return headerHeight; } set { headerHeight = Clamp(value, 32, 64); MarkCustomDensity(); Changed(); } }
+        [Category("Métricas"), DefaultValue(34)]
+        public int TabHeight { get { return tabHeight; } set { tabHeight = Clamp(value, 30, 52); MarkCustomDensity(); Changed(); } }
+        [Category("Métricas"), DefaultValue(20)]
+        public int IconSize { get { return iconSize; } set { iconSize = Clamp(value, 16, 32); MarkCustomDensity(); Changed(); } }
         [Category("Métricas"), DefaultValue(1)]
         public int BorderThickness { get { return borderThickness; } set { borderThickness = Clamp(value, 1, 3); Changed(); } }
         [Category("Métricas"), DefaultValue(2)]
@@ -495,12 +515,6 @@ namespace ZarpaSuite.Controls
                 case ZarpaThemePreset.NordFrost:
                 case ZarpaThemePreset.Aubergine:
                 case ZarpaThemePreset.Marlboro:
-                case ZarpaThemePreset.Camel:
-                case ZarpaThemePreset.MarlboroGold:
-                case ZarpaThemePreset.Lucky:
-                case ZarpaThemePreset.Winston:
-                case ZarpaThemePreset.Virginia:
-                case ZarpaThemePreset.Pueblo:
                     ApplySharedPreset(ZarpaPresetCatalog.Get(value));
                     break;
                 case ZarpaThemePreset.Graphite:
@@ -528,15 +542,9 @@ namespace ZarpaSuite.Controls
             fontFamily = shared == null ? "Segoe UI" : shared.FontFamily;
             fontSize = shared == null ? 9F : shared.FontSize;
             headingFontSize = shared == null ? 22F : shared.HeadingFontSize;
-            spacingSmall = shared == null ? 4 : shared.SpacingSmall;
-            spacingMedium = shared == null ? 8 : shared.SpacingMedium;
-            spacingLarge = shared == null ? 16 : shared.SpacingLarge;
-            controlHeight = shared == null ? 32 : shared.ControlHeight;
             cornerRadius = value == ZarpaThemePreset.HighContrast ? 0 : shared == null ? 6 : shared.CornerRadius;
             groupCornerRadius = value == ZarpaThemePreset.HighContrast ? 0 : shared == null ? 8 : shared.GroupCornerRadius;
-            headerHeight = shared == null ? 40 : shared.HeaderHeight;
-            tabHeight = shared == null ? 38 : shared.TabHeight;
-            iconSize = shared == null ? 22 : shared.IconSize;
+            ApplyDensityMetrics(shared);
             borderThickness = shared == null ? 1 : shared.BorderThickness;
             shadowDepth = value == ZarpaThemePreset.HighContrast ? 0 : shared == null ? 2 : shared.ShadowDepth;
             motionEnabled = value != ZarpaThemePreset.HighContrast;
@@ -561,10 +569,81 @@ namespace ZarpaSuite.Controls
                 value.AccentPressed, value.Selection, value.Shadow);
         }
 
+        private ZarpaPresetDefinition CurrentPresetDefinition()
+        {
+            return ZarpaPresetCatalog.IsCatalogPreset(preset) ? ZarpaPresetCatalog.Get(preset) : null;
+        }
+
+        private void ApplyDensityMetrics(ZarpaPresetDefinition value)
+        {
+            if (density == ZarpaDensity.Custom) return;
+
+            int baseSmall = value == null ? 4 : value.SpacingSmall;
+            int baseMedium = value == null ? 8 : value.SpacingMedium;
+            int baseLarge = value == null ? 16 : value.SpacingLarge;
+            int baseControl = value == null ? 32 : value.ControlHeight;
+            int baseHeader = value == null ? 40 : value.HeaderHeight;
+            int baseTab = value == null ? 38 : value.TabHeight;
+            int baseIcon = value == null ? 22 : value.IconSize;
+
+            switch (density)
+            {
+                case ZarpaDensity.UltraCompact:
+                    spacingSmall = Math.Max(2, baseSmall - 2);
+                    spacingMedium = Math.Max(4, baseMedium - 4);
+                    spacingLarge = Math.Max(8, baseLarge - 8);
+                    controlHeight = Math.Max(26, baseControl - 6);
+                    headerHeight = Math.Max(32, baseHeader - 8);
+                    tabHeight = Math.Max(30, baseTab - 8);
+                    iconSize = Math.Max(16, baseIcon - 4);
+                    break;
+                case ZarpaDensity.Spacious:
+                    spacingSmall = Math.Min(12, baseSmall + 2);
+                    spacingMedium = Math.Min(24, baseMedium + 4);
+                    spacingLarge = Math.Min(40, baseLarge + 8);
+                    controlHeight = Math.Min(56, baseControl + 6);
+                    headerHeight = Math.Min(64, baseHeader + 8);
+                    tabHeight = Math.Min(52, baseTab + 6);
+                    iconSize = Math.Min(32, baseIcon + 2);
+                    break;
+                case ZarpaDensity.Comfortable:
+                    spacingSmall = baseSmall;
+                    spacingMedium = baseMedium;
+                    spacingLarge = baseLarge;
+                    controlHeight = baseControl;
+                    headerHeight = baseHeader;
+                    tabHeight = baseTab;
+                    iconSize = baseIcon;
+                    break;
+                default:
+                    spacingSmall = Math.Max(2, baseSmall - 1);
+                    spacingMedium = Math.Max(4, baseMedium - 2);
+                    spacingLarge = Math.Max(8, baseLarge - 4);
+                    controlHeight = Math.Max(28, baseControl - 2);
+                    headerHeight = Math.Max(34, baseHeader - 4);
+                    tabHeight = Math.Max(30, baseTab - 4);
+                    iconSize = Math.Max(16, baseIcon - 2);
+                    break;
+            }
+        }
+
+        private void MarkCustomDensity()
+        {
+            if (density != ZarpaDensity.Custom) density = ZarpaDensity.Custom;
+        }
+
+        private bool ShouldSerializeSpacingSmall() { return density == ZarpaDensity.Custom; }
+        private bool ShouldSerializeSpacingMedium() { return density == ZarpaDensity.Custom; }
+        private bool ShouldSerializeSpacingLarge() { return density == ZarpaDensity.Custom; }
+        private bool ShouldSerializeControlHeight() { return density == ZarpaDensity.Custom; }
+        private bool ShouldSerializeHeaderHeight() { return density == ZarpaDensity.Custom; }
+        private bool ShouldSerializeTabHeight() { return density == ZarpaDensity.Custom; }
+        private bool ShouldSerializeIconSize() { return density == ZarpaDensity.Custom; }
+
         private void Changed() { if (changed != null) changed(); }
         private static int Clamp(int value, int min, int max) { return value < min ? min : value > max ? max : value; }
         private static float Clamp(float value, float min, float max) { return value < min ? min : value > max ? max : value; }
-        public override string ToString() { return preset + " · Zarpa Design System"; }
+        public override string ToString() { return preset + " · " + density + " · Zarpa Design System"; }
     }
 
     [ToolboxItem(true)]
@@ -584,6 +663,9 @@ namespace ZarpaSuite.Controls
 
         [Category("Tema"), DefaultValue(ZarpaThemePreset.ZarpaLight)]
         public ZarpaThemePreset Preset { get { return theme.Preset; } set { theme.Preset = value; } }
+
+        [Category("Diseño"), DefaultValue(ZarpaDensity.Compact)]
+        public ZarpaDensity Density { get { return theme.Density; } set { theme.Density = value; } }
 
         [Category("Tema")]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Content)]
@@ -734,6 +816,26 @@ namespace ZarpaSuite.Controls
                 rootControl = null;
             }
             base.Dispose(disposing);
+        }
+    }
+
+    internal static class ZarpaDensityMetrics
+    {
+        internal static int Select(ZarpaThemeTokens theme, int ultraCompact, int compact,
+            int comfortable, int spacious)
+        {
+            if (theme == null) return compact;
+            switch (theme.Density)
+            {
+                case ZarpaDensity.UltraCompact: return ultraCompact;
+                case ZarpaDensity.Comfortable: return comfortable;
+                case ZarpaDensity.Spacious: return spacious;
+                case ZarpaDensity.Custom:
+                    if (theme.ControlHeight <= 28) return ultraCompact;
+                    if (theme.ControlHeight >= 38) return spacious;
+                    return theme.ControlHeight >= 34 ? comfortable : compact;
+                default: return compact;
+            }
         }
     }
 

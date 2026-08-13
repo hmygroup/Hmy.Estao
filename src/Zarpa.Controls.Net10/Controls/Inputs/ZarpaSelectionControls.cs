@@ -293,7 +293,9 @@ namespace ZarpaSuite.Controls
             list.EndUpdate();
             ToolStripControlHost host = (ToolStripControlHost)dropDown.Items[0];
             Rectangle anchorBounds = GetInputBounds();
-            host.Size = new Size(Math.Max(anchorBounds.Width - 2, 220), Math.Min(8, Math.Max(1, items.Count)) * Math.Max(24, Font.Height + 10) + 4);
+            host.Size = new Size(Math.Max(anchorBounds.Width - 2, 220),
+                Math.Min(8, Math.Max(1, items.Count)) * Math.Max(Theme.ControlHeight,
+                    Font.Height + Theme.SpacingMedium * 2) + Theme.SpacingSmall);
             list.Size = host.Size;
             popupController.Show(this, anchorBounds);
         }

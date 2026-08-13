@@ -86,6 +86,7 @@ namespace ZarpaSuite.Controls
         private readonly Label groupLabel;
         private readonly ComboBox groupColumn;
         private readonly DataGridView grid;
+        private readonly ZarpaScrollBar gridScrollBar;
         private readonly Panel pager;
         private readonly Button previousButton;
         private readonly Button nextButton;
@@ -109,6 +110,7 @@ namespace ZarpaSuite.Controls
         private int filteredCount;
         private bool rebuilding;
         private bool autoGenerateColumns = true;
+        private bool synchronizingGridScroll;
         private ZarpaDataGridState viewState;
         private string emptyText = "No hay datos para mostrar.";
         private string errorText = "No fue posible cargar los datos.";
@@ -146,6 +148,9 @@ namespace ZarpaSuite.Controls
             grid.RowHeadersVisible = false;
             grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             grid.AccessibleName = "Tabla de datos";
+            gridScrollBar = new ZarpaScrollBar { Width = 9, WheelChange = 3, TabStop = false };
+            gridScrollBar.ValueChanged += GridScrollBarValueChanged;
+            grid.Controls.Add(gridScrollBar);
 
             pager = new Panel { Dock = DockStyle.Bottom, Height = 42 };
             previousButton = new Button { Text = "Anterior", FlatStyle = FlatStyle.Flat, AccessibleName = "Pagina anterior" };
@@ -180,6 +185,10 @@ namespace ZarpaSuite.Controls
             grid.CellContentClick += GridCellContentClick;
             grid.CellPainting += GridCellPainting;
             grid.RowPrePaint += GridRowPrePaint;
+            grid.Scroll += GridScrolled;
+            grid.Layout += GridLayoutChanged;
+            grid.RowsAdded += GridRowsChanged;
+            grid.RowsRemoved += GridRowsChanged;
             grid.SelectionChanged += delegate { if (SelectionChanged != null) SelectionChanged(this, EventArgs.Empty); };
             grid.DataError += delegate(object sender, DataGridViewDataErrorEventArgs e) { e.ThrowException = false; };
             ApplyTheme(theme);
@@ -333,11 +342,13 @@ namespace ZarpaSuite.Controls
             grid.ColumnHeadersHeight = Math.Max(32, theme.ControlHeight + theme.SpacingSmall);
             grid.RowTemplate.Height = Math.Max(30, theme.ControlHeight);
             grid.Font = Font;
+            gridScrollBar.ApplyTheme(theme);
             foreach (Control control in filterBar.Controls) ThemeToolbarControl(control);
             foreach (Control control in pager.Controls) ThemeToolbarControl(control);
             filterBar.Height = theme.ControlHeight + theme.SpacingMedium + theme.BorderThickness;
             pager.Height = theme.ControlHeight + theme.SpacingMedium + theme.BorderThickness;
             PerformLayout();
+            UpdateGridScrollBar();
             grid.Invalidate();
         }
 
@@ -361,6 +372,64 @@ namespace ZarpaSuite.Controls
             nextButton.SetBounds(pager.Width - theme.SpacingMedium - 84, pagerY, 84, theme.ControlHeight);
             pageSizeBox.SetBounds(nextButton.Left - gap - 64, pagerY, 64, theme.ControlHeight);
             pageLabel.SetBounds(previousButton.Right + gap, pagerY, Math.Max(80, pageSizeBox.Left - previousButton.Right - gap * 2), theme.ControlHeight);
+            UpdateGridScrollBar();
+        }
+
+        private void GridScrolled(object sender, ScrollEventArgs e)
+        {
+            UpdateGridScrollBar();
+        }
+
+        private void GridLayoutChanged(object sender, LayoutEventArgs e)
+        {
+            UpdateGridScrollBar();
+        }
+
+        private void GridRowsChanged(object sender, EventArgs e)
+        {
+            UpdateGridScrollBar();
+        }
+
+        private void UpdateGridScrollBar()
+        {
+            if (gridScrollBar == null || synchronizingGridScroll || grid.IsDisposed) return;
+            VScrollBar native = FindGridVerticalScrollBar();
+            synchronizingGridScroll = true;
+            try
+            {
+                bool visible = native != null && native.Visible;
+                gridScrollBar.Visible = visible;
+                if (!visible) return;
+                gridScrollBar.Bounds = native.Bounds;
+                int viewport = Math.Max(1, native.LargeChange);
+                int content = Math.Max(viewport, native.Maximum - native.Minimum + 1);
+                gridScrollBar.SetRange(content, viewport);
+                gridScrollBar.Enabled = native.Enabled && content > viewport;
+                gridScrollBar.Value = native.Value - native.Minimum;
+                gridScrollBar.BringToFront();
+            }
+            finally { synchronizingGridScroll = false; }
+        }
+
+        private void GridScrollBarValueChanged(object sender, EventArgs e)
+        {
+            if (synchronizingGridScroll) return;
+            VScrollBar native = FindGridVerticalScrollBar();
+            if (native == null || !native.Visible) return;
+            int maximum = Math.Max(native.Minimum, native.Maximum - native.LargeChange + 1);
+            int next = Math.Max(native.Minimum, Math.Min(maximum,
+                native.Minimum + gridScrollBar.Value));
+            if (native.Value != next) native.Value = next;
+        }
+
+        private VScrollBar FindGridVerticalScrollBar()
+        {
+            foreach (Control child in grid.Controls)
+            {
+                VScrollBar candidate = child as VScrollBar;
+                if (candidate != null) return candidate;
+            }
+            return null;
         }
 
         protected override void Dispose(bool disposing)

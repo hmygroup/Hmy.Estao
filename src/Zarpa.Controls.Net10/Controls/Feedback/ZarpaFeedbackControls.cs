@@ -48,7 +48,7 @@ namespace ZarpaSuite.Controls
         public ZarpaBanner()
         {
             theme = new ZarpaThemeTokens(Invalidate);
-            Height = 64; MinimumSize = new Size(240, 52);
+            Height = BannerLogicalHeight; MinimumSize = new Size(240, 46);
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
             TabStop = true;
         }
@@ -59,7 +59,7 @@ namespace ZarpaSuite.Controls
         [Category("Comportamiento"), DefaultValue(true)] public bool Dismissible { get { return dismissible; } set { dismissible = value; Invalidate(); } }
         public event EventHandler ActionClick;
         public event EventHandler Dismissed;
-        public void ApplyTheme(ZarpaThemeTokens value) { if (value == null) return; theme = value; Font = new Font(theme.FontFamily, theme.FontSize); BackColor = theme.Canvas; ForeColor = theme.Text; Height = Math.Max(58, theme.ControlHeight + theme.SpacingLarge + theme.SpacingMedium); Invalidate(); }
+        public void ApplyTheme(ZarpaThemeTokens value) { if (value == null) return; theme = value; Font = new Font(theme.FontFamily, theme.FontSize); BackColor = theme.Canvas; ForeColor = theme.Text; Height = BannerLogicalHeight; Invalidate(); }
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e); Color accent = ZarpaFeedbackPalette.Get(theme, kind);
@@ -81,6 +81,7 @@ namespace ZarpaSuite.Controls
         protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); if (e.Button != MouseButtons.Left || !Enabled) return; if (actionBounds.Contains(e.Location)) { if (ActionClick != null) ActionClick(this, EventArgs.Empty); } else if (closeBounds.Contains(e.Location)) Dismiss(); }
         protected override void OnKeyDown(KeyEventArgs e) { base.OnKeyDown(e); if ((e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space) && !string.IsNullOrEmpty(actionText)) { if (ActionClick != null) ActionClick(this, EventArgs.Empty); e.Handled = true; } else if (e.KeyCode == Keys.Escape && dismissible) { Dismiss(); e.Handled = true; } }
         private void Dismiss() { if (!Visible) return; Visible = false; if (Dismissed != null) Dismissed(this, EventArgs.Empty); }
+        private int BannerLogicalHeight { get { return ZarpaDensityMetrics.Select(theme, 48, 54, 64, 76); } }
     }
 
     [ToolboxItem(true)]
@@ -91,8 +92,8 @@ namespace ZarpaSuite.Controls
         public ZarpaProgressBar()
         {
             theme = new ZarpaThemeTokens(Invalidate);
-            Height = 8;
-            MinimumSize = new Size(80, 6);
+            Height = ProgressLogicalHeight;
+            MinimumSize = new Size(80, 5);
             animator = new ZarpaPaintAnimator(this, AdvanceFrame);
             SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
             BackColor = Color.Transparent;
@@ -100,7 +101,7 @@ namespace ZarpaSuite.Controls
         [Category("Estado"), DefaultValue(0)] public int Value { get { return value; } set { this.value = Math.Max(0, Math.Min(100, value)); Invalidate(); } }
         [Category("Estado"), DefaultValue(false)] public bool Indeterminate { get { return indeterminate; } set { indeterminate = value; UpdateTimer(); Invalidate(); } }
         [Category("Apariencia")] public Color FillColor { get { return fillColor; } set { fillColor = value; Invalidate(); } }
-        public void ApplyTheme(ZarpaThemeTokens value) { if (value == null) return; theme = value; UpdateTimer(); Invalidate(); }
+        public void ApplyTheme(ZarpaThemeTokens value) { if (value == null) return; theme = value; Height = ProgressLogicalHeight; UpdateTimer(); Invalidate(); }
         protected override void Dispose(bool disposing) { if (disposing) animator.Dispose(); base.Dispose(disposing); }
         protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); UpdateTimer(); }
         protected override void OnEnabledChanged(EventArgs e) { base.OnEnabledChanged(e); UpdateTimer(); }
@@ -122,6 +123,7 @@ namespace ZarpaSuite.Controls
             if (!dirty.IsEmpty) Invalidate(dirty);
         }
         private Rectangle GetAnimatedBounds() { return new Rectangle((int)Math.Round(offset) - 80, 0, 80, Math.Max(0, Height)); }
+        private int ProgressLogicalHeight { get { return ZarpaDensityMetrics.Select(theme, 5, 6, 8, 10); } }
         protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); Rectangle track = new Rectangle(0, 0, Width - 1, Height - 1); ZarpaPaint.FillRounded(e.Graphics, theme.SurfaceRaised, track, Height / 2); Rectangle fill = indeterminate ? GetAnimatedBounds() : new Rectangle(0, 0, (int)((Width - 1) * value / 100F), Height - 1); e.Graphics.SetClip(track); ZarpaPaint.FillRounded(e.Graphics, fillColor.IsEmpty ? theme.Accent : fillColor, fill, Height / 2); e.Graphics.ResetClip(); }
     }
 

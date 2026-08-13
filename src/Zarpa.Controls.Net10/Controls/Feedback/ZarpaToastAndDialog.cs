@@ -115,7 +115,8 @@ namespace ZarpaSuite.Controls
         private void UpdateOverlayState()
         {
             int count = Math.Min(MaxVisible, toasts.Count);
-            Height = count == 0 ? 1 : theme.SpacingMedium + count * 76 + Math.Max(0, count - 1) * theme.SpacingMedium + theme.SpacingMedium;
+            Height = count == 0 ? 1 : theme.SpacingMedium + count * ToastCardHeight +
+                Math.Max(0, count - 1) * theme.SpacingMedium + theme.SpacingMedium;
             Visible = count > 0;
             timer.Enabled = Visible && !IsDesignerHosted;
             PositionOverlay();
@@ -141,8 +142,12 @@ namespace ZarpaSuite.Controls
             float eased = 1F - (float)Math.Pow(1F - Math.Max(0F, Math.Min(1F, progress)), 3F);
             int slide = (int)Math.Round((1F - eased) * 36F);
             return new Rectangle(theme.SpacingMedium + slide,
-                theme.SpacingMedium + index * (76 + theme.SpacingMedium),
-                Width - theme.SpacingLarge, 76);
+                theme.SpacingMedium + index * (ToastCardHeight + theme.SpacingMedium),
+                Width - theme.SpacingLarge, ToastCardHeight);
+        }
+        private int ToastCardHeight
+        {
+            get { return ZarpaDensityMetrics.Select(theme, 68, 72, 76, 88); }
         }
         private bool HasMovingToasts()
         {
@@ -197,7 +202,7 @@ namespace ZarpaSuite.Controls
         }
     }
 
-    public enum ZarpaDialogButtons { Ok, OkCancel, YesNo }
+    public enum ZarpaDialogButtons { Ok, OkCancel, YesNo, YesNoCancel }
 
     public static class ZarpaDialog
     {
@@ -215,13 +220,25 @@ namespace ZarpaSuite.Controls
     {
         internal ZarpaDialogForm(string title, string message, ZarpaFeedbackKind kind, ZarpaDialogButtons buttons, ZarpaThemeTokens value)
         {
-            ZarpaThemeTokens theme = value ?? new ZarpaThemeTokens(null); Text = title ?? string.Empty; FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; ShowInTaskbar = false; MaximizeBox = false; MinimizeBox = false; ClientSize = new Size(470, 210); BackColor = theme.Surface; ForeColor = theme.Text; Font = new Font(theme.FontFamily, theme.FontSize);
+            ZarpaThemeTokens theme = value ?? new ZarpaThemeTokens(null); int clientHeight = ZarpaDensityMetrics.Select(theme, 184, 196, 210, 230); int buttonTop = clientHeight - theme.ControlHeight - 18; Text = title ?? string.Empty; FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; ShowInTaskbar = false; MaximizeBox = false; MinimizeBox = false; ClientSize = new Size(470, clientHeight); BackColor = theme.Surface; ForeColor = theme.Text; Font = new Font(theme.FontFamily, theme.FontSize);
             Label icon = new Label { Location = new Point(26, 28), Size = new Size(42, 42), Font = new Font(Font.FontFamily, 22F), ForeColor = ZarpaFeedbackPalette.Get(theme, kind), TextAlign = ContentAlignment.MiddleCenter, Text = kind == ZarpaFeedbackKind.Error ? "!" : kind == ZarpaFeedbackKind.Warning ? "!" : "i" };
             Label heading = new Label { Location = new Point(84, 25), Size = new Size(354, 30), Font = new Font(Font, FontStyle.Bold), Text = title ?? string.Empty };
-            Label body = new Label { Location = new Point(84, 60), Size = new Size(354, 78), ForeColor = theme.TextMuted, Text = message ?? string.Empty };
+            Label body = new Label { Location = new Point(84, 60), Size = new Size(354, Math.Max(48, buttonTop - 72)), ForeColor = theme.TextMuted, Text = message ?? string.Empty };
             Controls.Add(icon); Controls.Add(heading); Controls.Add(body);
-            Button primary = CreateButton(theme, buttons == ZarpaDialogButtons.YesNo ? "Sí" : "Aceptar", DialogResult.OK, true); primary.Location = new Point(338, 158); Controls.Add(primary); AcceptButton = primary;
-            if (buttons != ZarpaDialogButtons.Ok) { Button secondary = CreateButton(theme, buttons == ZarpaDialogButtons.YesNo ? "No" : "Cancelar", DialogResult.Cancel, false); secondary.Location = new Point(220, 158); Controls.Add(secondary); CancelButton = secondary; }
+            bool yesNo = buttons == ZarpaDialogButtons.YesNo || buttons == ZarpaDialogButtons.YesNoCancel;
+            Button primary = CreateButton(theme, yesNo ? "Sí" : "Aceptar", yesNo ? DialogResult.Yes : DialogResult.OK, true); primary.Location = new Point(338, buttonTop); Controls.Add(primary); AcceptButton = primary;
+            if (buttons != ZarpaDialogButtons.Ok)
+            {
+                bool cancelPair = buttons == ZarpaDialogButtons.YesNoCancel;
+                Button secondary = CreateButton(theme, yesNo ? "No" : "Cancelar", yesNo ? DialogResult.No : DialogResult.Cancel, false); secondary.Location = new Point(220, buttonTop); Controls.Add(secondary);
+                Button cancelButton = secondary;
+                if (cancelPair)
+                {
+                    Button cancel = CreateButton(theme, "Cancelar", DialogResult.Cancel, false); cancel.Location = new Point(102, buttonTop); Controls.Add(cancel);
+                    cancelButton = cancel;
+                }
+                CancelButton = cancelButton;
+            }
         }
         private static Button CreateButton(ZarpaThemeTokens theme, string text, DialogResult result, bool primary) { return new Button { Size = new Size(104, theme.ControlHeight), Text = text, DialogResult = result, FlatStyle = FlatStyle.Flat, BackColor = primary ? theme.Accent : theme.SurfaceRaised, ForeColor = primary ? Color.White : theme.Text, FlatAppearance = { BorderColor = primary ? theme.Accent : theme.Border } }; }
     }

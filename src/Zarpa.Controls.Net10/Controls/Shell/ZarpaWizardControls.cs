@@ -79,7 +79,7 @@ namespace ZarpaSuite.Controls
         {
             theme = new ZarpaThemeTokens(Invalidate);
             steps = new ZarpaWizardStepCollection(this);
-            Height = 78;
+            Height = StepperLogicalHeight;
             Dock = DockStyle.Top;
             Font = new Font("Segoe UI", 9F);
             TabStop = true;
@@ -127,7 +127,7 @@ namespace ZarpaSuite.Controls
             Font = new Font(theme.FontFamily, theme.FontSize);
             BackColor = theme.Surface;
             ForeColor = theme.Text;
-            Height = S(78);
+            Height = S(StepperLogicalHeight);
             Invalidate();
         }
 
@@ -158,8 +158,8 @@ namespace ZarpaSuite.Controls
             e.Graphics.Clear(theme.Surface);
             if (steps.Count == 0) return;
             int stepWidth = Math.Max(S(120), Width / steps.Count);
-            float circleSize = dpiScale.X(28F);
-            float circleTop = dpiScale.X(8F);
+            float circleSize = dpiScale.X(theme.IconSize + 6F);
+            float circleTop = dpiScale.X(theme.SpacingMedium);
             float lineY = circleTop + circleSize / 2F;
             for (int index = 0; index < steps.Count; index++)
             {
@@ -196,14 +196,17 @@ namespace ZarpaSuite.Controls
                 int left = index * stepWidth + S(8);
                 int width = Math.Min(stepWidth - S(16), Width - left - S(4));
                 Color text = step.Enabled ? theme.Text : theme.TextMuted;
+                int titleTop = (int)Math.Round(circleTop + circleSize) + S(2);
                 using (Font titleFont = new Font(Font, selected ? FontStyle.Bold : FontStyle.Regular))
                     TextRenderer.DrawText(e.Graphics, step.Text, titleFont,
-                        new Rectangle(left, S(39), Math.Max(1, width), S(19)), text,
+                        new Rectangle(left, titleTop, Math.Max(1, width), S(19)), text,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-                if (stepWidth >= S(180))
+                int descriptionTop = titleTop + S(18);
+                if (stepWidth >= S(180) && Height - descriptionTop >= S(14))
                     using (Font detailFont = new Font(Font.FontFamily, Math.Max(7F, Font.Size - 1F)))
                         TextRenderer.DrawText(e.Graphics, step.Description, detailFont,
-                            new Rectangle(left, S(57), Math.Max(1, width), S(17)), theme.TextMuted,
+                            new Rectangle(left, descriptionTop, Math.Max(1, width),
+                                Math.Min(S(17), Height - descriptionTop - S(1))), theme.TextMuted,
                             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
             using (Pen border = new Pen(theme.Border, dpiScale.Stroke(1)))
@@ -255,7 +258,11 @@ namespace ZarpaSuite.Controls
         {
             base.OnHandleCreated(e);
             ZarpaDpiScale value = ZarpaDpiScale.FromControl(this);
-            if (value.DpiX != dpiScale.DpiX || value.DpiY != dpiScale.DpiY) { dpiScale = value; Height = S(78); }
+            if (value.DpiX != dpiScale.DpiX || value.DpiY != dpiScale.DpiY)
+            {
+                dpiScale = value;
+                Height = S(StepperLogicalHeight);
+            }
         }
 
         private int HitTest(Point point)
@@ -276,6 +283,11 @@ namespace ZarpaSuite.Controls
                 selected.Page.SetActive(true);
                 selected.Page.BringToFront();
             }
+        }
+
+        private int StepperLogicalHeight
+        {
+            get { return ZarpaDensityMetrics.Select(theme, 64, 70, 78, 90); }
         }
 
         private int S(int logicalPixels) { return dpiScale.X(logicalPixels); }
@@ -299,7 +311,7 @@ namespace ZarpaSuite.Controls
         public ZarpaChoiceCard()
         {
             theme = new ZarpaThemeTokens(Invalidate);
-            Size = new Size(320, 118);
+            Size = new Size(320, ChoiceLogicalHeight);
             Font = new Font("Segoe UI", 9F);
             TabStop = true;
             AccessibleRole = AccessibleRole.PushButton;
@@ -326,6 +338,7 @@ namespace ZarpaSuite.Controls
             Font = new Font(theme.FontFamily, theme.FontSize);
             BackColor = theme.Canvas;
             ForeColor = theme.Text;
+            Height = ChoiceLogicalHeight;
             Invalidate();
         }
 
@@ -380,6 +393,11 @@ namespace ZarpaSuite.Controls
         {
             base.OnKeyDown(e);
             if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space) { OnClick(EventArgs.Empty); e.Handled = true; e.SuppressKeyPress = true; }
+        }
+
+        private int ChoiceLogicalHeight
+        {
+            get { return ZarpaDensityMetrics.Select(theme, 92, 104, 118, 134); }
         }
     }
 }
