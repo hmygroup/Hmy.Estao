@@ -368,18 +368,26 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
         }
 
         using var linePath = CreateSmoothPath(mapped);
-
-        using var fillPath = (GraphicsPath)linePath.Clone();
-        fillPath.AddLine(mapped[^1].X, plot.Bottom, mapped[0].X, plot.Bottom);
-        fillPath.CloseFigure();
-        using (var fill = new LinearGradientBrush(plot, Color.FromArgb(92, color), Color.FromArgb(8, color), 90F))
-            graphics.FillPath(fill, fillPath);
-        using (var pen = new Pen(color, 1.8F))
+        try
+        {
+            using var fillPath = (GraphicsPath)linePath.Clone();
+            fillPath.AddLine(mapped[^1].X, plot.Bottom, mapped[0].X, plot.Bottom);
+            fillPath.CloseFigure();
+            using (var fill = new LinearGradientBrush(plot, Color.FromArgb(92, color), Color.FromArgb(8, color), 90F))
+                graphics.FillPath(fill, fillPath);
+            using var pen = new Pen(color, 1.8F);
             graphics.DrawPath(pen, linePath);
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            // GDI+ can reject a complex path even when its individual points
+            // are valid. Preserve the data and keep painting responsive by
+            // falling back to a simple polyline instead of propagating an
+            // exception from the WinForms paint loop.
+            using var pen = new Pen(color, 1.8F);
+            graphics.DrawLines(pen, mapped.ToArray());
+        }
 
-        using var brush = new SolidBrush(color);
-        foreach (var point in mapped)
-            graphics.FillEllipse(brush, new RectangleF(point.X - 2.5F, point.Y - 2.5F, 5F, 5F));
     }
 
     private void EnsureMappedPoints(Rectangle plot)
@@ -400,7 +408,7 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
             var visiblePoints = series.IsTarget || series.IsProjection
                 ? series.Points
                 : series.Points.Where(point => point.Timestamp >= rangeStart && point.Timestamp <= _rangeEnd);
-            return visiblePoints
+            var mapped = visiblePoints
                 .OrderBy(point => point.Timestamp)
                 .Where(point => !double.IsNaN(point.Value) && !double.IsInfinity(point.Value))
                 .Select(point =>
@@ -413,10 +421,46 @@ internal sealed class ZarpaUsageChart : Control, IZarpaThemeAware
                     return new PointF(x, y);
                 })
                 .ToArray();
+            return ReducePointsForRendering(mapped, plot);
         })
             .ToArray();
         _mappedPlot = plot;
         _mappedPointsDirty = false;
+    }
+
+    /// <summary>
+    /// Reduces high-frequency persisted history to the detail this chart can
+    /// display. A smooth line only needs one value per horizontal pixel; using
+    /// the latest sample prevents repeated refreshes in the same column from
+    /// creating small loops or an apparent second line.
+    /// </summary>
+    private static PointF[] ReducePointsForRendering(IReadOnlyList<PointF> points, Rectangle plot)
+    {
+        if (points.Count <= 2) return points.ToArray();
+
+        var result = new List<PointF>(Math.Min(points.Count, Math.Max(2, plot.Width)));
+        var index = 0;
+        while (index < points.Count)
+        {
+            var column = Math.Clamp((int)MathF.Floor(points[index].X - plot.Left), 0, plot.Width - 1);
+            var latest = points[index];
+            do
+            {
+                latest = points[index++];
+            }
+            while (index < points.Count &&
+                   Math.Clamp((int)MathF.Floor(points[index].X - plot.Left), 0, plot.Width - 1) == column);
+
+            AddIfDistinct(result, latest);
+        }
+
+        return result.ToArray();
+    }
+
+    private static void AddIfDistinct(List<PointF> points, PointF point)
+    {
+        if (points.Count == 0 || points[^1] != point)
+            points.Add(point);
     }
 
     private Rectangle GetPlotRectangle() => new(

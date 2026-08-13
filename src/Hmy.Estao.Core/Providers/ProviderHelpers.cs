@@ -160,13 +160,29 @@ internal static partial class ProviderHelpers
 
     public static double? PercentUsedFrom(JsonElement element, bool percentRemaining = false)
     {
-        var direct = FirstNumber(element, "percentUsed", "usedPercent", "usagePercent", "usage_percent", "used_percent", "percent_used");
+        // WHAM names these fields with an explicit "_percent" suffix and
+        // returns 1 for one percent. Do not treat that value as the normalized
+        // fraction 1.0 (which would incorrectly display 100%).
+        var explicitPercent = FirstNumber(element, "usage_percent", "used_percent", "percent_used");
+        if (explicitPercent is not null)
+        {
+            return NormalizeWholePercent(explicitPercent.Value);
+        }
+
+        var direct = FirstNumber(element, "percentUsed", "usedPercent", "usagePercent");
         if (direct is not null)
         {
             return NormalizePercent(direct.Value);
         }
 
-        var remaining = FirstNumber(element, "percentRemaining", "remainingPercent", "percent_remaining", "remaining_percent");
+        var explicitRemainingPercent = FirstNumber(element, "percent_remaining", "remaining_percent");
+        if (explicitRemainingPercent is not null)
+        {
+            var normalized = NormalizeWholePercent(explicitRemainingPercent.Value);
+            return normalized is null ? null : 1 - normalized;
+        }
+
+        var remaining = FirstNumber(element, "percentRemaining", "remainingPercent");
         if (remaining is not null)
         {
             var normalized = NormalizePercent(remaining.Value);
@@ -191,6 +207,16 @@ internal static partial class ProviderHelpers
         }
 
         return Math.Clamp(value > 1 ? value / 100 : value, 0, 1);
+    }
+
+    private static double? NormalizeWholePercent(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return null;
+        }
+
+        return Math.Clamp(value / 100D, 0, 1);
     }
 
     public static JsonElement? FindProperty(JsonElement element, params string[] names)

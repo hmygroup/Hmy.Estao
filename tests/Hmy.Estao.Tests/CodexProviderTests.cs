@@ -52,6 +52,22 @@ public sealed class CodexProviderTests
     }
 
     [Fact]
+    public void interprets_one_used_percent_from_wham_as_one_percent()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "rate_limit": {
+            "primary_window": { "used_percent": 1, "limit_window_seconds": 604800 }
+          }
+        }
+        """);
+
+        var snapshot = CodexProvider.ParseRateLimits(document.RootElement, "oauth", null);
+
+        Assert.Equal(.01D, Assert.Single(snapshot.Windows).PercentUsed);
+    }
+
+    [Fact]
     public void ignores_null_secondary_when_primary_is_the_weekly_window()
     {
         using var document = JsonDocument.Parse("""
