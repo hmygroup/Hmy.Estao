@@ -1,12 +1,27 @@
-using Hmy.Estao.App;
 using Hmy.Estao.Core;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Refresh;
 
-ApplicationConfiguration.Initialize();
-Application.SetHighDpiMode(HighDpiMode.SystemAware);
+namespace Hmy.Estao.App;
 
-using var context = new TrayApplicationContext(
-    new ConfigStore(),
-    serviceFactory: store => new UsageRefreshService(store));
-Application.Run(context);
+internal static class Program
+{
+    [STAThread]
+    private static void Main(string[] args)
+    {
+        ApplicationConfiguration.Initialize();
+        Application.SetHighDpiMode(HighDpiMode.SystemAware);
+
+        if (args.Contains("--settings", StringComparer.OrdinalIgnoreCase))
+        {
+            using var settings = new SettingsForm(new ConfigStore());
+            Application.Run(settings);
+            return;
+        }
+
+        using var context = new TrayApplicationContext(
+            new ConfigStore(),
+            serviceFactory: store => new UsageRefreshService(store));
+        Application.Run(context);
+    }
+}

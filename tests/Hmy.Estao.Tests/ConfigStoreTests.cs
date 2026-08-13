@@ -1,5 +1,6 @@
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Platform;
+using Hmy.Estao.Core.Harnesses;
 using System.Text.Json;
 
 namespace Hmy.Estao.Tests;
@@ -18,6 +19,13 @@ public sealed class ConfigStoreTests
         Assert.True(config.TaskbarOverlay.MoveEnabled);
         Assert.Equal(["percentage", "pie", "reset"], config.TaskbarOverlay.Controls);
         Assert.All(config.Providers, provider => Assert.False(provider.UsageColors.Enabled));
+        Assert.Equal(HarnessCatalog.All.Length, config.HarnessManager.Profiles.Count);
+        Assert.All(config.HarnessManager.Profiles, profile => Assert.Contains(HarnessFeatureIds.Skills, profile.Features));
+        Assert.All(config.HarnessManager.Profiles, profile => Assert.DoesNotContain(HarnessFeatureIds.Settings, profile.Features));
+        var codex = Assert.Single(config.HarnessManager.Profiles, profile => profile.Id == "codex");
+        Assert.Contains(HarnessFeatureIds.Rules, codex.Features);
+        Assert.Contains(HarnessFeatureIds.Plugins, codex.Features);
+        Assert.Equal(2, config.HarnessManager.SchemaVersion);
     }
 
     [Fact]
@@ -47,6 +55,30 @@ public sealed class ConfigStoreTests
         Assert.Equal("secret", copilot.ApiKey);
         Assert.Equal("github.example.com", copilot.EnterpriseHost);
         Assert.False(copilot.Pacing.Enabled);
+    }
+
+    [Fact]
+    public async Task legacy_harness_profiles_gain_new_codex_rules_and_plugins_once()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "config.json");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(path, """
+            {
+              "harnessManager": {
+                "profiles": [
+                  { "id": "codex", "enabled": true, "scope": "personal", "basePath": "C:\\Users\\test", "features": ["skills", "mcp"] }
+                ]
+              }
+            }
+            """);
+
+        var config = await new ConfigStore(path).LoadAsync();
+
+        var codex = Assert.Single(config.HarnessManager.Profiles, profile => profile.Id == "codex");
+        Assert.Contains(HarnessFeatureIds.Rules, codex.Features);
+        Assert.Contains(HarnessFeatureIds.Plugins, codex.Features);
+        Assert.Equal(2, config.HarnessManager.SchemaVersion);
     }
 
     [Fact]

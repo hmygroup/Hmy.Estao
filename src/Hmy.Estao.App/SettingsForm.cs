@@ -15,9 +15,11 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly Panel _providersPage = SettingsPage();
     private readonly Panel _usagePage = SettingsPage();
     private readonly Panel _taskbarPage = SettingsPage();
+    private readonly Panel _harnessPage = SettingsPage();
     private readonly ZarpaSettingsSectionSeparator _generalSeparator = PageSeparator();
     private readonly ZarpaSettingsSectionSeparator _providersSeparator = PageSeparator();
     private readonly ZarpaSettingsSectionSeparator _usageSeparator = PageSeparator();
+    private readonly ZarpaSettingsSectionSeparator _harnessSeparator = PageSeparator();
     private readonly ZarpaSettingsScrollHost _providersViewport = new() { Dock = DockStyle.Fill };
     private readonly ZarpaNavigationView _navigation = new()
     {
@@ -35,6 +37,7 @@ public sealed class SettingsForm : ZarpaModernForm
     private readonly TaskbarOverlaySettingsPanel _overlaySettings = new();
     private readonly UsageColorsSettingsPanel _usageColorsSettings = new();
     private readonly RefreshSettingsPanel _refreshSettings = new();
+    private readonly HarnessManagerSettingsPanel _harnessManagerSettings = new();
     private readonly ZarpaSettingsSection _appearanceSettings = new("Appearance",
         "Choose the visual style used by the settings window, popover, and taskbar overlay.");
     private readonly ZarpaSettingsSection _providersSettings = new("Provider accounts",
@@ -82,10 +85,13 @@ public sealed class SettingsForm : ZarpaModernForm
         _providersPage.Controls.Add(_providersSettings);
         _usagePage.Controls.Add(_usageColorsSettings);
         _taskbarPage.Controls.Add(_overlaySettings);
+        _harnessPage.Controls.Add(_harnessManagerSettings);
         // DockStyle.Top lays out the last control first. Add the page separators
         // between the sections in reverse visual order so every major area has
         // a clear boundary while the whole form remains one scrollable surface.
         _providersHost.Controls.Add(_taskbarPage);
+        _providersHost.Controls.Add(_harnessSeparator);
+        _providersHost.Controls.Add(_harnessPage);
         _providersHost.Controls.Add(_usageSeparator);
         _providersHost.Controls.Add(_usagePage);
         _providersHost.Controls.Add(_providersSeparator);
@@ -113,7 +119,9 @@ public sealed class SettingsForm : ZarpaModernForm
         _backdropOpacity.ValueChanged += (_, _) =>
             _theme.BackdropOpacity = (int)_backdropOpacity.Value;
         Load += async (_, _) => await LoadAsync().ConfigureAwait(true);
-        _theme.Theme.MotionEnabled = false;
+        // Keep the navigation transition enabled. ZarpaSettingsScrollHost
+        // coalesces the expensive content reflow while the nav is resizing.
+        _theme.Theme.MotionEnabled = true;
         _theme.Attach(this);
     }
 
@@ -138,6 +146,12 @@ public sealed class SettingsForm : ZarpaModernForm
             Text = "Taskbar overlay",
             IconKey = "ic_fluent_window_24_regular"
         });
+        _navigation.Items.Add(new ZarpaNavigationItem
+        {
+            Key = "harness-hub",
+            Text = "Harness hub",
+            IconKey = "ic_fluent_archive_24_regular"
+        });
         _navigation.SelectedItemChanged += (_, _) => NavigateToSelectedArea();
         _navigation.SelectedIndex = 0;
     }
@@ -149,6 +163,7 @@ public sealed class SettingsForm : ZarpaModernForm
             "providers" => _providersPage,
             "usage-alerts" => _usagePage,
             "taskbar-overlay" => _taskbarPage,
+            "harness-hub" => _harnessPage,
             _ => _generalPage
         };
         _providersViewport.ScrollTo(page);
@@ -182,7 +197,9 @@ public sealed class SettingsForm : ZarpaModernForm
             _providersSeparator,
             _usagePage,
             _usageSeparator,
-            _taskbarPage
+            _taskbarPage,
+            _harnessSeparator,
+            _harnessPage
         };
         for (var index = 0; index < visualOrder.Length; index++)
             _providersHost.Controls.SetChildIndex(visualOrder[index], visualOrder.Length - index - 1);
@@ -239,6 +256,7 @@ public sealed class SettingsForm : ZarpaModernForm
             _overlaySettings.LoadConfig(_config);
             _usageColorsSettings.LoadConfig(_config);
             _refreshSettings.LoadConfig(_config);
+            _harnessManagerSettings.LoadConfig(_config);
             var selectedTheme = ZarpaThemePreferences.DisplayName(ZarpaThemePreferences.Parse(_config.Theme));
             _themePicker.SelectedIndex = Math.Max(0, _themePicker.Items.IndexOf(selectedTheme));
             var selectedBackdrop = ZarpaThemePreferences.ParseBackdrop(_config.BackdropStyle).ToString();
@@ -287,6 +305,7 @@ public sealed class SettingsForm : ZarpaModernForm
             _overlaySettings.Apply(_config.TaskbarOverlay);
             _usageColorsSettings.Apply(_config);
             _refreshSettings.Apply(_config.Refresh);
+            _harnessManagerSettings.Apply(_config.HarnessManager);
             _config.Theme = ZarpaThemePreferences.Parse(_themePicker.Text).ToString();
             _config.BackdropStyle = ZarpaThemePreferences.ParseBackdrop(_backdropPicker.Text).ToString();
             _config.BackdropOpacity = (int)_backdropOpacity.Value;

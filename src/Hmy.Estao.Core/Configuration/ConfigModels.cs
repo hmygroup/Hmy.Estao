@@ -28,12 +28,48 @@ public sealed class EstaoConfig
     [JsonPropertyName("refresh")]
     public RefreshConfig Refresh { get; set; } = new();
 
+    [JsonPropertyName("harnessManager")]
+    public HarnessManagerConfig HarnessManager { get; set; } = new();
+
     // Kept only so older config files can be migrated. New configs persist
     // pacing inside each provider, where different accounts can have different
     // budgets and notification preferences.
     [JsonPropertyName("pacing")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public PacingConfig? LegacyPacing { get; set; }
+}
+
+public sealed class HarnessManagerConfig
+{
+    [JsonPropertyName("schemaVersion")]
+    public int SchemaVersion { get; set; }
+
+    [JsonPropertyName("hubPath")]
+    public string HubPath { get; set; } = string.Empty;
+
+    [JsonPropertyName("author")]
+    public string Author { get; set; } = string.Empty;
+
+    [JsonPropertyName("profiles")]
+    public List<HarnessProfileConfig> Profiles { get; set; } = [];
+}
+
+public sealed class HarnessProfileConfig
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    [JsonPropertyName("scope")]
+    public string Scope { get; set; } = "personal";
+
+    [JsonPropertyName("basePath")]
+    public string BasePath { get; set; } = string.Empty;
+
+    [JsonPropertyName("features")]
+    public List<string> Features { get; set; } = [];
 }
 
 public sealed class RefreshConfig

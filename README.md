@@ -11,8 +11,30 @@ Estao is a Windows tray-first .NET 10 port of CodexBar's provider-usage concept 
 - Explicit config import only; Estao does not silently copy CodexBar config files.
 - Initial providers: Codex, Claude, GitHub Copilot, OpenCode.
 - CLI: `estao usage` and `estao config` commands.
+- Harness configuration manager for Codex, Claude Code, GitHub Copilot, and OpenCode.
+- Department package hub backed by a local, mapped, or UNC shared folder.
 - Cookie-based providers use saved manual cookies; cookies are stored locally with Windows DPAPI protection instead of reading Chrome/Edge browser databases.
 - Background target: hidden tray idle under 75 MB private memory, 0% sustained CPU, and adaptive 2-30 minute refreshes.
+
+## Harness hub
+
+Open **Settings > Harness hub** to configure everything in one place:
+
+- Set a personal or project base folder for every harness.
+- Enable or disable instructions, skills, agents, prompts/commands, MCP servers, hooks, Codex command rules, plugin registrations, and raw settings independently per harness.
+- Publish an immutable, versioned `.estao` package to a shared department folder.
+- Scan the source before publishing to see the exact files, sizes, redactions, and feature counts that will enter the package.
+- Browse and download packages, or install them directly into another harness.
+- Before installation, select the target harness, toggle its enabled state and check exactly which feature types to install; the lower review grid shows every artifact and whether it will be copied, converted, renamed, or skipped.
+- Convert portable content between harness-native locations and formats. For example, Codex `AGENTS.md`, Agent Skills, TOML agents, and MCP configuration are translated to Copilot instructions, skills, Markdown agents, and `mcp-config.json`.
+
+Every installation creates a restore point under `<base>/.estao/backups`. Use **Restore...** for the target harness to recover overwritten files and remove files created by that installation. Older Estao backups are also listed as partial restore points, although they cannot identify newly created files. Estao recognizes both current `~/.agents/skills` and legacy `~/.codex/skills` user skills, excluding bundled `.system` skills. Codex plugin packages contain marketplace and enablement declarations rather than the downloaded plugin cache. Known literal credentials are replaced with environment placeholders during publishing, reparse-point directories are not followed, payload paths and hashes are verified, and hooks/rules/plugins/raw settings are not copied across harnesses when no safe mapping exists. Raw settings are available but disabled by default.
+
+For a direct settings-only launch, use:
+
+```powershell
+Hmy.Estao.exe --settings
+```
 
 ## Deferred
 

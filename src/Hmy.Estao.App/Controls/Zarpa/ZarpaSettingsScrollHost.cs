@@ -11,7 +11,9 @@ internal sealed class ZarpaSettingsScrollHost : Panel, IZarpaThemeAware
 {
     private readonly Panel _content = new();
     private readonly ZarpaScrollBar _scrollBar = new() { Orientation = Orientation.Vertical, Dock = DockStyle.Right, Width = 9 };
+    private readonly System.Windows.Forms.Timer _scrollRangeTimer;
     private ZarpaThemeTokens? _theme;
+    private bool _updatingScrollRange;
 
     public ZarpaSettingsScrollHost()
     {
@@ -22,15 +24,21 @@ internal sealed class ZarpaSettingsScrollHost : Panel, IZarpaThemeAware
         _content.Dock = DockStyle.None;
         _content.Margin = Padding.Empty;
         _content.Padding = Padding.Empty;
+        _scrollRangeTimer = new System.Windows.Forms.Timer { Interval = 50 };
+        _scrollRangeTimer.Tick += (_, _) =>
+        {
+            _scrollRangeTimer.Stop();
+            UpdateScrollRange();
+        };
         _content.ControlAdded += (_, args) =>
         {
             if (args.Control is null) return;
             WireMouseWheel(args.Control);
-            args.Control.SizeChanged += (_, _) => UpdateScrollRange();
-            UpdateScrollRange();
+            args.Control.SizeChanged += (_, _) => RequestScrollRangeUpdate();
+            RequestScrollRangeUpdate();
         };
-        _content.ControlRemoved += (_, _) => UpdateScrollRange();
-        _content.Layout += (_, _) => UpdateScrollRange();
+        _content.ControlRemoved += (_, _) => RequestScrollRangeUpdate();
+        _content.Layout += (_, _) => RequestScrollRangeUpdate();
         _scrollBar.ValueChanged += (_, _) => LayoutContent();
         Controls.Add(_content);
         Controls.Add(_scrollBar);
@@ -49,7 +57,7 @@ internal sealed class ZarpaSettingsScrollHost : Panel, IZarpaThemeAware
             value.AutoSize = true;
             _content.Controls.Add(value);
             WireMouseWheel(value);
-            UpdateScrollRange();
+            RequestScrollRangeUpdate();
         }
     }
 
@@ -90,7 +98,11 @@ internal sealed class ZarpaSettingsScrollHost : Panel, IZarpaThemeAware
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
-        UpdateScrollRange();
+        // The side navigation animates its width. Reflowing the full settings
+        // tree on every animation tick is the expensive part, so coalesce the
+        // range recalculation until the resize burst has settled.
+        LayoutContent();
+        RequestScrollRangeUpdate();
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
@@ -101,25 +113,47 @@ internal sealed class ZarpaSettingsScrollHost : Panel, IZarpaThemeAware
 
     private void UpdateScrollRange()
     {
-        if (IsDisposed || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
-        var viewportWidth = Math.Max(1, ClientSize.Width - _scrollBar.Width);
-        var contentHeight = _content.Padding.Vertical;
-        foreach (Control child in _content.Controls)
-        {
-            if (child.Visible) contentHeight += child.Height + child.Margin.Vertical;
-        }
+        if (_updatingScrollRange || IsDisposed || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
 
-        _content.Width = viewportWidth;
-        _content.Height = Math.Max(ClientSize.Height, contentHeight);
-        _scrollBar.SetRange(_content.Height, ClientSize.Height);
-        LayoutContent();
+        _updatingScrollRange = true;
+        var contentWidthChanged = false;
+        try
+        {
+            var viewportWidth = Math.Max(1, ClientSize.Width - _scrollBar.Width);
+            var contentHeight = _content.Padding.Vertical;
+            foreach (Control child in _content.Controls)
+            {
+                if (child.Visible) contentHeight += child.Height + child.Margin.Vertical;
+            }
+
+            if (_content.Width != viewportWidth)
+            {
+                _content.Width = viewportWidth;
+                contentWidthChanged = true;
+            }
+            var targetContentHeight = Math.Max(ClientSize.Height, contentHeight);
+            if (_content.Height != targetContentHeight) _content.Height = targetContentHeight;
+            _scrollBar.SetRange(_content.Height, ClientSize.Height);
+            LayoutContent();
+        }
+        finally
+        {
+            _updatingScrollRange = false;
+            if (contentWidthChanged) RequestScrollRangeUpdate();
+        }
+    }
+
+    private void RequestScrollRangeUpdate()
+    {
+        if (_updatingScrollRange || IsDisposed || !IsHandleCreated) return;
+        _scrollRangeTimer.Stop();
+        _scrollRangeTimer.Start();
     }
 
     private void LayoutContent()
     {
         _content.Left = 0;
         _content.Top = -_scrollBar.Value;
-        _content.Width = Math.Max(1, ClientSize.Width - _scrollBar.Width);
     }
 
     private void ScrollBy(int delta)
@@ -135,4 +169,15 @@ internal sealed class ZarpaSettingsScrollHost : Panel, IZarpaThemeAware
     }
 
     private void ChildMouseWheel(object? sender, MouseEventArgs e) => ScrollBy(e.Delta);
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _scrollRangeTimer.Stop();
+            _scrollRangeTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
 }

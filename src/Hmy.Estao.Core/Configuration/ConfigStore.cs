@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Hmy.Estao.Core.Harnesses;
 using Hmy.Estao.Core.Platform;
 
 namespace Hmy.Estao.Core.Configuration;
@@ -66,6 +67,7 @@ public sealed class ConfigStore
             Version = 1,
             Theme = "Graphite",
             BackdropStyle = "None",
+            HarnessManager = HarnessCatalog.CreateDefaultManager(),
             TaskbarOverlay = new TaskbarOverlayConfig
             {
                 Enabled = true,
@@ -87,6 +89,8 @@ public sealed class ConfigStore
         config.Providers ??= [];
         config.TaskbarOverlay ??= new TaskbarOverlayConfig();
         config.Refresh ??= new RefreshConfig();
+        config.HarnessManager ??= HarnessCatalog.CreateDefaultManager();
+        NormalizeHarnessManager(config.HarnessManager);
         config.Refresh.IntervalMinutes = RefreshIntervalCatalog.Minutes.Contains(config.Refresh.IntervalMinutes)
             ? config.Refresh.IntervalMinutes
             : 15;
@@ -143,6 +147,52 @@ public sealed class ConfigStore
         config.LegacyPacing = null;
 
         return config;
+    }
+
+    private static void NormalizeHarnessManager(HarnessManagerConfig manager)
+    {
+        var migrateCodexFeatureCoverage = manager.SchemaVersion < 2;
+        manager.HubPath = manager.HubPath?.Trim() ?? string.Empty;
+        manager.Author = string.IsNullOrWhiteSpace(manager.Author) ? Environment.UserName : manager.Author.Trim();
+        manager.Profiles ??= [];
+
+        manager.Profiles = manager.Profiles
+            .Where(profile => HarnessCatalog.IsSupported(profile.Id))
+            .GroupBy(profile => HarnessCatalog.NormalizeId(profile.Id), StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
+
+        foreach (var definition in HarnessCatalog.All)
+        {
+            if (manager.Profiles.All(profile => !string.Equals(
+                    HarnessCatalog.NormalizeId(profile.Id), definition.Id, StringComparison.Ordinal)))
+                manager.Profiles.Add(HarnessCatalog.CreateDefaultProfile(definition.Id));
+        }
+
+        foreach (var profile in manager.Profiles)
+        {
+            profile.Id = HarnessCatalog.NormalizeId(profile.Id);
+            profile.Scope = string.Equals(profile.Scope?.Trim(), "project", StringComparison.OrdinalIgnoreCase)
+                ? "project"
+                : "personal";
+            profile.BasePath = string.IsNullOrWhiteSpace(profile.BasePath)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+                : profile.BasePath.Trim();
+            profile.Features ??= [];
+            profile.Features = profile.Features
+                .Select(feature => feature.Trim().ToLowerInvariant())
+                .Where(feature => HarnessCatalog.Supports(profile.Id, feature))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (migrateCodexFeatureCoverage && string.Equals(profile.Id, "codex", StringComparison.Ordinal))
+            {
+                if (!profile.Features.Contains(HarnessFeatureIds.Rules, StringComparer.Ordinal))
+                    profile.Features.Add(HarnessFeatureIds.Rules);
+                if (!profile.Features.Contains(HarnessFeatureIds.Plugins, StringComparer.Ordinal))
+                    profile.Features.Add(HarnessFeatureIds.Plugins);
+            }
+        }
+        manager.SchemaVersion = 2;
     }
 
     private static void NormalizePacing(PacingConfig pacing)
