@@ -155,6 +155,40 @@ public sealed class ConfigStore
         manager.HubPath = manager.HubPath?.Trim() ?? string.Empty;
         manager.Author = string.IsNullOrWhiteSpace(manager.Author) ? Environment.UserName : manager.Author.Trim();
         manager.Profiles ??= [];
+        manager.Repositories ??= [];
+        manager.Environments ??= [];
+
+        // Promote the original single hub path into the multi-repository model.
+        // HubPath remains populated so older clients can still open the catalog.
+        if (manager.Repositories.Count == 0 && !string.IsNullOrWhiteSpace(manager.HubPath))
+        {
+            manager.Repositories.Add(new HarnessRepositoryConfig
+            {
+                Id = "company",
+                Name = "Company Hub",
+                Path = manager.HubPath,
+                Enabled = true
+            });
+        }
+        manager.Repositories = manager.Repositories
+            .Where(repository => !string.IsNullOrWhiteSpace(repository.Path))
+            .Select((repository, index) =>
+            {
+                repository.Id = Slug(string.IsNullOrWhiteSpace(repository.Id) ? repository.Name : repository.Id,
+                    $"repository-{index + 1}");
+                repository.Name = string.IsNullOrWhiteSpace(repository.Name) ? repository.Id : repository.Name.Trim();
+                repository.Path = repository.Path.Trim();
+                return repository;
+            })
+            .GroupBy(repository => repository.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        manager.DefaultRepositoryId = manager.Repositories.Any(repository =>
+            string.Equals(repository.Id, manager.DefaultRepositoryId, StringComparison.OrdinalIgnoreCase))
+            ? manager.DefaultRepositoryId.Trim()
+            : manager.Repositories.FirstOrDefault(repository => repository.Enabled)?.Id ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(manager.HubPath) && manager.Repositories.Count > 0)
+            manager.HubPath = manager.Repositories[0].Path;
 
         manager.Profiles = manager.Profiles
             .Where(profile => HarnessCatalog.IsSupported(profile.Id))
@@ -192,7 +226,52 @@ public sealed class ConfigStore
                     profile.Features.Add(HarnessFeatureIds.Plugins);
             }
         }
-        manager.SchemaVersion = 2;
+        foreach (var profile in manager.Profiles)
+        {
+            if (manager.Environments.Any(environment => string.Equals(
+                    HarnessCatalog.NormalizeId(environment.HarnessId), profile.Id, StringComparison.Ordinal))) continue;
+            manager.Environments.Add(new HarnessEnvironmentConfig
+            {
+                Id = $"{profile.Id}-{profile.Scope}",
+                Name = $"{HarnessCatalog.Get(profile.Id).DisplayName} — {profile.Scope}",
+                HarnessId = profile.Id,
+                Scope = profile.Scope,
+                RootPath = profile.BasePath,
+                Managed = false
+            });
+        }
+        manager.Environments = manager.Environments
+            .Where(environment => HarnessCatalog.IsSupported(environment.HarnessId))
+            .Select((environment, index) =>
+            {
+                environment.HarnessId = HarnessCatalog.NormalizeId(environment.HarnessId);
+                environment.Scope = string.Equals(environment.Scope, "project", StringComparison.OrdinalIgnoreCase)
+                    ? "project"
+                    : "personal";
+                environment.RootPath = string.IsNullOrWhiteSpace(environment.RootPath)
+                    ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+                    : environment.RootPath.Trim();
+                environment.Id = Slug(environment.Id,
+                    $"{environment.HarnessId}-{environment.Scope}-{index + 1}");
+                environment.Name = string.IsNullOrWhiteSpace(environment.Name)
+                    ? $"{HarnessCatalog.Get(environment.HarnessId).DisplayName} — {environment.Scope}"
+                    : environment.Name.Trim();
+                return environment;
+            })
+            .GroupBy(environment => environment.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        manager.SchemaVersion = 3;
+    }
+
+    private static string Slug(string? value, string fallback)
+    {
+        var characters = (value ?? string.Empty).Trim().ToLowerInvariant()
+            .Select(character => char.IsLetterOrDigit(character) ? character : '-')
+            .ToArray();
+        var result = string.Join('-', new string(characters)
+            .Split('-', StringSplitOptions.RemoveEmptyEntries));
+        return result.Length == 0 ? fallback : result;
     }
 
     private static void NormalizePacing(PacingConfig pacing)

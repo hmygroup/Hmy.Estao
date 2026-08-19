@@ -110,6 +110,7 @@ public sealed class SettingsForm : ZarpaModernForm
         _previewButton.Click += (_, _) => PreviewOverlay();
         _saveButton.Click += async (_, _) => await SaveAsync().ConfigureAwait(true);
         _overlaySettings.ResetPositionRequested += ResetOverlayPosition;
+        _harnessManagerSettings.OpenHubRequested += async (_, _) => await OpenHarnessHubAsync().ConfigureAwait(true);
         foreach (var preset in ZarpaThemePreferences.Available) _themePicker.Items.Add(ZarpaThemePreferences.DisplayName(preset));
         foreach (var backdrop in ZarpaThemePreferences.AvailableBackdrops) _backdropPicker.Items.Add(backdrop.ToString());
         _themePicker.SelectedIndexChanged += (_, _) =>
@@ -123,6 +124,18 @@ public sealed class SettingsForm : ZarpaModernForm
         // coalesces the expensive content reflow while the nav is resizing.
         _theme.Theme.MotionEnabled = true;
         _theme.Attach(this);
+    }
+
+    private async Task OpenHarnessHubAsync()
+    {
+        // Persist the current settings first so the dedicated workspace sees the
+        // same repository and harness paths the user is looking at here.
+        _harnessManagerSettings.Apply(_config.HarnessManager);
+        await _configStore.SaveAsync(_config).ConfigureAwait(true);
+        using var hub = new HarnessHubForm(_configStore);
+        hub.ShowDialog(this);
+        _config = await _configStore.LoadAsync().ConfigureAwait(true);
+        _harnessManagerSettings.LoadConfig(_config);
     }
 
     private void BuildSideNavigation()

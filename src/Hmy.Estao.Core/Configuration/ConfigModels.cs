@@ -52,6 +52,51 @@ public sealed class HarnessManagerConfig
 
     [JsonPropertyName("profiles")]
     public List<HarnessProfileConfig> Profiles { get; set; } = [];
+
+    [JsonPropertyName("repositories")]
+    public List<HarnessRepositoryConfig> Repositories { get; set; } = [];
+
+    [JsonPropertyName("defaultRepositoryId")]
+    public string DefaultRepositoryId { get; set; } = string.Empty;
+
+    [JsonPropertyName("environments")]
+    public List<HarnessEnvironmentConfig> Environments { get; set; } = [];
+}
+
+public sealed class HarnessRepositoryConfig
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = string.Empty;
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+}
+
+public sealed class HarnessEnvironmentConfig
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("harnessId")]
+    public string HarnessId { get; set; } = string.Empty;
+
+    [JsonPropertyName("scope")]
+    public string Scope { get; set; } = "personal";
+
+    [JsonPropertyName("rootPath")]
+    public string RootPath { get; set; } = string.Empty;
+
+    [JsonPropertyName("managed")]
+    public bool Managed { get; set; } = true;
 }
 
 public sealed class HarnessProfileConfig

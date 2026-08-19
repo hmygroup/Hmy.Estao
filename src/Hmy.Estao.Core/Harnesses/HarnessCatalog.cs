@@ -84,9 +84,18 @@ public static class HarnessCatalog
 
     public static HarnessManagerConfig CreateDefaultManager(string? userProfile = null) => new()
     {
-        SchemaVersion = 2,
+        SchemaVersion = 3,
         Author = Environment.UserName,
-        Profiles = All.Select(item => CreateDefaultProfile(item.Id, userProfile)).ToList()
+        Profiles = All.Select(item => CreateDefaultProfile(item.Id, userProfile)).ToList(),
+        Environments = All.Select(item => new HarnessEnvironmentConfig
+        {
+            Id = $"{item.Id}-personal",
+            Name = $"{item.DisplayName} — Personal",
+            HarnessId = item.Id,
+            Scope = "personal",
+            RootPath = userProfile ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Managed = false
+        }).ToList()
     };
 
     public static bool Supports(string harnessId, string featureId) =>

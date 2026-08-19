@@ -304,6 +304,7 @@ namespace ZarpaSuite.Controls
         private string descriptionText = string.Empty;
         private string iconKey = string.Empty;
         private string badgeText = string.Empty;
+        private string badgeStyle = "neutral";
         private bool selected;
         private bool hot;
         private bool pressed;
@@ -325,11 +326,28 @@ namespace ZarpaSuite.Controls
         public string DescriptionText { get { return descriptionText; } set { descriptionText = value ?? string.Empty; AccessibleDescription = descriptionText; Invalidate(); } }
         [Category("Contenido"), DefaultValue("")]
         public string BadgeText { get { return badgeText; } set { badgeText = value ?? string.Empty; Invalidate(); } }
+        [Category("Contenido"), DefaultValue("neutral")]
+        public string BadgeStyle { get { return badgeStyle; } set { badgeStyle = value ?? "neutral"; Invalidate(); } }
         [Category("Icono"), DefaultValue("")]
         [Editor("ZarpaSuite.Controls.Design.FluentIconPickerEditor, Zarpa.Controls", typeof(UITypeEditor))]
         public string IconKey { get { return iconKey; } set { iconKey = value ?? string.Empty; Invalidate(); } }
         [Category("Estado"), DefaultValue(false)]
-        public bool Selected { get { return selected; } set { selected = value; Invalidate(); } }
+        public bool Selected
+        {
+            get { return selected; }
+            set
+            {
+                if (selected == value) return;
+                selected = value;
+                Invalidate();
+                if (SelectedChanged != null) SelectedChanged(this, EventArgs.Empty);
+            }
+        }
+
+        [Category("Estado"), DefaultValue(false)]
+        public bool ToggleSelectionOnClick { get; set; }
+
+        public event EventHandler SelectedChanged;
 
         public void ApplyTheme(ZarpaThemeTokens value)
         {
@@ -347,11 +365,15 @@ namespace ZarpaSuite.Controls
             base.OnPaint(e);
             e.Graphics.Clear(ZarpaPaint.EffectiveBackColor(Parent));
             Rectangle card = new Rectangle(1, 1, Math.Max(1, Width - 3), Math.Max(1, Height - 3));
-            Color fill = selected ? theme.Selection : pressed ? theme.SurfaceRaised : hot ?
+            Color fill = selected ? ZarpaPaint.Blend(theme.Selection, theme.Accent, .28F) : pressed ? theme.SurfaceRaised : hot ?
                 ZarpaPaint.Blend(theme.Surface, theme.SurfaceRaised, .55F) : theme.Surface;
             ZarpaPaint.FillRounded(e.Graphics, fill, card, theme.GroupCornerRadius);
             ZarpaPaint.DrawRounded(e.Graphics, selected ? theme.Accent : hot ? theme.BorderStrong : theme.Border,
-                card, theme.GroupCornerRadius, selected ? 2F : 1F);
+                card, theme.GroupCornerRadius, selected ? 3F : 1F);
+            if (selected)
+                using (SolidBrush selectionStripe = new SolidBrush(theme.Accent))
+                    e.Graphics.FillRectangle(selectionStripe, card.Left, card.Top + theme.GroupCornerRadius,
+                        4, Math.Max(1, card.Height - theme.GroupCornerRadius * 2));
 
             Rectangle iconSurface = new Rectangle(18, 18, 46, 46);
             ZarpaPaint.FillRounded(e.Graphics, selected ? theme.Accent : theme.SurfaceRaised, iconSurface, theme.CornerRadius);
@@ -370,8 +392,12 @@ namespace ZarpaSuite.Controls
             if (badgeWidth > 0)
             {
                 Rectangle badge = new Rectangle(Width - badgeWidth - 16, 15, badgeWidth, 25);
-                ZarpaPaint.FillRounded(e.Graphics, theme.SurfaceRaised, badge, theme.CornerRadius);
-                TextRenderer.DrawText(e.Graphics, badgeText, Font, badge, theme.TextMuted,
+                Color badgeAccent = badgeStyle.Equals("success", StringComparison.OrdinalIgnoreCase) ? theme.Success :
+                    badgeStyle.Equals("accent", StringComparison.OrdinalIgnoreCase) ? theme.Accent : theme.TextMuted;
+                Color badgeSurface = badgeStyle.Equals("neutral", StringComparison.OrdinalIgnoreCase)
+                    ? theme.SurfaceRaised : ZarpaPaint.Blend(theme.Surface, badgeAccent, .14F);
+                ZarpaPaint.FillRounded(e.Graphics, badgeSurface, badge, theme.CornerRadius);
+                TextRenderer.DrawText(e.Graphics, badgeText, Font, badge, badgeAccent,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
             if (selected)
@@ -387,6 +413,11 @@ namespace ZarpaSuite.Controls
         protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hot = false; pressed = false; Invalidate(); }
         protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); if (Enabled && e.Button == MouseButtons.Left) { pressed = true; Focus(); Invalidate(); } }
         protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); bool click = pressed && ClientRectangle.Contains(e.Location); pressed = false; Invalidate(); if (click) OnClick(EventArgs.Empty); }
+        protected override void OnClick(EventArgs e)
+        {
+            base.OnClick(e);
+            if (ToggleSelectionOnClick && Enabled) Selected = !Selected;
+        }
         protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
         protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); pressed = false; Invalidate(); }
         protected override void OnKeyDown(KeyEventArgs e)

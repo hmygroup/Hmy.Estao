@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace ZarpaSuite.Controls
@@ -24,11 +25,13 @@ namespace ZarpaSuite.Controls
     public sealed class ZarpaToastManager : Component
     {
         private int defaultDuration = 4500, maxVisible = 4;
+        private bool animate;
         private readonly Dictionary<Control, ZarpaToastOverlay> overlays = new Dictionary<Control, ZarpaToastOverlay>();
         public ZarpaToastManager() { }
         public ZarpaToastManager(IContainer container) { if (container != null) container.Add(this); }
         [Category("Comportamiento"), DefaultValue(4500)] public int DefaultDuration { get { return defaultDuration; } set { defaultDuration = Math.Max(1000, value); } }
         [Category("Comportamiento"), DefaultValue(4)] public int MaxVisible { get { return maxVisible; } set { maxVisible = Math.Max(1, Math.Min(8, value)); } }
+        [Category("Comportamiento"), DefaultValue(false)] public bool Animate { get { return animate; } set { animate = value; } }
 
         public ZarpaToast Show(Control owner, string title, string message, ZarpaFeedbackKind kind)
         {
@@ -47,10 +50,17 @@ namespace ZarpaSuite.Controls
                 overlays[root] = overlay;
             }
             overlay.MaxVisible = maxVisible;
+            overlay.Animate = animate;
             if (theme != null) overlay.ApplyTheme(theme);
             overlay.BringToFront();
-            ZarpaToast toast = new ZarpaToast { Title = title ?? string.Empty, Message = message ?? string.Empty,
-                Kind = kind, ActionText = actionText ?? string.Empty, ExpiresAt = DateTime.UtcNow.AddMilliseconds(Math.Max(1000, duration)) };
+            ZarpaToast toast = new ZarpaToast
+            {
+                Title = title ?? string.Empty,
+                Message = message ?? string.Empty,
+                Kind = kind,
+                ActionText = actionText ?? string.Empty,
+                ExpiresAt = DateTime.UtcNow.AddMilliseconds(Math.Max(1000, duration))
+            };
             overlay.Add(toast);
             return toast;
         }
@@ -63,6 +73,7 @@ namespace ZarpaSuite.Controls
         private readonly Dictionary<ZarpaToast, float> toastProgress = new Dictionary<ZarpaToast, float>();
         private readonly Timer timer; private readonly ZarpaPaintAnimator motionAnimator; private ZarpaThemeTokens theme; private readonly List<Rectangle> closeBounds = new List<Rectangle>(), actionBounds = new List<Rectangle>();
         internal int MaxVisible { get; set; }
+        internal bool Animate { get; set; }
         internal ZarpaToastOverlay()
         {
             theme = new ZarpaThemeTokens(Invalidate); MaxVisible = 4; Width = 390; Height = 1;
@@ -97,13 +108,16 @@ namespace ZarpaSuite.Controls
             {
                 ZarpaToast toast = toasts[i]; Rectangle card = GetCardBounds(i, GetProgress(toast));
                 if (theme.ShadowDepth > 0) ZarpaPaint.FillRounded(e.Graphics, theme.Shadow, new Rectangle(card.X + theme.ShadowDepth, card.Y + theme.ShadowDepth, card.Width, card.Height), theme.CornerRadius);
-                ZarpaPaint.FillRounded(e.Graphics, theme.Surface, card, theme.CornerRadius); ZarpaPaint.DrawRounded(e.Graphics, theme.Border, card, theme.CornerRadius, theme.BorderThickness);
+                int toastRadius = Math.Max(8, theme.CornerRadius);
+                ZarpaPaint.FillRounded(e.Graphics, theme.SurfaceRaised, card, toastRadius);
+                ZarpaPaint.DrawRounded(e.Graphics, ZarpaPaint.Blend(theme.Border, theme.Accent, .28F), card, toastRadius, Math.Max(1, theme.BorderThickness));
                 Color accent = ZarpaFeedbackPalette.Get(theme, toast.Kind); Rectangle stripe = new Rectangle(card.Left, card.Top + theme.CornerRadius, 4, card.Height - theme.CornerRadius * 2); using (SolidBrush b = new SolidBrush(accent)) e.Graphics.FillRectangle(b, stripe);
                 Rectangle icon = new Rectangle(card.Left + 14, card.Top + 14, theme.IconSize, theme.IconSize); FluentIconCatalog.TryDraw(e.Graphics, ZarpaFeedbackPalette.Icon(toast.Kind), icon, accent, theme.IconSize - 1F);
                 Rectangle close = new Rectangle(card.Right - 30, card.Top + 8, 24, 24); closeBounds.Add(close); TextRenderer.DrawText(e.Graphics, "×", Font, close, theme.TextMuted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 int textLeft = icon.Right + 10; using (Font titleFont = new Font(Font, FontStyle.Bold)) TextRenderer.DrawText(e.Graphics, toast.Title, titleFont, new Rectangle(textLeft, card.Top + 10, card.Right - textLeft - 38, 20), theme.Text, TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
                 TextRenderer.DrawText(e.Graphics, toast.Message, Font, new Rectangle(textLeft, card.Top + 31, card.Right - textLeft - 12, 35), theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
-                Rectangle action = Rectangle.Empty; if (!string.IsNullOrEmpty(toast.ActionText)) { int aw = TextRenderer.MeasureText(toast.ActionText, Font).Width + 12; action = new Rectangle(card.Right - aw - 10, card.Bottom - 28, aw, 22); TextRenderer.DrawText(e.Graphics, toast.ActionText, Font, action, accent, TextFormatFlags.Right | TextFormatFlags.VerticalCenter); } actionBounds.Add(action);
+                Rectangle action = Rectangle.Empty; if (!string.IsNullOrEmpty(toast.ActionText)) { int aw = TextRenderer.MeasureText(toast.ActionText, Font).Width + 12; action = new Rectangle(card.Right - aw - 10, card.Bottom - 28, aw, 22); TextRenderer.DrawText(e.Graphics, toast.ActionText, Font, action, accent, TextFormatFlags.Right | TextFormatFlags.VerticalCenter); }
+                actionBounds.Add(action);
             }
         }
         protected override void OnMouseUp(MouseEventArgs e)
@@ -131,7 +145,7 @@ namespace ZarpaSuite.Controls
             BringToFront();
         }
         private bool IsDesignerHosted { get { return DesignMode || (Site != null && Site.DesignMode) || LicenseManager.UsageMode == LicenseUsageMode.Designtime; } }
-        private bool ShouldAnimate { get { return theme.MotionEnabled && !IsDesignerHosted; } }
+        private bool ShouldAnimate { get { return Animate && theme.MotionEnabled && !IsDesignerHosted; } }
         private float GetProgress(ZarpaToast toast)
         {
             float progress;
@@ -194,7 +208,11 @@ namespace ZarpaSuite.Controls
                 card.Width += Math.Max(0, theme.ShadowDepth);
                 card.Height += Math.Max(0, theme.ShadowDepth);
                 card.Intersect(ClientRectangle);
-                if (!card.IsEmpty) next.Union(card);
+                if (!card.IsEmpty)
+                {
+                    using (GraphicsPath path = ZarpaPaint.RoundedPath(card, Math.Max(8, theme.CornerRadius)))
+                        next.Union(path);
+                }
             }
             Region previous = Region;
             Region = next;

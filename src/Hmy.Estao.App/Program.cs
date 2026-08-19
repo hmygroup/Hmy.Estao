@@ -19,6 +19,22 @@ internal static class Program
             return;
         }
 
+        if (args.Contains("--harness-hub", StringComparer.OrdinalIgnoreCase))
+        {
+            using var hub = new HarnessHubForm(new ConfigStore());
+            Application.Run(hub);
+            return;
+        }
+
+        if (args.Contains("--harness-publish", StringComparer.OrdinalIgnoreCase))
+        {
+            var store = new ConfigStore();
+            var config = store.LoadAsync().GetAwaiter().GetResult();
+            using var publish = new HarnessPublishDialog(config.HarnessManager);
+            Application.Run(publish);
+            return;
+        }
+
         using var context = new TrayApplicationContext(
             new ConfigStore(),
             serviceFactory: store => new UsageRefreshService(store));

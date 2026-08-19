@@ -6,11 +6,14 @@ namespace Hmy.Estao.App.Controls.Zarpa;
 
 internal sealed class HarnessManagerSettingsPanel : Panel, IZarpaThemeAware
 {
+    public event EventHandler? OpenHubRequested;
     private readonly HarnessHubService _hubService = new();
     private readonly HarnessPackageInstaller _installer = new();
     private readonly HarnessRestoreService _restoreService = new();
     private readonly ZarpaSettingsSection _hubSection = new("Department hub",
         "Use a shared network folder as a versioned catalog. Packages never include known literal credentials.");
+    private readonly ZarpaSettingsSection _workspaceSection = new("Harness Hub workspace",
+        "Open the dedicated catalog and My Setup workspace for artifact discovery, publishing, drift review, and synchronization.");
     private readonly ZarpaSettingsSection _profilesSection = new("Harness profiles",
         "Each harness has its own enable switch, scope, base path and feature checkboxes. Save changes to apply the profile.");
     private readonly ZarpaSettingsSection _publishSection = new("Publish a configuration",
@@ -97,6 +100,10 @@ internal sealed class HarnessManagerSettingsPanel : Panel, IZarpaThemeAware
         Margin = Padding.Empty;
         Padding = Padding.Empty;
 
+        var openHub = Button("Open Harness Hub", ZarpaButtonStyle.Primary, 154);
+        openHub.Click += (_, _) => OpenHubRequested?.Invoke(this, EventArgs.Empty);
+        _workspaceSection.AddRow("Team workspace", "Catalog and desired-state management open in a resizable Zarpa window.", openHub, 240);
+
         var hubPathEditor = ZarpaSettingsLayout.Inline(_hubPath, BrowseButton(_hubPath));
         _hubSection.AddRow("Shared repository", "UNC paths and mapped network drives are supported.", hubPathEditor, 500);
         _hubSection.AddRow("Published by", "Shown in the package catalog so teammates know who owns the configuration.", _author, 360);
@@ -174,6 +181,8 @@ internal sealed class HarnessManagerSettingsPanel : Panel, IZarpaThemeAware
         Controls.Add(_profilesSection);
         Controls.Add(new ZarpaSettingsSectionSeparator());
         Controls.Add(_hubSection);
+        Controls.Add(new ZarpaSettingsSectionSeparator());
+        Controls.Add(_workspaceSection);
 
         _publish.Click += async (_, _) => await PublishAsync().ConfigureAwait(true);
         _previewSource.Click += async (_, _) => await PreviewSourceAsync().ConfigureAwait(true);
@@ -210,6 +219,24 @@ internal sealed class HarnessManagerSettingsPanel : Panel, IZarpaThemeAware
         config.HubPath = _hubPath.Value.Trim();
         config.Author = _author.Value.Trim();
         config.Profiles = HarnessCatalog.All.Select(item => _profileEditors[item.Id].ToConfig()).ToList();
+        if (!string.IsNullOrWhiteSpace(config.HubPath))
+        {
+            var repository = config.Repositories.FirstOrDefault(item => string.Equals(
+                item.Id, config.DefaultRepositoryId, StringComparison.OrdinalIgnoreCase))
+                ?? config.Repositories.FirstOrDefault();
+            if (repository is null)
+            {
+                repository = new HarnessRepositoryConfig
+                {
+                    Id = "company",
+                    Name = "Company Hub",
+                    Enabled = true
+                };
+                config.Repositories.Add(repository);
+                config.DefaultRepositoryId = repository.Id;
+            }
+            repository.Path = config.HubPath;
+        }
     }
 
     public void ApplyTheme(ZarpaThemeTokens value)

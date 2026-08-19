@@ -25,7 +25,9 @@ public sealed class ConfigStoreTests
         var codex = Assert.Single(config.HarnessManager.Profiles, profile => profile.Id == "codex");
         Assert.Contains(HarnessFeatureIds.Rules, codex.Features);
         Assert.Contains(HarnessFeatureIds.Plugins, codex.Features);
-        Assert.Equal(2, config.HarnessManager.SchemaVersion);
+        Assert.Equal(3, config.HarnessManager.SchemaVersion);
+        Assert.Equal(HarnessCatalog.All.Length, config.HarnessManager.Environments.Count);
+        Assert.All(config.HarnessManager.Environments, environment => Assert.False(environment.Managed));
     }
 
     [Fact]
@@ -78,7 +80,9 @@ public sealed class ConfigStoreTests
         var codex = Assert.Single(config.HarnessManager.Profiles, profile => profile.Id == "codex");
         Assert.Contains(HarnessFeatureIds.Rules, codex.Features);
         Assert.Contains(HarnessFeatureIds.Plugins, codex.Features);
-        Assert.Equal(2, config.HarnessManager.SchemaVersion);
+        Assert.Equal(3, config.HarnessManager.SchemaVersion);
+        Assert.Contains(config.HarnessManager.Environments, environment =>
+            environment.HarnessId == "codex" && environment.RootPath == @"C:\Users\test");
     }
 
     [Fact]

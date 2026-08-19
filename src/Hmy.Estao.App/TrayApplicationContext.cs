@@ -29,6 +29,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private bool _popoverOpenedFromOverlayHover;
     private long _popoverHoverLeftAt;
     private bool _settingsOpen;
+    private bool _harnessHubOpen;
 
     public TrayApplicationContext(ConfigStore configStore, Func<ConfigStore, UsageRefreshService> serviceFactory)
     {
@@ -118,6 +119,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add(new ZarpaMenuItem("Refresh now", "ic_fluent_arrow_sync_24_regular", async (_, _) => await RefreshAsync().ConfigureAwait(false)));
         AddAccountMenu(menu);
         menu.Items.Add(new ZarpaMenuItem("Settings...", "ic_fluent_settings_24_regular", (_, _) => ShowSettings()));
+        menu.Items.Add(new ZarpaMenuItem("Harness Hub...", "ic_fluent_apps_list_detail_24_regular", (_, _) => ShowHarnessHub()));
         menu.Items.Add(new ToolStripSeparator());
         var startup = new ToolStripMenuItem("Launch at sign-in") { Checked = StartupManager.IsStartupEnabled() };
         startup.Click += (_, _) =>
@@ -291,6 +293,22 @@ public sealed class TrayApplicationContext : ApplicationContext
         finally
         {
             _settingsOpen = false;
+        }
+    }
+
+    private void ShowHarnessHub()
+    {
+        if (_harnessHubOpen) return;
+        _harnessHubOpen = true;
+        try
+        {
+            using var form = new HarnessHubForm(_configStore);
+            form.ShowDialog();
+            _config = _configStore.LoadAsync().GetAwaiter().GetResult();
+        }
+        finally
+        {
+            _harnessHubOpen = false;
         }
     }
 
