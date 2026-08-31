@@ -26,6 +26,7 @@ internal sealed class UsagePopover : ZarpaModernForm
         new Dictionary<string, UsageColorConfig>(StringComparer.OrdinalIgnoreCase);
     private string? _selectedProvider;
     private bool _allowDeactivateClose;
+    private IReadOnlySet<string> _enabledProviderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     public UsagePopover(
         IReadOnlyList<UsageSnapshot> snapshots,
@@ -186,7 +187,22 @@ internal sealed class UsagePopover : ZarpaModernForm
         _usageColorsByProvider = providers
             .GroupBy(provider => ProviderCatalog.NormalizeId(provider.Id), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().UsageColors, StringComparer.OrdinalIgnoreCase);
+        var enabled = providers
+            .Where(provider => provider.Enabled == true)
+            .Select(provider => ProviderCatalog.NormalizeId(provider.Id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectionChanged = !enabled.SetEquals(_enabledProviderIds);
+        _enabledProviderIds = enabled;
         _content.UpdateProviderConfigs(providers);
+        if (selectionChanged)
+        {
+            var current = ProviderIds();
+            if (_selectedProvider is null || current.All(id =>
+                    !string.Equals(id, _selectedProvider, StringComparison.OrdinalIgnoreCase)))
+                _selectedProvider = current.FirstOrDefault();
+            RebuildTabs();
+        }
+
         UpdateTabVisuals();
         ShowSelectedSnapshot();
     }
@@ -206,7 +222,9 @@ internal sealed class UsagePopover : ZarpaModernForm
     }
 
     private string[] ProviderIds() => ProviderCatalog.InitialProviderIds
-        .Concat(_snapshots.Select(item => ProviderCatalog.NormalizeId(item.Provider)))
+        .Where(id => _enabledProviderIds.Contains(id))
+        .Concat(_snapshots.Select(item => ProviderCatalog.NormalizeId(item.Provider))
+            .Where(id => _enabledProviderIds.Contains(id)))
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToArray();
 

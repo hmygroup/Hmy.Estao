@@ -44,6 +44,7 @@ internal sealed class TaskbarUsageOverlay : Form
     private IReadOnlyList<UsageSnapshot> _snapshots = [];
     private IReadOnlyList<UsageHistoryPoint> _history = [];
     private TaskbarOverlayConfig _config = new();
+    private IReadOnlySet<string> _enabledProviderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyDictionary<string, UsageColorConfig> _usageColorsByProvider =
         new Dictionary<string, UsageColorConfig>(StringComparer.OrdinalIgnoreCase);
     private Rectangle _regionBounds;
@@ -100,6 +101,10 @@ internal sealed class TaskbarUsageOverlay : Form
         _snapshots = snapshots;
         _history = history;
         _config = CloneConfig(config);
+        _enabledProviderIds = providers
+            .Where(provider => provider.Enabled == true)
+            .Select(provider => ProviderCatalog.NormalizeId(provider.Id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         _usageColorsByProvider = providers
             .GroupBy(provider => ProviderCatalog.NormalizeId(provider.Id), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().UsageColors, StringComparer.OrdinalIgnoreCase);
@@ -382,9 +387,15 @@ internal sealed class TaskbarUsageOverlay : Form
 
     private IReadOnlyList<UsageSnapshot> VisibleSnapshots()
     {
-        var configured = _config.ProviderIds;
+        // Providers turned off in Settings never reach the overlay, even when
+        // they linger in the saved selection or in stale snapshots.
+        var configured = _config.ProviderIds
+            .Select(ProviderCatalog.NormalizeId)
+            .Where(id => _enabledProviderIds.Contains(id))
+            .ToList();
         var selected = configured.Count == 0
-            ? _snapshots.Where(snapshot => snapshot.Error is null && snapshot.Windows.Count > 0)
+            ? _snapshots.Where(snapshot => _enabledProviderIds.Contains(ProviderCatalog.NormalizeId(snapshot.Provider)) &&
+                snapshot.Error is null && snapshot.Windows.Count > 0)
             : _snapshots.Where(snapshot => configured.Contains(ProviderCatalog.NormalizeId(snapshot.Provider), StringComparer.OrdinalIgnoreCase));
         var snapshots = selected.Take(4).ToArray();
         if (snapshots.Length > 0 || configured.Count == 0) return snapshots;
