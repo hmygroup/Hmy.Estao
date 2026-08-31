@@ -9,7 +9,7 @@ Estao is a Windows tray-first .NET 10 port of CodexBar's provider-usage concept 
 - Compatible raw v1 JSON config at `%APPDATA%\Hmy.Estao\config.json`.
 - Override config path with `HMY_ESTAO_CONFIG`.
 - Explicit config import only; Estao does not silently copy CodexBar config files.
-- Initial providers: Codex, Claude, GitHub Copilot, OpenCode.
+- Initial providers: Codex, Claude, GitHub Copilot, OpenCode, Z.ai.
 - CLI: `estao usage` and `estao config` commands.
 - Harness configuration manager for Codex, Claude Code, GitHub Copilot, and OpenCode.
 - Multi-repository Harness Hub backed by local, mapped, or UNC shared folders.

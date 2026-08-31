@@ -326,6 +326,7 @@ internal sealed class UsagePopover : ZarpaModernForm
     {
         "copilot" => "Copilot",
         "opencode" => "OpenCode",
+        "zai" => "Z.ai",
         _ => ProviderCatalog.DisplayName(provider)
     };
 
@@ -904,6 +905,7 @@ internal sealed class ZarpaUsageContent : Panel, IZarpaThemeAware, IZarpaThemeBo
         "claude" => "https://claude.ai/settings/usage",
         "copilot" => "https://github.com/settings/billing",
         "opencode" => "https://opencode.ai/",
+        "zai" => "https://z.ai/manage-apikey/subscription",
         _ => "https://platform.openai.com/usage"
     });
 

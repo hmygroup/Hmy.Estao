@@ -211,7 +211,7 @@ internal static class Cli
 
     private static int Help()
     {
-        Console.WriteLine($"{EstaoConstants.CliName} usage [--provider codex|claude|copilot|opencode] [--format text|json] [--pretty]");
+        Console.WriteLine($"{EstaoConstants.CliName} usage [--provider codex|claude|copilot|opencode|zai] [--format text|json] [--pretty]");
         Console.WriteLine($"{EstaoConstants.CliName} config validate|dump|enable|disable|set-api-key|set-cookie|clear-cookie|import");
         return 0;
     }

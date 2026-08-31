@@ -456,6 +456,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         "claude" => "ic_fluent_sparkle_24_regular",
         "copilot" => "ic_fluent_people_24_regular",
         "opencode" => "ic_fluent_code_24_regular",
+        "zai" => "ic_fluent_flash_24_regular",
         _ => "ic_fluent_apps_24_regular"
     };
 

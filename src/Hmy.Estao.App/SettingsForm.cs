@@ -632,6 +632,7 @@ public sealed class SettingsForm : ZarpaModernForm
             "claude" => WithSignIn([_source, _cookieSource, _cookieStatus, _newCookie, _apiKey]),
             "copilot" => WithSignIn([_source, _workspace, _apiKey]),
             "opencode" => [_source, _cookieSource, _cookieStatus, _workspace, _newCookie],
+            "zai" => [_source, _apiKey],
             _ => [_source, _cookieSource, _cookieStatus, _workspace, _newCookie, _apiKey]
         });
 

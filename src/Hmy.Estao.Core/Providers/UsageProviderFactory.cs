@@ -21,6 +21,7 @@ public sealed class UsageProviderFactory
             "claude" => new ClaudeProvider(_httpClient, _cookieStore),
             "copilot" => new CopilotProvider(_httpClient),
             "opencode" => new OpenCodeProvider(_httpClient, _cookieStore),
+            "zai" => new ZaiProvider(_httpClient),
             var unknown => throw new NotSupportedException($"Provider '{unknown}' is not supported by Estao MVP.")
         };
     }
