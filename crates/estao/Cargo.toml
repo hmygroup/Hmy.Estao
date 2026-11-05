@@ -10,7 +10,8 @@ publish.workspace = true
 estao-core = { path = "../estao-core" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-gpui-ce = "0.2"
+chrono = "0.4"
+gpui-ce = "0.3"
 gpui_ce_platform = "0.3.0"
 tray-icon = "0.26"
 tauri-winrt-notification = "0.8.1"
