@@ -1,9 +1,8 @@
 //! GPUI application shell for Estao.
 //!
-//! Wave 5 fills in [`run`]: single-instance guard, the gpui platform
+//! [`run`] owns the single-instance guard, the gpui platform
 //! application, the shared [`state::AppState`] entity, the tray host, the
-//! refresh loop, and the menu/tray event pump. See `spike/src/main.rs` in the
-//! repository root for the proven tray + GPUI integration pattern.
+//! refresh loop, and the main-thread menu/tray event pump.
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -1,75 +1,82 @@
 # Estao
 
-Estao is a Windows tray-first .NET 10 port of CodexBar's provider-usage concept for low-memory background operation.
+A Windows tray usage monitor for Codex, Claude, GitHub Copilot, OpenCode and Z.ai, built with Rust and GPUI-CE.
 
-## MVP Scope
+## App
 
-- Windows 10 2004+ x64, `net10.0-windows10.0.19041.0`.
-- WinForms `NotifyIcon` tray app with native menus and a settings window.
-- Compatible raw v1 JSON config at `%APPDATA%\Hmy.Estao\config.json`.
-- Override config path with `HMY_ESTAO_CONFIG`.
-- Explicit config import only; Estao does not silently copy CodexBar config files.
-- Initial providers: Codex, Claude, GitHub Copilot, OpenCode, Z.ai.
-- CLI: `estao usage` and `estao config` commands.
-- Harness configuration manager for Codex, Claude Code, GitHub Copilot, and OpenCode.
-- Multi-repository Harness Hub backed by local, mapped, or UNC shared folders.
-- Cookie-based providers use saved manual cookies; cookies are stored locally with Windows DPAPI protection instead of reading Chrome/Edge browser databases.
-- Background target: hidden tray idle under 75 MB private memory, 0% sustained CPU, and adaptive 2-30 minute refreshes.
+- Tray icon and native menu; left-click opens usage, reset countdowns and history charts.
+- Floating GPUI taskbar strip with compact provider tiles, slim usage bars, threshold colors and a drag handle. Hover a provider to preview usage without taking keyboard focus; leave the strip and popover to dismiss it. Drag to save the strip's screen position.
+- Settings for providers and authentication, refresh interval, launch at sign-in, light/dark theme, per-provider pacing and usage colors.
+- Copilot device-code sign-in, terminal-based provider logins and manual cookie/token setup.
+- Pacing notifications, adaptive background refresh and locally persisted history.
 
-## Harness hub
-
-Open **Harness Hub...** from the tray menu, or launch it from **Settings > Harness hub**. The dedicated Zarpa workspace separates team discovery from local desired-state management:
-
-- Browse multiple repositories using switchable cards and table views, search, artifact type, harness, and team filters.
-- Publish individual immutable skills, MCP servers, and other harness artifacts from discovered local content; import v3 artifacts or compose versioned collections and snapshots.
-- See explicit Native, Converted, Partial, or Unsupported compatibility for Codex, Claude Code, GitHub Copilot, and OpenCode.
-- Adopt personal or project environments, stage artifact toggles, preview every operation, and apply desired state atomically.
-- Detect byte drift for every managed file and semantic drift for structured JSON/MCP configuration.
-- Remove managed content while either keeping local files or creating a restore point and deleting them.
-- Store personal desired state in Estao data and project desired state in `.estao/environment.json`.
-- Retain bulk harness configuration without erasing settings Estao does not manage.
-- Convert portable content between harness-native locations and formats. For example, Codex `AGENTS.md`, Agent Skills, TOML agents, and MCP configuration are translated to Copilot instructions, skills, Markdown agents, and `mcp-config.json`.
-
-Every synchronization creates a restore point under `<base>/.estao/backups`; the latest ten complete points per environment are retained. Estao recognizes both current `~/.agents/skills` and legacy `~/.codex/skills` user skills, excluding bundled `.system` skills. Codex plugin artifacts contain marketplace and enablement declarations rather than the downloaded plugin cache. Known literal credentials are replaced with environment placeholders during publishing, reparse-point directories are not followed, payload paths and hashes are verified, and hooks/rules/plugins/raw settings are not copied across harnesses when no safe mapping exists. Raw settings are available but disabled by default.
-
-For a direct settings-only launch, use:
+One executable handles both the GUI and CLI:
 
 ```powershell
-Hmy.Estao.exe --settings
-Hmy.Estao.exe --harness-hub
-Hmy.Estao.exe --harness-publish
+.\estao.exe                       # tray app
+.\estao.exe --settings            # tray app with settings open
+.\estao.exe usage
+.\estao.exe usage --provider codex --format json --pretty
+.\estao.exe config validate
+.\estao.exe config dump
+.\estao.exe config enable --provider claude
+.\estao.exe config disable --provider zai
+Get-Clipboard | .\estao.exe config set-cookie --provider claude --stdin
+.\estao.exe config clear-cookie --provider claude
+Get-Clipboard | .\estao.exe config set-api-key --provider zai --stdin
+.\estao.exe config import --file .\config.json
 ```
 
-## Deferred
+Use `--help` on any command for its options. Usage/config commands return `0` on success and `1` for provider, validation or runtime failures; clap argument errors return `2`. API keys supplied through config commands remain in the JSON config; saved cookie headers and OAuth tokens use current-user Windows DPAPI protection. Prefer `--stdin` over putting secrets in shell arguments.
 
-Dashboard web scraping, Claude PTY/claude-swap, local cost/history scans, status polling, hooks/HTTP server, agent-aware refresh, custom cards/charts, and broader providers are intentionally out of MVP.
+## Configuration and migration
 
-## Build
+The config stays at `%APPDATA%\Hmy.Estao\config.json`; `HMY_ESTAO_CONFIG` overrides the path. Existing DPAPI cookie/OAuth files and usage-history/pacing-state files remain compatible with the .NET app.
+
+The Rust app reads schema v2 and automatically maps v1 configs in memory. The next save writes v2:
+
+- `taskbarOverlay` becomes `overlay`, retaining enabled state, providers, size and saved position.
+- Legacy global pacing is copied to providers without explicit pacing.
+- Themes other than `light` or `dark` become `dark`.
+- Harness Hub/manager, hooks, backdrop style/opacity, theme presets and overlay display/control customization are removed.
+
+Back up the config before switching branches if you want to retain the removed settings for the .NET app. Config imports are explicit; Estao does not discover or import CodexBar config automatically.
+
+The simplified overlay can still be configured in JSON:
+
+```json
+"overlay": {
+  "enabled": true,
+  "providerIds": ["codex", "claude"],
+  "size": "normal"
+}
+```
+
+Sizes are `compact`, `normal` and `spacious`. Empty `providerIds` shows up to four enabled providers with usage. Optional `positionX`/`positionY` are physical screen pixels; remove both to restore automatic taskbar placement. The overlay follows the Windows taskbar palette, independently of the app theme. Restart after editing config externally.
+
+## Build and test
+
+Requires Windows x64, stable Rust with the MSVC toolchain, Visual Studio Build Tools with the Desktop development with C++ workload, and the Windows SDK. No .NET SDK or runtime is needed.
 
 ```powershell
-dotnet build
-dotnet test
-dotnet run --project src\Hmy.Estao.Cli -- usage --format json --pretty
+rustup component add rustfmt clippy
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo run --bin estao -- --settings
+cargo build --locked --release --bin estao
 ```
 
-## Cookie setup
+The workspace has two crates: `estao-core` (providers, config, HTTP, security, history, pacing and refresh) and `estao` (clap CLI, GPUI windows and Windows tray integration). Provider SVGs and their license are under `assets/ProviderIcons`; keep that directory next to the packaged executable as `assets/ProviderIcons`.
 
-For providers that require web cookies, save a cookie header once and Estao will reuse it for refreshes:
+CI runs formatting, clippy, tests and a Windows build. The release workflow builds `estao.exe` and packages it with `assets`, this README and `VERSION.txt` in a Windows x64 ZIP. Update the workspace version in `Cargo.toml` and regenerate `Cargo.lock` before pushing a matching `vX.Y.Z` tag, or dispatch the workflow with that version. MSIX/App Installer packaging has been removed.
 
-```powershell
-Get-Clipboard | dotnet run --project src\Hmy.Estao.Cli -- config set-cookie --provider claude --stdin
-dotnet run --project src\Hmy.Estao.Cli -- config clear-cookie --provider claude
-```
+## Current limitations
 
-The saved cookie is encrypted for the current Windows user with DPAPI. Existing `cookieHeader` values in `config.json` are still read as a legacy fallback.
+- Refresh-interval changes take effect after restart; an already-open popover retains its theme until reopened.
+- Tray-click popovers stay open until dismissed with Escape or the tray toggle; outside-click dismissal is not implemented. Hover previews close automatically after leaving both surfaces, with a short grace period to cross the gap.
+- Overlay hover opens immediately (rather than after the .NET app's delay), and the overlay captures clicks inside its bounds rather than passing unused-area clicks through to the taskbar.
+- Reset details live in the popover rather than the compact strip; there is no overlay customization panel.
+- Multi-monitor/DPI transitions, drag persistence and all provider sign-in flows still need full manual regression testing. No memory/CPU target is claimed without measurement.
 
-## Publish
-
-```powershell
-dotnet publish src\Hmy.Estao.App -c Release -r win-x64 --self-contained true
-dotnet publish src\Hmy.Estao.Cli -c Release -r win-x64 --self-contained true
-```
-
-## Packaging
-
-MSIX/App Installer scaffolding lives under `packaging\`. Release automation expects signing and feed values from CI variables and does not store certificates in this repo.
+The previous .NET implementation, including Harness Hub, remains on `master`; `estao-rs` replaces it rather than maintaining both implementations.
