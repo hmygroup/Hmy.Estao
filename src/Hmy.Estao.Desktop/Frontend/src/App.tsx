@@ -28,8 +28,8 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
   const view = state?.view || new URLSearchParams(window.location.search).get("view") || "settings";
-  return <div className="desktop-shell">
-    <header className="window-header"><span>Estao · {view === "settings" ? "Settings" : "Usage"}</span><WindowControls /></header>
+  return <div className={`desktop-shell${view === "popover" ? " popover-shell" : ""}`}>
+    {view !== "popover" && <header className="window-header"><span>Estao · Settings</span><WindowControls /></header>}
     {!state ? <main className="loading"><h1>Estao</h1><p role="status">{error || "Loading your workspace…"}</p></main>
       : state.view === "settings" ? <Settings state={state} reload={load} /> : <Popover state={state} reload={load} />}
   </div>;
@@ -220,11 +220,12 @@ function Popover({ state, reload }: { state: DesktopState; reload: () => Promise
     finally { setBusy(false); }
   };
   const accounts = snapshot ? state.accounts[snapshot.provider] || [] : [];
-  return <div className="popover"><header className="popover-header"><div className="brand"><span className="brand-mark">e</span>Estao</div>
-    <button className="icon-button" aria-label="Open settings" onClick={() => void run("settings")}>⚙</button></header>
+  return <div className="popover"><header className="popover-toolbar">
     <nav className="provider-tabs" aria-label="Providers">{state.snapshots.map(s => <button key={s.provider} title={s.displayName}
       aria-label={s.displayName} aria-current={snapshot?.provider === s.provider ? "page" : undefined}
-      className={snapshot?.provider === s.provider ? "active" : ""} onClick={() => setSelected(s.provider)}><Icon id={s.provider} /></button>)}</nav>
+       className={snapshot?.provider === s.provider ? "active" : ""} onClick={() => setSelected(s.provider)}><Icon id={s.provider} /></button>)}</nav>
+    <button className="icon-button popover-settings" aria-label="Open settings" title="Open settings" onClick={() => void run("settings")}>⚙</button>
+    </header>
     <main className="popover-content">{snapshot ? <>
       <div className="snapshot-heading"><span className="eyebrow">PROVIDER USAGE</span><h1>{snapshot.displayName}</h1>
         <p>{[snapshot.account, snapshot.plan].filter(Boolean).join(" · ") || snapshot.source}</p></div>
@@ -239,7 +240,7 @@ function Popover({ state, reload }: { state: DesktopState; reload: () => Promise
       </>}
     </> : <div className="empty-state"><h2>No usage yet</h2><p>Enable a provider in settings to get started.</p><button className="primary" onClick={() => void run("settings")}>Open settings</button></div>}
       {error && <p role="alert" className="inline-warning">{error}</p>}
-    </main><footer className="popover-footer"><small>{snapshot ? `Updated ${new Date(snapshot.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Estao"}</small>
+    </main><footer className="popover-footer"><small>{snapshot ? `Updated ${new Date(snapshot.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}</small>
       <button className="secondary" disabled={busy} onClick={() => void run("refresh")}>{busy ? "Refreshing…" : "↻ Refresh"}</button></footer>
   </div>;
 }

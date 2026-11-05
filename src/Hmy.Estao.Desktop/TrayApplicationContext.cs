@@ -93,14 +93,24 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _hoverMonitor.Stop();
         if (_settings is { IsDisposed: false, Visible: true }) return;
         _selectedProvider = provider;
-        if (_popover is { IsDisposed: false }) { _popover.Activate(); return; }
+        if (_popover is { IsDisposed: false }) { PositionPopover(provider, anchor); _popover.Activate(); return; }
         _popover = CreateWindow("popover");
-        var area = Screen.FromPoint(anchor).WorkingArea;
-        _popover.Location = new Point(Math.Clamp(anchor.X, area.Left, Math.Max(area.Left, area.Right - _popover.Width)),
-            Math.Clamp(anchor.Y - _popover.Height, area.Top, Math.Max(area.Top, area.Bottom - _popover.Height)));
+        PositionPopover(provider, anchor);
         _popover.FormClosed += (_, _) => { _popover = null; _hoverMonitor.Stop(); };
         _popover.Deactivate += (_, _) => _popover?.Close();
         _popover.Show();
+    }
+
+    private void PositionPopover(string? provider, Point anchor)
+    {
+        if (_popover is null) return;
+        // Overlay events identify the provider, but its individual cell is not
+        // the positioning anchor: every provider shares the overlay's left edge.
+        var anchorBounds = provider is not null ? _overlay.Bounds : new Rectangle(anchor, Size.Empty);
+        var area = provider is not null ? Screen.FromRectangle(anchorBounds).WorkingArea : Screen.FromPoint(anchor).WorkingArea;
+        _popover.MinimumSize = new Size(Math.Min(_popover.MinimumSize.Width, area.Width),
+            Math.Min(_popover.MinimumSize.Height, area.Height));
+        _popover.Bounds = PopoverPlacement.Calculate(_popover.Size, anchorBounds, area);
     }
 
     private async Task RefreshAsync()

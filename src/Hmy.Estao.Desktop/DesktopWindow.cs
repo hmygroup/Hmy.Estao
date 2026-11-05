@@ -18,6 +18,8 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
     {
         Text = view == "settings" ? "Estao · Settings" : "Estao · Usage";
         ShowInTaskbar = view == "settings";
+        MinimizeBox = view == "settings";
+        MaximizeBox = view == "settings";
         StartPosition = FormStartPosition.Manual;
         Size = view == "settings" ? new Size(1080, 800) : new Size(500, 700);
         MinimumSize = view == "settings" ? new Size(780, 580) : new Size(400, 400);
