@@ -72,7 +72,7 @@ public sealed class SettingsForm : ZarpaModernForm
 
         Text = "Estao Settings";
         ContextText = "Preferences";
-        TitleIconKey = string.Empty;
+        TitleIconKey = "ic_fluent_settings_24_regular";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(900, 600);
         Size = new Size(1080, 740);
