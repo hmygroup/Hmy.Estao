@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>Hmy.Estao</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>ai-setting.ico</ApplicationIcon>
+    <Version>0.0.9-alpha</Version>
+    <ShofiaFrontRoot>Frontend</ShofiaFrontRoot>
+    <ShofiaDirectFront>true</ShofiaDirectFront>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishProfile Condition="'$(PublishProfile)' == ''">Default</PublishProfile>
+    <!-- WebView2's package includes a WPF reference even for WinForms hosts. -->
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Hmy.Estao.Core/Hmy.Estao.Core.csproj" />
+    <PackageReference Include="Shofia.WebHost" Version="1.4.0" />
+    <PackageReference Include="Svg" Version="3.4.8" />
+    <Compile Include="../Hmy.Estao.App/OAuthLoginService.cs" Link="Services/OAuthLoginService.cs" />
+    <None Remove="Frontend/node_modules/**/*;Frontend/dist/**/*" />
+    <EmbeddedResource Remove="Frontend/**/*" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Frontend/public/providers/*.svg" LogicalName="Hmy.Estao.ProviderIcons.%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="Hmy.Estao.Desktop.Tests" />
+  </ItemGroup>
+  <Target Name="RemoveUnusedWebViewWpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+</Project>

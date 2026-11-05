@@ -1,0 +1,20 @@
+# Estao Desktop
+
+The replacement desktop project lives entirely here. Only the reusable Core and OAuth sign-in service are shared with the previous app; no Zarpa UI assembly is loaded.
+
+- `ProviderOverlay.cs`: the original rounded, inline taskbar pill with native provider logos (no painted provider names), grip and separators. Percentage, donut and reset are fixed, regardless of legacy overlay display options. Names remain available to accessibility tools. Drag its grip to move; hover or click a provider for details. It follows Windows light/dark personalization and live preference changes, independently of the web windows.
+- `TrayApplicationContext.cs`: native tray menu, refresh scheduling, accounts, pacing notifications, and on-demand web window lifetime.
+- `DesktopWindow.cs`: Shofia.WebHost custom-chrome windows hosting embedded React assets, without a backend/server. Both web windows use the template's frontend title bar and shared minimize/maximize/close controls, with native dragging and resizing. Closing either window disposes its WebView2 control.
+- `Frontend/`: settings and popover. Provider credentials are write-only to the bridge; stored secrets are never returned to JavaScript. An empty credential field keeps the stored value; removal is explicit.
+
+`dotnet run --project src/Hmy.Estao.Desktop -- --settings` opens settings. Without the flag only the native tray and enabled overlay start. Building automatically installs and bundles the frontend; Node.js is a build-time requirement only.
+
+## Compatibility
+
+Uses the existing config path, `HMY_ESTAO_CONFIG`, DPAPI cookie/OAuth stores, usage history, and provider accounts. Legacy appearance, overlay options, provider alert rules, and Harness Hub sections are retained but ignored by this UI.
+
+On first load without `usageAlerts`, the first enabled provider with custom colors supplies the global rule. If none exists, the first other custom rule is used, then the original defaults (75% amber, 90% red, customization disabled). The rule is copied, not aliased to the old provider setting. Once saved, the explicit global rule is authoritative, including when disabled.
+
+Automatic refresh can be disabled. Initial, manual, account-change, and settings-save refreshes still run. Daily pacing remains provider-specific and uses the existing once-per-day notification store.
+
+NuGet and npm need access to the HMY Azure Artifacts feeds. Configure authentication outside this repository. Do not commit credentials to `NuGet.Config` or `.npmrc`.

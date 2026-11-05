@@ -52,6 +52,11 @@ jobs:
           "release_tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Restore
         run: dotnet restore Hmy.Estao.slnx
 
@@ -59,12 +64,12 @@ jobs:
         run: dotnet build Hmy.Estao.slnx -c Release --no-restore
 
       - name: Test
-        run: dotnet test tests\Hmy.Estao.Tests\Hmy.Estao.Tests.csproj -c Release --no-build --no-restore
+        run: dotnet test Hmy.Estao.slnx -c Release --no-build --no-restore
 
       - name: Publish Windows application
         shell: pwsh
         run: |
-          dotnet publish src\Hmy.Estao.App\Hmy.Estao.App.csproj `
+          dotnet publish src\Hmy.Estao.Desktop\Hmy.Estao.Desktop.csproj `
             -c Release `
             -r win-x64 `
             --self-contained true `
@@ -100,9 +105,7 @@ jobs:
           Copy-Item 'artifacts\publish-app\*' "$packageDir\App" -Recurse
           Copy-Item 'artifacts\publish-cli\*' "$packageDir\Cli" -Recurse
           Copy-Item 'README.md' $packageDir
-          Copy-Item 'src\Hmy.Estao.App\Assets\ProviderIcons\LICENSE-CodexBar.txt' "$packageDir\Licenses"
-          Copy-Item 'src\Zarpa.Controls.Net10\Assets\FluentIcons\LICENSE.txt' "$packageDir\Licenses\LICENSE-FluentSystemIcons.txt"
-          Copy-Item 'src\Zarpa.Controls.Net10\Assets\FluentIcons\NOTICE.txt' "$packageDir\Licenses\NOTICE-FluentSystemIcons.txt"
+          Copy-Item 'src\Hmy.Estao.Desktop\Frontend\public\providers\LICENSE-CodexBar.txt' "$packageDir\Licenses"
           Set-Content -Path "$packageDir\VERSION.txt" -Value $env:VERSION -Encoding utf8NoBOM
 
           Compress-Archive -Path "$packageDir\*" -DestinationPath $zipPath -CompressionLevel Optimal

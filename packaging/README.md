@@ -42,7 +42,7 @@ Same as CI plus:
 ```powershell
 dotnet build
 dotnet test
-dotnet publish src\Hmy.Estao.App -c Release -r win-x64 --self-contained true
+dotnet publish src\Hmy.Estao.Desktop -c Release -r win-x64 --self-contained true
 ```
 
 MSIX signing requires Azure Code Signing credentials; unsigned MSIX can be produced locally with MakeAppx.exe if you have the Windows SDK installed.

@@ -28,6 +28,10 @@ public sealed class EstaoConfig
     [JsonPropertyName("refresh")]
     public RefreshConfig Refresh { get; set; } = new();
 
+    // Desktop uses one alert rule for every provider. Null identifies pre-Desktop configs.
+    [JsonPropertyName("usageAlerts")]
+    public UsageColorConfig? UsageAlerts { get; set; }
+
     [JsonPropertyName("harnessManager")]
     public HarnessManagerConfig HarnessManager { get; set; } = new();
 

@@ -10,3 +10,5 @@ artifacts/
 *.msix
 *.msixbundle
 *.appinstaller
+node_modules/
+dist/

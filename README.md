@@ -5,18 +5,23 @@ Estao is a Windows tray-first .NET 10 port of CodexBar's provider-usage concept 
 ## MVP Scope
 
 - Windows 10 2004+ x64, `net10.0-windows10.0.19041.0`.
-- WinForms `NotifyIcon` tray app with native menus and a settings window.
+- `Hmy.Estao.Desktop` replaces `Hmy.Estao.App`: WinForms tray and provider overlay, with React settings and usage popover hosted in Shofia.WebHost.
+- The overlay always shows Percentage, Donut, and Reset time. It never creates a WebView.
+- The overlay retains its original rounded taskbar appearance and follows Windows light/dark personalization, including live changes.
+- WebView2 is created only when opening settings or the popover; closing the window disposes it. No ASP.NET server or background Vite process is used.
+- Global usage alert thresholds and colors apply to every provider; provider configuration and daily pacing remain provider-specific.
 - Compatible raw v1 JSON config at `%APPDATA%\Hmy.Estao\config.json`.
 - Override config path with `HMY_ESTAO_CONFIG`.
 - Explicit config import only; Estao does not silently copy CodexBar config files.
 - Initial providers: Codex, Claude, GitHub Copilot, OpenCode, Z.ai.
 - CLI: `estao usage` and `estao config` commands.
-- Harness configuration manager for Codex, Claude Code, GitHub Copilot, and OpenCode.
-- Multi-repository Harness Hub backed by local, mapped, or UNC shared folders.
+- Appearance themes, backdrop controls, and Harness Hub are not part of the first Desktop version. Existing config sections are retained for compatibility.
 - Cookie-based providers use saved manual cookies; cookies are stored locally with Windows DPAPI protection instead of reading Chrome/Edge browser databases.
 - Background target: hidden tray idle under 75 MB private memory, 0% sustained CPU, and adaptive 2-30 minute refreshes.
 
-## Harness hub
+## Legacy Harness hub
+
+The following describes the previous `Hmy.Estao.App` UI, which remains in source but is no longer built or packaged by the solution. Harness Hub is not exposed in the new Desktop frontend.
 
 Open **Harness Hub...** from the tray menu, or launch it from **Settings > Harness hub**. The dedicated Zarpa workspace separates team discovery from local desired-state management:
 
@@ -36,8 +41,6 @@ For a direct settings-only launch, use:
 
 ```powershell
 Hmy.Estao.exe --settings
-Hmy.Estao.exe --harness-hub
-Hmy.Estao.exe --harness-publish
 ```
 
 ## Deferred
@@ -46,9 +49,14 @@ Dashboard web scraping, Claude PTY/claude-swap, local cost/history scans, status
 
 ## Build
 
+Requires .NET 10, Node.js 22.12+ (or 24+), and access to the HMY Azure Artifacts NuGet/npm feeds. Configure any required credentials in your user/runner credential stores, never in source. The frontend `.npmrc` routes only `@shofia` packages to the internal feed; public packages use npmjs. CI runners need the same feed access.
+
+The desktop build installs locked frontend dependencies, type-checks, builds Vite assets, and embeds them. End users need the WebView2 Evergreen Runtime, but not Node.js. The original Graphite palette is fixed for this version.
+
 ```powershell
 dotnet build
 dotnet test
+dotnet run --project src\Hmy.Estao.Desktop -- --settings
 dotnet run --project src\Hmy.Estao.Cli -- usage --format json --pretty
 ```
 
@@ -66,7 +74,7 @@ The saved cookie is encrypted for the current Windows user with DPAPI. Existing 
 ## Publish
 
 ```powershell
-dotnet publish src\Hmy.Estao.App -c Release -r win-x64 --self-contained true
+dotnet publish src\Hmy.Estao.Desktop -c Release -r win-x64 --self-contained true
 dotnet publish src\Hmy.Estao.Cli -c Release -r win-x64 --self-contained true
 ```
 

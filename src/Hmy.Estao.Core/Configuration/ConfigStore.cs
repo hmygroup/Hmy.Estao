@@ -146,6 +146,23 @@ public sealed class ConfigStore
         // Clearing it means the next save emits only the provider-level shape.
         config.LegacyPacing = null;
 
+        // Prefer an active provider's custom rule when upgrading. Keep the old
+        // provider rules intact for compatibility, but Desktop only reads this rule.
+        if (config.UsageAlerts is null)
+        {
+            var previous = config.Providers.FirstOrDefault(p => p.Enabled == true && p.UsageColors.Enabled)
+                ?? config.Providers.FirstOrDefault(p => p.UsageColors.Enabled);
+            config.UsageAlerts = previous is null ? new UsageColorConfig() : new UsageColorConfig
+            {
+                Enabled = previous.UsageColors.Enabled,
+                WarningPercent = previous.UsageColors.WarningPercent,
+                WarningColor = previous.UsageColors.WarningColor,
+                CriticalPercent = previous.UsageColors.CriticalPercent,
+                CriticalColor = previous.UsageColors.CriticalColor
+            };
+        }
+        NormalizeUsageColors(config.UsageAlerts);
+
         return config;
     }
 
