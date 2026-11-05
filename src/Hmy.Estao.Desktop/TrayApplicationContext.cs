@@ -49,10 +49,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _tray.MouseClick += (_, e) =>
         {
             if (e.Button != MouseButtons.Left) return;
-            if (_popover is { IsDisposed: false }) _popover.Close();
+            if (_popover is { IsDisposed: false, Visible: true }) _popover.Close();
             else ShowPopover(null, Cursor.Position);
         };
         _overlay.ProviderRequested += ShowPopover;
+        _overlay.ProviderHoverChanged += provider =>
+        {
+            if (provider is null)
+            {
+                if (_popover is { IsDisposed: false, Visible: false }) _popover.Close();
+                return;
+            }
+            if (_settings is { IsDisposed: false, Visible: true } || _popover is { Visible: true }) return;
+            _selectedProvider = provider;
+            EnsurePopover();
+            _popover!.BeginInitialization();
+        };
         _overlay.ProviderHoverRequested += (provider, point) =>
         {
             ShowPopover(provider, point);
@@ -93,12 +105,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _hoverMonitor.Stop();
         if (_settings is { IsDisposed: false, Visible: true }) return;
         _selectedProvider = provider;
-        if (_popover is { IsDisposed: false }) { PositionPopover(provider, anchor); _popover.Activate(); return; }
-        _popover = CreateWindow("popover");
+        EnsurePopover();
         PositionPopover(provider, anchor);
-        _popover.FormClosed += (_, _) => { _popover = null; _hoverMonitor.Stop(); };
-        _popover.Deactivate += (_, _) => _popover?.Close();
-        _popover.Show();
+        if (_popover!.Visible) _popover.Activate();
+        else _popover.Show(); // Do not wait for browser initialization at the hover deadline.
+    }
+
+    private void EnsurePopover()
+    {
+        if (_popover is { IsDisposed: false }) return;
+        var popover = CreateWindow("popover");
+        _popover = popover;
+        popover.FormClosed += (_, _) => { if (ReferenceEquals(_popover, popover)) _popover = null; _hoverMonitor.Stop(); };
+        popover.Deactivate += (_, _) => popover.Close();
     }
 
     private void PositionPopover(string? provider, Point anchor)

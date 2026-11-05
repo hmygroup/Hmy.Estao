@@ -8,6 +8,7 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
 {
     private readonly List<IDisposable> _handlers = [];
     private readonly string _initialTheme;
+    private bool _initializationStarted;
 
     public DesktopWindow(string view, Func<Task<DesktopState>> state,
         Func<SettingsUpdate, Task> save, Func<DesktopCommand, Task> command, string? theme = null)
@@ -51,6 +52,21 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
         };
         KeyPreview = true;
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+    }
+
+    public void BeginInitialization()
+    {
+        _ = Handle;
+        OnLoad(EventArgs.Empty);
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        // WebHost initializes on Load. Allow that work to start while hidden,
+        // and do not repeat it when WinForms subsequently shows this window.
+        if (_initializationStarted) return;
+        _initializationStarted = true;
+        base.OnLoad(e);
     }
 
     protected override async ValueTask OnBrowserInitializedAsync(CancellationToken cancellationToken)

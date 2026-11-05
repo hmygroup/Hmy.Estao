@@ -34,6 +34,7 @@ internal sealed class ProviderOverlay : Form
     private long _lastLayout;
 
     public event Action<string, Point>? ProviderRequested;
+    public event Action<string?>? ProviderHoverChanged;
     public event Action<string, Point>? ProviderHoverRequested;
     public event Action<Point>? PositionCommitted;
 
@@ -259,8 +260,9 @@ internal sealed class ProviderOverlay : Form
             _hovered = hit.Layout?.Id;
             _reportedHover = null;
             _hoverStarted = now;
+            ProviderHoverChanged?.Invoke(_hovered);
         }
-        if (_hovered is not null && _reportedHover is null && now - _hoverStarted >= 350)
+        if (_hovered is not null && _reportedHover is null && now - _hoverStarted >= 500)
         {
             _reportedHover = _hovered;
             ProviderHoverRequested?.Invoke(_hovered, PointToScreen(new Point(hit.Left + hit.Layout!.Width / 2, 0)));
