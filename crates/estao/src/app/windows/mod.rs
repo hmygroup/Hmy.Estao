@@ -8,6 +8,7 @@
 use gpui::{px, size, Bounds, Pixels, TitlebarOptions, WindowBounds, WindowKind, WindowOptions};
 
 pub mod popover;
+pub mod settings;
 
 /// A normal, resizable, titled window for the settings surface.
 pub fn settings_options(bounds: Bounds<Pixels>) -> WindowOptions {

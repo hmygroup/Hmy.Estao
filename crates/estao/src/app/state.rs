@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use estao_core::config::{ConfigStore, EstaoConfig};
 use estao_core::models::{UsageHistoryPoint, UsageSnapshot};
@@ -29,9 +30,7 @@ use crate::app::toasts;
 use crate::app::tray::{TrayAction, TrayHost};
 use crate::app::windows;
 use crate::app::windows::popover;
-
-/// The settings placeholder size.
-const SETTINGS_SIZE: (f32, f32) = (760.0, 560.0);
+use crate::app::windows::settings;
 
 /// Shared state for the tray app.
 pub struct AppState {
@@ -43,7 +42,7 @@ pub struct AppState {
     history: Vec<UsageHistoryPoint>,
     theme: Theme,
     tray: Option<TrayHost>,
-    settings_window: Option<WindowHandle<PlaceholderWindow>>,
+    settings_window: Option<WindowHandle<settings::SettingsWindow>>,
     popover_window: Option<WindowHandle<popover::UsagePopover>>,
     /// Reserved for the taskbar overlay window owned by Wave 8.
     #[allow(dead_code)]
@@ -143,7 +142,7 @@ impl AppState {
         .detach();
     }
 
-    /// Opens (or focuses) the settings placeholder window.
+    /// Opens (or focuses) the settings window.
     pub fn open_settings(&mut self, cx: &mut Context<Self>) {
         if focus_window(&self.settings_window, cx) {
             cx.activate(true);
@@ -151,15 +150,31 @@ impl AppState {
         }
         self.settings_window = None;
 
-        let bounds = Bounds::centered(None, size(px(SETTINGS_SIZE.0), px(SETTINGS_SIZE.1)), cx);
-        let palette = self.theme.palette();
-        let subtitle = format!(
-            "Estao settings - full UI in a later wave ({} theme)",
-            self.theme.name()
+        // The .NET form reloads the config on Load; do the same so an edit
+        // made by the CLI or another window is visible when this one opens.
+        let config = self.config_store.load().unwrap_or_else(|error| {
+            eprintln!("Estao: failed to reload the config for settings: {error:#}");
+            self.config.clone()
+        });
+        let bounds = Bounds::centered(
+            None,
+            size(px(settings::SETTINGS_SIZE.0), px(settings::SETTINGS_SIZE.1)),
+            cx,
         );
+        let palette = Theme::from_name(&config.theme).palette();
+        let store = self.config_store.clone();
+        let state = cx.entity();
 
         match cx.open_window(windows::settings_options(bounds), move |_window, cx| {
-            cx.new(|_| PlaceholderWindow::new("Estao settings", subtitle, palette))
+            cx.new(|cx| {
+                settings::SettingsWindow::new(
+                    state.clone(),
+                    store.clone(),
+                    config.clone(),
+                    palette,
+                    cx,
+                )
+            })
         }) {
             Ok(handle) => {
                 self.settings_window = Some(handle);
@@ -169,6 +184,24 @@ impl AppState {
                 eprintln!("Estao: failed to open the settings window: {error:#}");
             }
         }
+    }
+
+    /// Persists an edited config and applies it to the live app.
+    ///
+    /// The settings window owns the editable copy; saving normalizes and writes
+    /// it, then swaps the in-memory config so the tray menu and the popover
+    /// observe the new provider/theme state immediately.
+    pub fn replace_config(&mut self, config: EstaoConfig, cx: &mut Context<Self>) -> Result<()> {
+        let mut config = ConfigStore::normalize(config);
+        let theme = Theme::from_name(&config.theme);
+        config.theme = theme.name().to_string();
+        self.config_store.save(config.clone())?;
+        self.config = config;
+        self.theme = theme;
+        self.rebuild_tray_menu();
+        cx.notify();
+        self.refresh_now(cx);
+        Ok(())
     }
 
     /// Toggles the usage popover window.
@@ -347,7 +380,7 @@ fn snapshot_stamp(snapshots: &[UsageSnapshot]) -> Option<DateTime<Utc>> {
 }
 
 /// Brings an existing window to the front, returning `false` when it is gone.
-fn focus_window(handle: &Option<WindowHandle<PlaceholderWindow>>, cx: &mut App) -> bool {
+fn focus_window<T: 'static>(handle: &Option<WindowHandle<T>>, cx: &mut App) -> bool {
     let Some(handle) = handle else {
         return false;
     };
@@ -362,6 +395,7 @@ struct PlaceholderWindow {
     palette: Palette,
 }
 
+#[allow(dead_code)] // Wave 8's overlay still reuses the placeholder shell.
 impl PlaceholderWindow {
     fn new(
         title: impl Into<SharedString>,
