@@ -1,6 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { command, getState, saveSettings, WindowControls } from "./nativeHost";
 import type { DesktopState, HistoryPoint, Provider, RateWindow, SettingsUpdate, UsageAlerts } from "./types";
+import { applyTheme, cachedTheme, cacheTheme, resolveTheme } from "./themes";
+import ThemePicker from "./themes/ThemePicker";
 
 function Icon({ id }: { id: string }) {
   return <img className="provider-icon" src={`/providers/${id}.svg`} alt="" />;
@@ -21,6 +23,9 @@ function Section({ title, description, children }: { title: string; description?
 export default function App() {
   const [state, setState] = useState<DesktopState>();
   const [error, setError] = useState("");
+  const [previewTheme, setPreviewTheme] = useState<string | null>(null);
+  useLayoutEffect(() => { applyTheme(previewTheme ?? state?.theme ?? cachedTheme()); }, [previewTheme, state?.theme]);
+  useEffect(() => { if (state?.theme) cacheTheme(state.theme); }, [state?.theme]);
   const load = async () => { try { setState(await getState()); } catch (e) { setError(String(e)); } };
   useEffect(() => {
     void load();
@@ -31,12 +36,14 @@ export default function App() {
   return <div className={`desktop-shell${view === "popover" ? " popover-shell" : ""}`}>
     {view !== "popover" && <header className="window-header"><span>Estao · Settings</span><WindowControls /></header>}
     {!state ? <main className="loading"><h1>Estao</h1><p role="status">{error || "Loading your workspace…"}</p></main>
-      : state.view === "settings" ? <Settings state={state} reload={load} /> : <Popover state={state} reload={load} />}
+      : state.view === "settings" ? <Settings state={state} reload={load} previewTheme={setPreviewTheme} /> : <Popover state={state} reload={load} />}
   </div>;
 }
 
-function Settings({ state, reload }: { state: DesktopState; reload: () => Promise<void> }) {
-  const [draft, setDraft] = useState<SettingsUpdate>(() => structuredClone(state));
+function Settings({ state, reload, previewTheme }: { state: DesktopState; reload: () => Promise<void>; previewTheme: (id: string | null) => void }) {
+  const normalizeDraft = (value: DesktopState): SettingsUpdate => ({ ...structuredClone(value), theme: resolveTheme(value.theme).id });
+  const [draft, setDraft] = useState<SettingsUpdate>(() => normalizeDraft(state));
+  useEffect(() => { previewTheme(draft.theme); return () => previewTheme(null); }, [draft.theme, previewTheme]);
   const [page, setPage] = useState("providers");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -50,13 +57,13 @@ function Settings({ state, reload }: { state: DesktopState; reload: () => Promis
     try {
       await saveSettings(draft);
       const fresh = await getState();
-      setDraft(structuredClone(fresh)); setDirty(false); setMessage("Settings saved.");
+      setDraft(normalizeDraft(fresh)); setDirty(false); setMessage("Settings saved.");
       await reload();
     } catch (e) { setMessage(String(e)); }
     finally { setBusy(false); }
   };
   const discard = async () => {
-    try { setDraft(structuredClone(await getState())); setDirty(false); setMessage(""); }
+    try { setDraft(normalizeDraft(await getState())); setDirty(false); setMessage(""); }
     catch (e) { setMessage(String(e)); }
   };
   const run = async (action: string, provider?: string) => {
@@ -69,16 +76,17 @@ function Settings({ state, reload }: { state: DesktopState; reload: () => Promis
     return () => window.removeEventListener("beforeunload", listener);
   }, [dirty]);
   const titles: Record<string, [string, string]> = {
-    providers: ["Providers", "Connect the tools you use. Keep an eye on what’s left."],
-    alerts: ["Usage alerts", "One set of thresholds. Every provider."],
-    overlay: ["Provider overlay", "A small native window. Always within reach."],
     general: ["General", "Make Estao work your way."],
+    appearance: ["Appearance", "Choose the glass that feels like home."],
+    providers: ["Providers", "Connect the tools you use. Keep an eye on what’s left."],
+    overlay: ["Overlay", "A small native window. Always within reach."],
+    alerts: ["Usage alerts", "One set of thresholds. Every provider."],
   };
   return <div className="settings-shell">
     <aside>
       <nav aria-label="Settings">{Object.entries(titles).map(([id, [title]], i) =>
         <button key={id} className={page === id ? "nav-item active" : "nav-item"} onClick={() => setPage(id)}
-          aria-current={page === id ? "page" : undefined}><span aria-hidden="true">{["◈", "◷", "▣", "⚙"][i]}</span>{title}</button>)}</nav>
+          aria-current={page === id ? "page" : undefined}><span aria-hidden="true">{["⚙", "◐", "◈", "▣", "◷"][i]}</span>{title}</button>)}</nav>
     </aside>
     <div className="settings-body"><header className="page-header"><div><span className="eyebrow">SETTINGS</span>
       <h1>{titles[page][0]}</h1><p>{titles[page][1]}</p></div></header>
@@ -114,6 +122,9 @@ function Settings({ state, reload }: { state: DesktopState; reload: () => Promis
             {draft.providers.map(p => <Toggle key={p.id} label={p.name + (!p.enabled ? " (disabled)" : "")} checked={draft.overlayProviderIds.includes(p.id)}
               onChange={include => change({ overlayProviderIds: include ? [...draft.overlayProviderIds, p.id] : draft.overlayProviderIds.filter(id => id !== p.id) })} />)}
           </Section>
+        </>}
+        {page === "appearance" && <>
+          <ThemePicker value={draft.theme} onChange={theme => change({ theme })} />
         </>}
         {page === "general" && <>
           <Section title="Startup"><Toggle label="Launch Estao at Windows sign-in" checked={draft.launchAtSignIn} onChange={launchAtSignIn => change({ launchAtSignIn })} /></Section>
@@ -183,7 +194,7 @@ function usageColor(alerts: UsageAlerts, used: number | null) {
     if (used * 100 >= alerts.criticalPercent) return alerts.criticalColor;
     if (used * 100 >= alerts.warningPercent) return alerts.warningColor;
   }
-  return "#8B79E6";
+  return "var(--accent)";
 }
 function resetText(value: string | null) {
   if (!value) return "Reset time unavailable";

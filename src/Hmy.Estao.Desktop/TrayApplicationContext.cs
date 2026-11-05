@@ -86,7 +86,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     }
 
     private DesktopWindow CreateWindow(string view) => new(view,
-        () => StateAsync(view), SaveSettingsAsync, CommandAsync);
+        () => StateAsync(view), SaveSettingsAsync, CommandAsync, _config.Theme);
 
     private void ShowPopover(string? provider, Point anchor)
     {
@@ -140,11 +140,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 .Select((a, i) => new AccountChoice(i, a.Label)).ToList());
         return new DesktopState(view, _selectedProvider, providers, _config.UsageAlerts!, _config.Refresh,
             _config.TaskbarOverlay.Enabled, _config.TaskbarOverlay.ProviderIds, StartupManager.Enabled,
-            _service.LastSnapshots, view == "popover" ? _service.History : [], accounts, _status);
+            _service.LastSnapshots, view == "popover" ? _service.History : [], accounts, _status,
+            DesktopThemeCatalog.Resolve(_config.Theme).Id);
     }
 
     private async Task SaveSettingsAsync(SettingsUpdate update)
     {
+        if (!DesktopThemeCatalog.IsSupported(update.Theme)) throw new ArgumentException("Choose a supported desktop theme.");
         if (update.Providers.Select(p => p.Id).Distinct().Count() != update.Providers.Count
             || update.Providers.Any(p => !ProviderCatalog.IsSupported(p.Id)))
             throw new ArgumentException("Invalid provider list.");
@@ -172,6 +174,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 else if (!string.IsNullOrWhiteSpace(change.ApiKey)) p.ApiKey = change.ApiKey.Trim();
             }
             config.UsageAlerts = update.UsageAlerts;
+            config.Theme = DesktopThemeCatalog.Resolve(update.Theme).Id;
             config.Refresh = update.Refresh;
             config.TaskbarOverlay.Enabled = update.OverlayEnabled;
             config.TaskbarOverlay.ProviderIds = update.OverlayProviderIds;

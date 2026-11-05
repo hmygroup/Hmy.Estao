@@ -1,0 +1,56 @@
+[
+  {
+    "id": "pearl", "name": "Pearl", "mode": "light",
+    "description": "Frosted silver with soft violet reflections.", "aliases": ["Liquid Glass", "light"],
+    "colors": {
+      "canvas": "#E8EEF7", "canvas-end": "#EDF0FB", "text": "#23334A", "muted": "#52647C",
+      "accent": "#6552C9", "primary": "#6552C9", "primary-light": "#7967DC", "primary-hover": "#5E4AC1",
+      "glow-a": "#A9A6EF", "glow-b": "#7DCBE4", "glow-c": "#F1CCE0"
+    }
+  },
+  {
+    "id": "ocean", "name": "Ocean", "mode": "light",
+    "description": "Clear blue glass with cool sea-green accents.", "aliases": [],
+    "colors": {
+      "canvas": "#E9F5FB", "canvas-end": "#DAECF4", "text": "#18374A", "muted": "#476577",
+      "accent": "#08637C", "primary": "#14728C", "primary-light": "#2992AB", "primary-hover": "#0E6380",
+      "glow-a": "#8CC7E5", "glow-b": "#8FD8CB", "glow-c": "#C4D3FA"
+    }
+  },
+  {
+    "id": "lavender", "name": "Lavender", "mode": "light",
+    "description": "Lilac crystal with a gentle rose glow.", "aliases": [],
+    "colors": {
+      "canvas": "#F5EEFB", "canvas-end": "#EBE1F4", "text": "#372747", "muted": "#6C577E",
+      "accent": "#7542A2", "primary": "#804AA9", "primary-light": "#9D6EC5", "primary-hover": "#703C98",
+      "glow-a": "#C1A3EA", "glow-b": "#B7C8EF", "glow-c": "#F0BFD5"
+    }
+  },
+  {
+    "id": "midnight", "name": "Midnight", "mode": "dark",
+    "description": "Deep sapphire glass with moonlit blue accents.", "aliases": ["dark"],
+    "colors": {
+      "canvas": "#0F172A", "canvas-end": "#172444", "text": "#EDF3FF", "muted": "#AFBDD3",
+      "accent": "#B3BFFF", "primary": "#4B60C2", "primary-light": "#677EDB", "primary-hover": "#576ED5",
+      "glow-a": "#3156A3", "glow-b": "#235E78", "glow-c": "#4C3270"
+    }
+  },
+  {
+    "id": "graphite", "name": "Graphite", "mode": "dark",
+    "description": "Smoky charcoal with polished amethyst highlights.", "aliases": [],
+    "colors": {
+      "canvas": "#17191F", "canvas-end": "#2C3039", "text": "#F3F4F7", "muted": "#B7BFCE",
+      "accent": "#C1B4FA", "primary": "#705BB9", "primary-light": "#8C74D0", "primary-hover": "#8068C7",
+      "glow-a": "#4F5465", "glow-b": "#344B56", "glow-c": "#59446E"
+    }
+  },
+  {
+    "id": "aurora", "name": "Aurora", "mode": "dark",
+    "description": "Evergreen glass with luminous northern-light tones.", "aliases": [],
+    "colors": {
+      "canvas": "#09272A", "canvas-end": "#173A39", "text": "#E9F8F4", "muted": "#A8C9C4",
+      "accent": "#8CDDD0", "primary": "#246C63", "primary-light": "#3D9387", "primary-hover": "#2E7E72",
+      "glow-a": "#087A76", "glow-b": "#275565", "glow-c": "#553B79"
+    }
+  }
+]

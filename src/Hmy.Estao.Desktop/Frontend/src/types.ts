@@ -19,6 +19,7 @@ export interface Snapshot {
 }
 export interface HistoryPoint { provider: string; window: string; timestamp: string; percentUsed: number }
 export interface SettingsUpdate {
+  theme: string;
   providers: Provider[]; usageAlerts: UsageAlerts; refresh: { enabled: boolean; intervalMinutes: number };
   overlayEnabled: boolean; overlayProviderIds: string[]; launchAtSignIn: boolean;
 }

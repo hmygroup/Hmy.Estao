@@ -19,9 +19,9 @@ internal sealed record ProviderSettings(
     PacingConfig Pacing, bool HasApiKey, bool HasCookie, string? ApiKey = null,
     string? NewCookie = null, bool ClearApiKey = false, bool ClearCookie = false);
 internal sealed record SettingsUpdate(List<ProviderSettings> Providers, UsageColorConfig UsageAlerts,
-    RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds, bool LaunchAtSignIn);
+    RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds, bool LaunchAtSignIn, string Theme);
 internal sealed record AccountChoice(int Index, string Label);
 internal sealed record DesktopState(string View, string? SelectedProvider, List<ProviderSettings> Providers,
     UsageColorConfig UsageAlerts, RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds,
     bool LaunchAtSignIn, IReadOnlyList<UsageSnapshot> Snapshots, IReadOnlyList<UsageHistoryPoint> History,
-    Dictionary<string, List<AccountChoice>> Accounts, string? Status);
+    Dictionary<string, List<AccountChoice>> Accounts, string? Status, string Theme);

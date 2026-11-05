@@ -1,14 +1,16 @@
 using Shofia.WebHost;
 using Shofia.WebHost.Frontend;
+using System.Text.Json;
 
 namespace Hmy.Estao.Desktop;
 
 internal sealed class DesktopWindow : CustomChromeWebViewHostForm
 {
     private readonly List<IDisposable> _handlers = [];
+    private readonly string _initialTheme;
 
     public DesktopWindow(string view, Func<Task<DesktopState>> state,
-        Func<SettingsUpdate, Task> save, Func<DesktopCommand, Task> command)
+        Func<SettingsUpdate, Task> save, Func<DesktopCommand, Task> command, string? theme = null)
         : base(new WebViewHostOptions(new Uri(LocalFrontendContent.Origin, $"/?view={view}"), LocalFrontendContent.Origin)
         {
             LocalFrontend = new LocalFrontendContent(typeof(DesktopWindow).Assembly),
@@ -16,6 +18,10 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
             AllowSingleSignOnUsingOSPrimaryAccount = false
         })
     {
+        var appearance = DesktopThemeCatalog.Resolve(theme);
+        _initialTheme = appearance.Id;
+        BackColor = ColorTranslator.FromHtml(appearance.Colors["canvas"]);
+        WebView.DefaultBackgroundColor = BackColor;
         Text = view == "settings" ? "Estao · Settings" : "Estao · Usage";
         ShowInTaskbar = view == "settings";
         MinimizeBox = view == "settings";
@@ -45,6 +51,15 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
         };
         KeyPreview = true;
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+    }
+
+    protected override async ValueTask OnBrowserInitializedAsync(CancellationToken cancellationToken)
+    {
+        await base.OnBrowserInitializedAsync(cancellationToken);
+        // Supply just the validated theme ID before the page executes, avoiding
+        // a light/dark flash while React waits for the first native state reply.
+        await WebView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
+            $"window.__estaoInitialTheme = {JsonSerializer.Serialize(_initialTheme)};");
     }
 
     private async Task<T> OnUiAsync<T>(Func<Task<T>> action, CancellationToken ct)
