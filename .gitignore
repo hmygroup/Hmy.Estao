@@ -10,3 +10,8 @@ artifacts/
 *.msix
 *.msixbundle
 *.appinstaller
+
+# Rust
+/target/
+/spike/
+
