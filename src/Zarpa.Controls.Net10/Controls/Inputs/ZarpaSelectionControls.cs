@@ -16,18 +16,19 @@ namespace ZarpaSuite.Controls
     [DefaultEvent("Click")]
     public class ZarpaButton : Button, IZarpaThemeAware
     {
-        private ZarpaThemeTokens theme; private ZarpaButtonStyle buttonStyle; private string iconKey = string.Empty; private bool hot, pressed, loading, enabledBeforeLoading = true;
+        private ZarpaThemeTokens theme; private ZarpaButtonStyle buttonStyle; private string iconKey = string.Empty; private bool hot, pressed, loading, enabledBeforeLoading = true; private readonly Timer loadingTimer; private float loadingAngle;
         public ZarpaButton()
         {
             theme = new ZarpaThemeTokens(Invalidate); FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; Size = new Size(120, 34);
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+            loadingTimer = new Timer { Interval = 40 }; loadingTimer.Tick += (_, _) => { loadingAngle = (loadingAngle + 18F) % 360F; Invalidate(); };
         }
         [Category("Apariencia"), DefaultValue(ZarpaButtonStyle.Primary)] public ZarpaButtonStyle ButtonStyle { get { return buttonStyle; } set { buttonStyle = value; Invalidate(); } }
         [Category("Icono"), DefaultValue("")]
         [Editor("ZarpaSuite.Controls.Design.FluentIconPickerEditor, Zarpa.Controls", typeof(System.Drawing.Design.UITypeEditor))]
         public string IconKey { get { return iconKey; } set { iconKey = value ?? string.Empty; Invalidate(); } }
-        [Category("Estado"), DefaultValue(false)] public bool Loading { get { return loading; } set { if (loading == value) return; if (value) enabledBeforeLoading = Enabled; loading = value; Enabled = value ? false : enabledBeforeLoading; Invalidate(); } }
-        public void ApplyTheme(ZarpaThemeTokens value) { if (value == null) return; theme = value; Font = new Font(theme.FontFamily, theme.FontSize); BackColor = theme.Canvas; ForeColor = theme.Text; Height = theme.ControlHeight; Invalidate(); }
+        [Category("Estado"), DefaultValue(false)] public bool Loading { get { return loading; } set { if (loading == value) return; if (value) enabledBeforeLoading = Enabled; loading = value; Enabled = value ? false : enabledBeforeLoading; UpdateLoadingAnimation(); Invalidate(); } }
+        public void ApplyTheme(ZarpaThemeTokens value) { if (value == null) return; theme = value; Font = new Font(theme.FontFamily, theme.FontSize); BackColor = theme.Canvas; ForeColor = theme.Text; Height = theme.ControlHeight; UpdateLoadingAnimation(); Invalidate(); }
         protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hot = true; Invalidate(); }
         protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hot = false; pressed = false; Invalidate(); }
         protected override void OnMouseDown(MouseEventArgs mevent) { base.OnMouseDown(mevent); if (Enabled && mevent.Button == MouseButtons.Left) { pressed = true; Capture = true; Invalidate(); } }
@@ -48,10 +49,26 @@ namespace ZarpaSuite.Controls
             if (Focused && ShowFocusCues) ZarpaPaint.DrawRounded(e.Graphics,
                 buttonStyle == ZarpaButtonStyle.Primary || buttonStyle == ZarpaButtonStyle.Danger ? Color.White : theme.Accent,
                 new Rectangle(2, 2, Math.Max(1, Width - 5), Math.Max(1, Height - 5)), Math.Max(2, theme.CornerRadius - 2), 1);
-            int iconWidth = string.IsNullOrEmpty(iconKey) ? 0 : theme.IconSize + theme.SpacingSmall; int contentWidth = TextRenderer.MeasureText(Text, Font).Width + iconWidth; int x = Math.Max(theme.SpacingMedium, (Width - contentWidth) / 2);
-            if (!string.IsNullOrEmpty(iconKey)) { Rectangle icon = new Rectangle(x, (Height - theme.IconSize) / 2, theme.IconSize, theme.IconSize); FluentIconCatalog.TryDraw(e.Graphics, loading ? "ic_fluent_spinner_ios_20_regular" : iconKey, icon, text, theme.IconSize - 2F); x = icon.Right + theme.SpacingSmall; }
+            int iconWidth = (loading || !string.IsNullOrEmpty(iconKey)) ? theme.IconSize + theme.SpacingSmall : 0; int contentWidth = TextRenderer.MeasureText(Text, Font).Width + iconWidth; int x = Math.Max(theme.SpacingMedium, (Width - contentWidth) / 2);
+            if (loading) { Rectangle spinner = new Rectangle(x, (Height - theme.IconSize) / 2, theme.IconSize, theme.IconSize); DrawLoadingSpinner(e.Graphics, spinner, text); x = spinner.Right + theme.SpacingSmall; }
+            else if (!string.IsNullOrEmpty(iconKey)) { Rectangle icon = new Rectangle(x, (Height - theme.IconSize) / 2, theme.IconSize, theme.IconSize); FluentIconCatalog.TryDraw(e.Graphics, iconKey, icon, text, theme.IconSize - 2F); x = icon.Right + theme.SpacingSmall; }
             TextRenderer.DrawText(e.Graphics, Text, Font, new Rectangle(x, 0, Width - x - theme.SpacingMedium, Height), Enabled || loading ? text : theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         }
+        private void DrawLoadingSpinner(Graphics graphics, Rectangle bounds, Color color)
+        {
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (Pen track = new Pen(Color.FromArgb(90, color), Math.Max(1.5F, theme.BorderThickness + 0.5F))) graphics.DrawArc(track, bounds, 0, 360);
+            using (Pen arc = new Pen(color, Math.Max(1.8F, theme.BorderThickness + 1F)) { StartCap = LineCap.Round, EndCap = LineCap.Round }) graphics.DrawArc(arc, bounds, loadingAngle, 250);
+        }
+        private void UpdateLoadingAnimation()
+        {
+            if (!loading || !Visible || !IsHandleCreated || !theme.MotionEnabled) loadingTimer.Stop();
+            else if (!loadingTimer.Enabled) loadingTimer.Start();
+        }
+        protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); UpdateLoadingAnimation(); }
+        protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); UpdateLoadingAnimation(); }
+        protected override void OnHandleDestroyed(EventArgs e) { loadingTimer.Stop(); base.OnHandleDestroyed(e); }
+        protected override void Dispose(bool disposing) { if (disposing) loadingTimer.Dispose(); base.Dispose(disposing); }
     }
 
     [ToolboxItem(true)]

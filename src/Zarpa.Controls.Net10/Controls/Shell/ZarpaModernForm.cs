@@ -50,6 +50,7 @@ namespace ZarpaSuite.Controls
         private string iconKey = "ic_fluent_apps_24_regular";
         private Rectangle minimizeBounds, maximizeBounds, closeBounds;
         private int hotButton = -1;
+        private int pressedButton = -1;
         private ZarpaDpiScale dpiScale = new ZarpaDpiScale(96, 96);
         private bool backdropApplied;
         internal bool SuppressAccessibilityInterop { get; set; }
@@ -168,9 +169,9 @@ namespace ZarpaSuite.Controls
         {
             UpdateWindowButtonBounds();
             if (!ControlBox) return;
-            DrawWindowButton(graphics, minimizeBounds, 0, hotButton == 0, MinimizeBox);
-            DrawWindowButton(graphics, maximizeBounds, 1, hotButton == 1, MaximizeBox);
-            DrawWindowButton(graphics, closeBounds, 2, hotButton == 2, true);
+            DrawWindowButton(graphics, minimizeBounds, 0, hotButton == 0, pressedButton == 0, MinimizeBox);
+            DrawWindowButton(graphics, maximizeBounds, 1, hotButton == 1, pressedButton == 1, MaximizeBox);
+            DrawWindowButton(graphics, closeBounds, 2, hotButton == 2, pressedButton == 2, true);
         }
 
         private void UpdateWindowButtonBounds()
@@ -186,7 +187,7 @@ namespace ZarpaSuite.Controls
             minimizeBounds = new Rectangle(maximizeBounds.Left - buttonWidth, S(1), buttonWidth, ChromeHeight - S(2));
         }
 
-        private void DrawWindowButton(Graphics graphics, Rectangle bounds, int kind, bool hot, bool enabled)
+        private void DrawWindowButton(Graphics graphics, Rectangle bounds, int kind, bool hot, bool pressed, bool enabled)
         {
             if (hot && enabled)
             {
@@ -204,6 +205,18 @@ namespace ZarpaSuite.Controls
                 {
                     graphics.DrawLine(pen, cx - S(4), cy - S(4), cx + S(4), cy + S(4));
                     graphics.DrawLine(pen, cx + S(4), cy - S(4), cx - S(4), cy + S(4));
+                }
+            }
+            if (pressed && enabled)
+            {
+                Color color = kind == 2 ? ControlPaint.Dark(theme.Danger) : theme.BorderStrong;
+                using (SolidBrush brush = new SolidBrush(color)) graphics.FillRectangle(brush, bounds);
+                using (Pen pen = new Pen(kind == 2 ? Color.White : theme.Text))
+                {
+                    int cx = bounds.Left + bounds.Width / 2, cy = bounds.Top + bounds.Height / 2;
+                    if (kind == 0) graphics.DrawLine(pen, cx - S(5), cy + S(3), cx + S(5), cy + S(3));
+                    else if (kind == 1) graphics.DrawRectangle(pen, cx - S(5), cy - S(4), S(10), S(8));
+                    else { graphics.DrawLine(pen, cx-S(4),cy-S(4),cx+S(4),cy+S(4)); graphics.DrawLine(pen,cx+S(4),cy-S(4),cx-S(4),cy+S(4)); }
                 }
             }
         }
@@ -224,10 +237,37 @@ namespace ZarpaSuite.Controls
         {
             base.OnMouseUp(e);
             if (e.Button != MouseButtons.Left) return;
+            int wasPressed = pressedButton;
+            pressedButton = -1;
             UpdateWindowButtonBounds();
-            if (minimizeBounds.Contains(e.Location)) ActivateWindowButton(0);
-            else if (maximizeBounds.Contains(e.Location)) ActivateWindowButton(1);
-            else if (closeBounds.Contains(e.Location)) ActivateWindowButton(2);
+            Invalidate(new Rectangle(Math.Max(0, Width - S(140)), 0, S(140), ChromeHeight));
+            int released = GetWindowButtonAt(e.Location);
+            if (wasPressed >= 0 && released == wasPressed) ActivateWindowButton(wasPressed);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            pressedButton = GetWindowButtonAt(e.Location);
+            Invalidate(new Rectangle(Math.Max(0, Width - S(140)), 0, S(140), ChromeHeight));
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (Capture || pressedButton < 0) return;
+            pressedButton = -1;
+            Invalidate(new Rectangle(Math.Max(0, Width - S(140)), 0, S(140), ChromeHeight));
+        }
+
+        private int GetWindowButtonAt(Point point)
+        {
+            UpdateWindowButtonBounds();
+            if (closeBounds.Contains(point)) return 2;
+            if (MaximizeBox && maximizeBounds.Contains(point)) return 1;
+            if (MinimizeBox && minimizeBounds.Contains(point)) return 0;
+            return -1;
         }
 
         private void ActivateWindowButton(int index)
@@ -306,9 +346,10 @@ namespace ZarpaSuite.Controls
             backdropApplied = false;
             if (!IsHandleCreated) return;
 
-            Opacity = style == ZarpaBackdropStyle.None
-                ? 1D
-                : Math.Max(0.55D, Math.Min(1D, opacity / 100D));
+            // Backdrop opacity controls only the decorative backdrop tint. Applying
+            // Form.Opacity makes every child control translucent and can expose other
+            // windows through interactive content.
+            Opacity = 1D;
 
             bool systemBackdropApplied = false;
             if (Environment.OSVersion.Platform == PlatformID.Win32NT &&
@@ -327,8 +368,9 @@ namespace ZarpaSuite.Controls
 
             if (style != ZarpaBackdropStyle.None && !systemBackdropApplied)
             {
-                ApplyAcrylicFallback(opacity);
-                backdropApplied = true;
+                // Acrylic fallback is a whole-window composition effect. It can
+                // reveal desktop content behind controls; retain the opaque theme surface.
+                DisableAcrylicFallback();
             }
             else if (style == ZarpaBackdropStyle.None)
             {
@@ -438,12 +480,6 @@ namespace ZarpaSuite.Controls
             }
             if (m.Msg == WmNcHitTest)
             {
-                IntPtr result;
-                if (DwmDefWindowProc(Handle, m.Msg, m.WParam, m.LParam, out result))
-                {
-                    m.Result = result;
-                    return;
-                }
                 m.Result = (IntPtr)HitTestWindow(m.LParam);
                 return;
             }
@@ -478,9 +514,9 @@ namespace ZarpaSuite.Controls
             if (bottom) return HtBottom;
 
             UpdateWindowButtonBounds();
-            if (closeBounds.Contains(point)) return HtClose;
-            if (maximizeBounds.Contains(point)) return MaximizeBox ? HtMaxButton : HtClient;
-            if (minimizeBounds.Contains(point)) return MinimizeBox ? HtMinButton : HtClient;
+            // Chrome buttons are painted by Zarpa in the client area. Returning
+            // HTMINBUTTON/HTMAXBUTTON/HTCLOSE delegates their rendering to DWM.
+            if (closeBounds.Contains(point) || maximizeBounds.Contains(point) || minimizeBounds.Contains(point)) return HtClient;
             return point.Y < ChromeHeight ? HtCaption : HtClient;
         }
 

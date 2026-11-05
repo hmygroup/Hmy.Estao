@@ -11,34 +11,31 @@ Estao is a Windows tray-first .NET 10 port of CodexBar's provider-usage concept 
 - Explicit config import only; Estao does not silently copy CodexBar config files.
 - Initial providers: Codex, Claude, GitHub Copilot, OpenCode, Z.ai.
 - CLI: `estao usage` and `estao config` commands.
-- Harness configuration manager for Codex, Claude Code, GitHub Copilot, and OpenCode.
-- Multi-repository Harness Hub backed by local, mapped, or UNC shared folders.
+- GitHub-backed personal configuration installer for Codex, Claude Code, GitHub Copilot CLI, and OpenCode.
 - Cookie-based providers use saved manual cookies; cookies are stored locally with Windows DPAPI protection instead of reading Chrome/Edge browser databases.
 - Background target: hidden tray idle under 75 MB private memory, 0% sustained CPU, and adaptive 2-30 minute refreshes.
 
 ## Harness hub
 
-Open **Harness Hub...** from the tray menu, or launch it from **Settings > Harness hub**. The dedicated Zarpa workspace separates team discovery from local desired-state management:
+Abre **Harness Hub...** desde la bandeja o **Settings > Harness hub**, conecta GitHub si es necesario y pulsa **Instalar** en el harness elegido. El origen es el repositorio privado `hmygroup/hmy-prompt-engineer`.
 
-- Browse multiple repositories using switchable cards and table views, search, artifact type, harness, and team filters.
-- Publish individual immutable skills, MCP servers, and other harness artifacts from discovered local content; import v3 artifacts or compose versioned collections and snapshots.
-- See explicit Native, Converted, Partial, or Unsupported compatibility for Codex, Claude Code, GitHub Copilot, and OpenCode.
-- Adopt personal or project environments, stage artifact toggles, preview every operation, and apply desired state atomically.
-- Detect byte drift for every managed file and semantic drift for structured JSON/MCP configuration.
-- Remove managed content while either keeping local files or creating a restore point and deleting them.
-- Store personal desired state in Estao data and project desired state in `.estao/environment.json`.
-- Retain bulk harness configuration without erasing settings Estao does not manage.
-- Convert portable content between harness-native locations and formats. For example, Codex `AGENTS.md`, Agent Skills, TOML agents, and MCP configuration are translated to Copilot instructions, skills, Markdown agents, and `mcp-config.json`.
+- Cuatro acciones personales; sin catálogo, propietarios, publicación ni selección manual de artefactos.
+- Se utiliza un snapshot inmutable y un contrato explícito de compatibilidad. Un bootstrap incluido cubre únicamente su commit revisado; revisiones nuevas sin manifiesto requieren revisión, no se incorporan a ciegas.
+- Se copian skills completas con sus recursos/licencias. No se ejecutan scripts ni se instalan dependencias; los prompts ChatGPT y herramientas específicas de mantenimiento se clasifican y excluyen explícitamente.
+- Archivos idénticos: no-op. Archivos ajenos o modificados: conservar y comunicar conflicto. Solo se actualizan automáticamente archivos administrados que siguen intactos tras pulsar Actualizar.
+- Estado y journal recuperable separados de los datos legacy. La recuperación no reemplaza cambios posteriores del usuario. No se promete atomicidad global del filesystem.
+- La autorización del instalador es independiente de Copilot; una sesión de identidad no demuestra acceso al repositorio privado.
 
-Every synchronization creates a restore point under `<base>/.estao/backups`; the latest ten complete points per environment are retained. Estao recognizes both current `~/.agents/skills` and legacy `~/.codex/skills` user skills, excluding bundled `.system` skills. Codex plugin artifacts contain marketplace and enablement declarations rather than the downloaded plugin cache. Known literal credentials are replaced with environment placeholders during publishing, reparse-point directories are not followed, payload paths and hashes are verified, and hooks/rules/plugins/raw settings are not copied across harnesses when no safe mapping exists. Raw settings are available but disabled by default.
+Consulta [seguridad, autorización, cobertura y contrato](docs/HarnessInstaller.md). Los backups `.estao` y la configuración histórica se conservan; el nuevo Hub no publica ni elimina paquetes o contenido legacy.
 
 For a direct settings-only launch, use:
 
 ```powershell
 Hmy.Estao.exe --settings
 Hmy.Estao.exe --harness-hub
-Hmy.Estao.exe --harness-publish
 ```
+
+`--harness-publish` informa de la retirada de publicación y abre el nuevo Hub.
 
 ## Deferred
 

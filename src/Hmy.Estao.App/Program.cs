@@ -28,10 +28,10 @@ internal static class Program
 
         if (args.Contains("--harness-publish", StringComparer.OrdinalIgnoreCase))
         {
-            var store = new ConfigStore();
-            var config = store.LoadAsync().GetAwaiter().GetResult();
-            using var publish = new HarnessPublishDialog(config.HarnessManager);
-            Application.Run(publish);
+            MessageBox.Show("La publicación de paquetes se ha retirado. Harness Hub instala configuraciones desde la biblioteca GitHub corporativa.",
+                "Harness Hub", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            using var hub = new HarnessHubForm(new ConfigStore());
+            Application.Run(hub);
             return;
         }
 

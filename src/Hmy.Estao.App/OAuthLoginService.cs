@@ -11,6 +11,9 @@ internal static class OAuthLoginService
     // GitHub's public OAuth client used by VS Code. This is the same device flow
     // used by CodexBar for Copilot; it never asks the user for an API key.
     private const string CopilotOAuthClientId = "Iv1.b507a08c87ecfe98";
+    // Public OAuth App client ID used by the Check My Prompt extension for the
+    // same hmygroup/hmy-prompt-engineer Device Flow.
+    internal const string HarnessOAuthClientId = "Iv23lizzTqoPi455iW5N";
     private static readonly HttpClient HttpClient = new();
 
     public static void StartCodexLogin() => StartInteractiveCli("codex", "codex login", "Codex CLI");
@@ -20,7 +23,7 @@ internal static class OAuthLoginService
     public static async Task<CopilotOAuthLogin> SignInToCopilotAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
         progress?.Report("Requesting a GitHub device code…");
-        var deviceCode = await RequestCopilotDeviceCodeAsync(cancellationToken).ConfigureAwait(false);
+        var deviceCode = await RequestCopilotDeviceCodeAsync(CopilotOAuthClientId, "read:user", cancellationToken).ConfigureAwait(false);
         var verificationUrl = deviceCode.VerificationUriComplete ?? deviceCode.VerificationUri;
         progress?.Report($"Enter code {deviceCode.UserCode} in GitHub. Waiting for confirmation…");
 
@@ -33,20 +36,50 @@ internal static class OAuthLoginService
             progress?.Report($"Open {verificationUrl} and enter code {deviceCode.UserCode}. ({exception.Message})");
         }
 
-        var token = await PollCopilotTokenAsync(deviceCode, cancellationToken).ConfigureAwait(false);
+        var token = await PollCopilotTokenAsync(deviceCode, CopilotOAuthClientId, cancellationToken).ConfigureAwait(false);
         progress?.Report("GitHub confirmed the sign-in. Verifying the Copilot account…");
         var account = await TryGetGitHubLoginAsync(token, cancellationToken).ConfigureAwait(false);
         return new CopilotOAuthLogin(token, account);
     }
 
-    private static async Task<CopilotDeviceCode> RequestCopilotDeviceCodeAsync(CancellationToken cancellationToken)
+    public static async Task<CopilotOAuthLogin> SignInToGitHubAppAsync(string clientId, IProgress<string>? progress, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) throw new InvalidOperationException("La GitHub App de Estao no está configurada.");
+        var deviceCode = await RequestCopilotDeviceCodeAsync(clientId, null, cancellationToken).ConfigureAwait(false);
+        progress?.Report($"Abre {deviceCode.VerificationUri} e introduce {deviceCode.UserCode}.");
+        Process.Start(new ProcessStartInfo { FileName = "https://github.com/login/device", UseShellExecute = true });
+        var token = await PollCopilotTokenAsync(deviceCode, clientId, cancellationToken).ConfigureAwait(false);
+        return new CopilotOAuthLogin(token, await TryGetGitHubLoginAsync(token, cancellationToken).ConfigureAwait(false));
+    }
+
+    internal static async Task<GitHubDeviceAuthorization> StartHarnessDeviceFlowAsync(CancellationToken cancellationToken)
+    {
+        var code = await RequestCopilotDeviceCodeAsync(HarnessOAuthClientId, null, cancellationToken).ConfigureAwait(false);
+        if (code.VerificationUri != "https://github.com/login/device" || string.IsNullOrWhiteSpace(code.DeviceCode) ||
+            string.IsNullOrWhiteSpace(code.UserCode) || code.ExpiresIn <= 0)
+            throw new InvalidOperationException("GitHub devolvió datos de autorización no válidos.");
+        return new GitHubDeviceAuthorization(code.DeviceCode, code.UserCode, code.VerificationUri,
+            code.Interval, DateTimeOffset.UtcNow.AddSeconds(code.ExpiresIn));
+    }
+
+    internal static Task<string> CompleteHarnessDeviceFlowAsync(GitHubDeviceAuthorization authorization, CancellationToken cancellationToken) =>
+        PollCopilotTokenAsync(new CopilotDeviceCode
+        {
+            DeviceCode = authorization.DeviceCode,
+            UserCode = authorization.UserCode,
+            VerificationUri = authorization.VerificationUri,
+            Interval = authorization.Interval,
+            ExpiresIn = Math.Max(1, (int)(authorization.ExpiresAt - DateTimeOffset.UtcNow).TotalSeconds)
+        }, HarnessOAuthClientId, cancellationToken);
+
+    private static async Task<CopilotDeviceCode> RequestCopilotDeviceCodeAsync(string clientId, string? scope, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://github.com/login/device/code")
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["client_id"] = CopilotOAuthClientId,
-                ["scope"] = "read:user"
+                ["client_id"] = clientId,
+                ["scope"] = scope ?? string.Empty
             })
         };
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -56,7 +89,7 @@ internal static class OAuthLoginService
         return result ?? throw new InvalidOperationException("GitHub did not return a device code.");
     }
 
-    private static async Task<string> PollCopilotTokenAsync(CopilotDeviceCode deviceCode, CancellationToken cancellationToken)
+    private static async Task<string> PollCopilotTokenAsync(CopilotDeviceCode deviceCode, string clientId, CancellationToken cancellationToken)
     {
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(deviceCode.ExpiresIn);
         var delay = Math.Max(1, deviceCode.Interval);
@@ -67,7 +100,7 @@ internal static class OAuthLoginService
             {
                 Content = new FormUrlEncodedContent(new Dictionary<string, string>
                 {
-                    ["client_id"] = CopilotOAuthClientId,
+                    ["client_id"] = clientId,
                     ["device_code"] = deviceCode.DeviceCode,
                     ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code"
                 })
@@ -185,3 +218,4 @@ internal static class OAuthLoginService
 }
 
 internal sealed record CopilotOAuthLogin(string AccessToken, string? AccountLabel);
+internal sealed record GitHubDeviceAuthorization(string DeviceCode, string UserCode, string VerificationUri, int Interval, DateTimeOffset ExpiresAt);
