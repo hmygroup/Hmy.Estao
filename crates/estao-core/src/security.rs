@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::catalog;
@@ -76,7 +76,11 @@ mod dpapi {
         // The DPAPI output buffer is process-heap memory (windows 0.62 dropped
         // the deprecated LocalFree, which frees the same heap for fixed blocks).
         if let Ok(heap) = GetProcessHeap() {
-            let _ = HeapFree(heap, HEAP_FLAGS(0), Some(blob.pbData as *const core::ffi::c_void));
+            let _ = HeapFree(
+                heap,
+                HEAP_FLAGS(0),
+                Some(blob.pbData as *const core::ffi::c_void),
+            );
         }
         Ok(bytes)
     }
@@ -191,8 +195,10 @@ impl SecureCookieStore {
         let mut file = self.load()?;
         let normalized = normalize_cookie_header(cookie_header);
         let protected = self.protector.protect(normalized.as_bytes())?;
-        file.cookies
-            .insert(catalog::normalize_id(provider_id), base64_encode(&protected));
+        file.cookies.insert(
+            catalog::normalize_id(provider_id),
+            base64_encode(&protected),
+        );
         self.save(file)
     }
 
@@ -203,7 +209,11 @@ impl SecureCookieStore {
         }
 
         let mut file = self.load()?;
-        if file.cookies.remove(&catalog::normalize_id(provider_id)).is_none() {
+        if file
+            .cookies
+            .remove(&catalog::normalize_id(provider_id))
+            .is_none()
+        {
             return Ok(());
         }
 
@@ -226,7 +236,11 @@ impl SecureCookieStore {
         let file: CookieSecretsFile = serde_json::from_str(&text)
             .with_context(|| format!("failed to parse {}", self.path.display()))?;
         Ok(CookieSecretsFile {
-            version: if file.version <= 0 { CURRENT_VERSION } else { file.version },
+            version: if file.version <= 0 {
+                CURRENT_VERSION
+            } else {
+                file.version
+            },
             cookies: file.cookies,
         })
     }
@@ -239,7 +253,8 @@ impl SecureCookieStore {
 
         file.version = CURRENT_VERSION;
         let text = serde_json::to_string_pretty(&file).context("failed to serialize cookies")?;
-        fs::write(&self.path, text).with_context(|| format!("failed to write {}", self.path.display()))
+        fs::write(&self.path, text)
+            .with_context(|| format!("failed to write {}", self.path.display()))
     }
 }
 
@@ -310,7 +325,9 @@ impl SecureOAuthTokenStore {
         }
 
         let mut file = self.load()?;
-        let protected = self.protector.protect(token.access_token.trim().as_bytes())?;
+        let protected = self
+            .protector
+            .protect(token.access_token.trim().as_bytes())?;
         file.tokens.insert(
             catalog::normalize_id(provider_id),
             OAuthTokenEntry {
@@ -437,7 +454,9 @@ mod tests {
             Box::new(ReversingSecretProtector),
         );
 
-        store.save_cookie_header("opencode", "auth=secret-value").unwrap();
+        store
+            .save_cookie_header("opencode", "auth=secret-value")
+            .unwrap();
 
         let stored_text = fs::read_to_string(&path).unwrap();
         assert!(!stored_text.contains("secret-value"));
@@ -447,10 +466,8 @@ mod tests {
     #[test]
     fn save_rejects_empty_cookie_header() {
         let path = temp_path("cookie-secrets");
-        let store = SecureCookieStore::with_path_and_protector(
-            path,
-            Box::new(ReversingSecretProtector),
-        );
+        let store =
+            SecureCookieStore::with_path_and_protector(path, Box::new(ReversingSecretProtector));
 
         assert!(store.save_cookie_header("claude", "   ").is_err());
     }

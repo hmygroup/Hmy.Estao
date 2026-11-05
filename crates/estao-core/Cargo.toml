@@ -13,6 +13,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 ureq = { version = "3", features = ["json"] }
 base64 = "0.22"
+regex = "1.13.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Security_Cryptography", "Win32_System_Memory"] }

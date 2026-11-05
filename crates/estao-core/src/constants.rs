@@ -1,4 +1,4 @@
-/// Shared constants for Estao, ported from `EstaoConstants.cs`.
+//! Shared constants for Estao, ported from `EstaoConstants.cs`.
 
 pub const DISPLAY_NAME: &str = "Estao";
 pub const CONFIG_ENVIRONMENT_VARIABLE: &str = "HMY_ESTAO_CONFIG";

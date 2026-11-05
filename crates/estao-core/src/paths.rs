@@ -37,14 +37,8 @@ pub fn expand_home(path: &str) -> String {
         return user_home().to_string_lossy().into_owned();
     }
 
-    if let Some(rest) = path
-        .strip_prefix("~/")
-        .or_else(|| path.strip_prefix("~\\"))
-    {
-        return user_home()
-            .join(rest)
-            .to_string_lossy()
-            .into_owned();
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        return user_home().join(rest).to_string_lossy().into_owned();
     }
 
     expand_environment_variables(path)
