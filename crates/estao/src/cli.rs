@@ -444,20 +444,11 @@ fn read_secret(from_stdin: bool, value: Option<String>, missing_message: &str) -
     value.ok_or_else(|| anyhow!("{missing_message}"))
 }
 
-/// Serializes `config` as the pretty JSON stored in the config file.
-///
-/// `serde_json` is not a dependency of this crate and `Cargo.toml` is out of
-/// scope, so this reuses [`ConfigStore`]'s serializer through a throwaway file
-/// instead of duplicating the schema (it applies the same normalization too).
+/// Serializes `config` as the pretty JSON stored in the config file (after
+/// the same normalization a save would apply).
 fn config_json(config: &EstaoConfig) -> Result<String> {
-    let path = unique_temp_config_path();
-    let result = (|| {
-        let store = ConfigStore::with_path(&path);
-        store.save(config.clone())?;
-        fs::read_to_string(&path).context("Failed to read the serialized config.")
-    })();
-    let _ = fs::remove_file(&path);
-    result
+    let normalized = ConfigStore::normalize(config.clone());
+    serde_json::to_string_pretty(&normalized).context("Failed to serialize the config.")
 }
 
 /// A unique path for the temporary config used by `usage --provider/--account-index`.
