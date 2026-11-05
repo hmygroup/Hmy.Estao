@@ -7,8 +7,9 @@
 //! actions such as `refresh_now`, `open_settings`, `open_popover`,
 //! `toggle_startup`, and `quit` so the tray host can drive the app.
 //!
-//! Wave 5 ships placeholder windows for settings and the popover; later waves
-//! replace the placeholder `Render` implementation with the real surfaces.
+//! Wave 5 ships placeholders for settings and the popover; Wave 6 replaces the
+//! popover with the real surface and later waves do the same for settings and
+//! the taskbar overlay.
 
 use std::sync::Arc;
 
@@ -27,11 +28,10 @@ use crate::app::theme::{Palette, Theme};
 use crate::app::toasts;
 use crate::app::tray::{TrayAction, TrayHost};
 use crate::app::windows;
+use crate::app::windows::popover;
 
 /// The settings placeholder size.
 const SETTINGS_SIZE: (f32, f32) = (760.0, 560.0);
-/// The popover placeholder size.
-const POPOVER_SIZE: (f32, f32) = (380.0, 480.0);
 
 /// Shared state for the tray app.
 pub struct AppState {
@@ -44,7 +44,7 @@ pub struct AppState {
     theme: Theme,
     tray: Option<TrayHost>,
     settings_window: Option<WindowHandle<PlaceholderWindow>>,
-    popover_window: Option<WindowHandle<PlaceholderWindow>>,
+    popover_window: Option<WindowHandle<popover::UsagePopover>>,
     /// Reserved for the taskbar overlay window owned by Wave 8.
     #[allow(dead_code)]
     overlay_window: Option<WindowHandle<PlaceholderWindow>>,
@@ -94,7 +94,13 @@ impl AppState {
     /// Handles a notification-area click.
     pub fn handle_tray_event(&mut self, event: &TrayIconEvent, cx: &mut Context<Self>) {
         if let Some(action) = TrayHost::action_for_tray_event(event) {
-            self.apply_action(action, cx);
+            if action == TrayAction::OpenPopover {
+                // The click event carries the tray icon rectangle, which is
+                // the anchor for the popup.
+                self.toggle_popover(popover::anchor_from_event(event), cx);
+            } else {
+                self.apply_action(action, cx);
+            }
         }
     }
 
@@ -165,8 +171,13 @@ impl AppState {
         }
     }
 
-    /// Toggles the usage popover placeholder window.
+    /// Toggles the usage popover window.
     pub fn open_popover(&mut self, cx: &mut Context<Self>) {
+        self.toggle_popover(None, cx);
+    }
+
+    /// Toggles the usage popover, anchoring it to the tray icon when known.
+    fn toggle_popover(&mut self, anchor: Option<popover::TrayAnchor>, cx: &mut Context<Self>) {
         if let Some(handle) = &self.popover_window {
             if handle
                 .update(cx, |_, window, _| window.remove_window())
@@ -181,23 +192,39 @@ impl AppState {
         // Opening the popover counts as user activity for the adaptive loop.
         self.refresh_loop.mark_interaction();
 
-        let bounds = Bounds::centered(None, size(px(POPOVER_SIZE.0), px(POPOVER_SIZE.1)), cx);
+        // Tray/menu handlers run inside `AppState::update`, and the popover
+        // renders straight from that entity. Opening the window here would
+        // make its first draw re-enter the entity borrow, so defer the open
+        // until GPUI flushes effects at the end of the outermost update.
+        let state = cx.entity();
         let palette = self.theme.palette();
-        let subtitle = format!(
-            "Usage popover - full UI in a later wave ({} provider(s) loaded)",
-            self.snapshots.len()
-        );
+        cx.defer(move |cx| {
+            if state.read(cx).popover_window.is_some() {
+                return;
+            }
 
-        match cx.open_window(windows::popover_options(bounds), move |_window, cx| {
-            cx.new(|_| PlaceholderWindow::new("Estao usage", subtitle, palette))
-        }) {
-            Ok(handle) => {
-                self.popover_window = Some(handle);
+            let popover_size = size(px(popover::POPOVER_SIZE.0), px(popover::POPOVER_SIZE.1));
+            // The tray event reports physical pixels; `popover_bounds`
+            // converts them with the monitor scale factor and clamps to the
+            // work area. Without an anchor (tray menu, failed metrics) the
+            // popup is centered.
+            let bounds = popover::popover_bounds(anchor)
+                .unwrap_or_else(|| Bounds::centered(None, popover_size, cx));
+
+            let view_state = state.clone();
+            match cx.open_window(windows::popover_options(bounds), move |window, cx| {
+                cx.new(|cx| popover::UsagePopover::new(view_state.clone(), palette, window, cx))
+            }) {
+                Ok(handle) => {
+                    state.update(cx, |state, _cx| {
+                        state.popover_window = Some(handle);
+                    });
+                }
+                Err(error) => {
+                    eprintln!("Estao: failed to open the usage popover: {error:#}");
+                }
             }
-            Err(error) => {
-                eprintln!("Estao: failed to open the usage popover: {error:#}");
-            }
-        }
+        });
     }
 
     /// Flips the Windows "Launch at sign-in" registration.

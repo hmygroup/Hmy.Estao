@@ -7,6 +7,8 @@
 
 use gpui::{px, size, Bounds, Pixels, TitlebarOptions, WindowBounds, WindowKind, WindowOptions};
 
+pub mod popover;
+
 /// A normal, resizable, titled window for the settings surface.
 pub fn settings_options(bounds: Bounds<Pixels>) -> WindowOptions {
     WindowOptions {
@@ -27,15 +29,18 @@ pub fn settings_options(bounds: Bounds<Pixels>) -> WindowOptions {
     }
 }
 
-/// A borderless, non-activating popup for the usage popover.
+/// A borderless popup for the usage popover.
 ///
-/// The bounds are the requested popup rectangle; later waves anchor it to the
-/// tray icon rather than centering it.
+/// The bounds are the requested popup rectangle, already anchored above the
+/// tray icon by [`popover::popover_bounds`] (or centered when the platform
+/// reports no anchor). Unlike the Wave 5 stub this window takes keyboard
+/// focus when it opens: GPUI 0.3 has no window-deactivation hook, so Escape is
+/// the only keyboard dismissal and requires the popup to be active.
 pub fn popover_options(bounds: Bounds<Pixels>) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,
-        focus: false,
+        focus: true,
         show: true,
         kind: WindowKind::PopUp,
         is_movable: false,

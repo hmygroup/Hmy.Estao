@@ -1713,6 +1713,7 @@ dependencies = [
  "estao-core",
  "gpui-ce",
  "gpui_ce_platform",
+ "image",
  "resvg 0.49.0",
  "serde_json",
  "tauri-winrt-notification",
