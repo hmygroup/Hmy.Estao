@@ -1,8 +1,8 @@
 //! The taskbar usage overlay window.
 //!
 //! A small borderless always-on-top no-activate window painted over the
-//! taskbar's unused area: provider icons with percentage, donut, and reset
-//! time; hides when the taskbar cannot accommodate it; draggable with
+//! taskbar's unused area: compact provider tiles with percentage and usage
+//! bars; hides when the taskbar cannot accommodate it; draggable with
 //! persisted position; hovering a provider opens the usage popover for it.
 //! Ported from `src/Hmy.Estao.App/Controls/Zarpa/TaskbarUsageOverlay.cs`.
 //!
@@ -13,8 +13,8 @@
 //!
 //! Documented deviations from the .NET control:
 //! - Hover opens the popover immediately instead of after 350 ms.
-//! - The overlay always renders `icon-title` with `percentage,pie,reset`;
-//!   the v2 schema dropped `displayMode` and `controls`.
+//! - Compact GPUI tiles replace the legacy icon/title/donut/reset layout;
+//!   detailed reset times are shown in the hover popover.
 //! - Click-through hit-testing (`WM_NCHITTEST`/`HTTRANSPARENT`) is omitted, so
 //!   clicks inside the small unused-taskbar pill are captured instead of
 //!   reaching the taskbar.
@@ -30,9 +30,9 @@ use estao_core::config::{
 use estao_core::formatting;
 use estao_core::models::UsageSnapshot;
 use gpui::{
-    canvas, div, img, point, prelude::*, px, rgb, size, Bounds, ColorExt, Context, Entity,
-    FontWeight, MouseButton, MouseDownEvent, PathBuilder, Pixels, Render, RenderImage, Rgba,
-    SharedString, Subscription, Window,
+    div, img, point, prelude::*, px, rgb, size, Bounds, ColorExt, Context, Entity, FontWeight,
+    MouseButton, MouseDownEvent, Pixels, Render, RenderImage, Rgba, SharedString, Subscription,
+    Window,
 };
 
 use crate::app::icons;
@@ -69,8 +69,6 @@ const ELEMENT_GAP: i32 = 6;
 const PROVIDER_GAP: i32 = 10;
 /// Provider icon edge length, in logical pixels.
 const PROVIDER_ICON_SIZE: i32 = 20;
-/// Donut edge length, in logical pixels.
-const USAGE_DONUT_SIZE: i32 = 18;
 /// Rasterization size of the provider icons, in physical pixels.
 const OVERLAY_ICON_RASTER: u32 = 48;
 /// Overlay font size, in logical pixels (8.5 pt at 96 DPI).
@@ -173,6 +171,10 @@ impl PhysicalRect {
     /// The bottom edge (exclusive).
     pub fn bottom(self) -> i32 {
         self.top + self.height
+    }
+
+    pub fn contains(self, x: i32, y: i32) -> bool {
+        x >= self.left && x < self.right() && y >= self.top && y < self.bottom()
     }
 
     /// The center point.
@@ -299,19 +301,10 @@ fn reset_text(reset_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Option<Str
 
 /// Width of one provider row, in logical pixels.
 fn row_width(row: &OverlayRow, size: OverlaySize) -> i32 {
-    let percent = row.percent_text();
-    let mut width = size.provider_padding() * 2
+    size.provider_padding() * 2
         + PROVIDER_ICON_SIZE
-        + ELEMENT_GAP
-        + estimate_text_width(&row.display_name, true)
-        + ELEMENT_GAP
-        + estimate_text_width(&percent, false)
-        + ELEMENT_GAP
-        + USAGE_DONUT_SIZE;
-    if let Some(reset) = &row.reset_text {
-        width += ELEMENT_GAP + estimate_text_width(reset, false);
-    }
-    width
+        + 8
+        + (estimate_text_width(&row.display_name, false) + ELEMENT_GAP + 30).max(84)
 }
 
 /// Total overlay width, in logical pixels.
@@ -625,6 +618,9 @@ impl TaskbarOverlay {
             placement_for_rows(&config.overlay, &rows)
         };
         let Some(placement) = placement else {
+            if self.placement.is_none() {
+                return;
+            }
             self.rows.clear();
             self.row_widths.clear();
             self.icons.clear();
@@ -637,6 +633,8 @@ impl TaskbarOverlay {
         };
 
         let palette = TaskbarPalette::read();
+        let previous = self.placement;
+        let changed = self.rows != rows || self.size != size || self.palette != palette;
         if palette.text_hex != self.palette.text_hex {
             self.icons.clear();
         }
@@ -648,15 +646,17 @@ impl TaskbarOverlay {
         self.rows = rows;
         self.cache_icons();
 
-        window.resize(gpui::size(
-            px(overlay_width(&self.rows, size) as f32),
-            px(size.height() as f32),
-        ));
-        if let Some(hwnd) = self.hwnd {
-            win::set_placement(hwnd, placement.rect);
+        if previous != Some(placement.rect) {
+            if let Some(hwnd) = self.hwnd {
+                win::set_placement(hwnd, placement.rect);
+            }
         }
-        window.set_visible(true);
-        cx.notify();
+        if previous.is_none() {
+            window.set_visible(true);
+        }
+        if changed || previous != Some(placement.rect) {
+            cx.notify();
+        }
     }
 
     /// Lazily rasterizes the provider icons with the taskbar text tint.
@@ -806,7 +806,7 @@ impl TaskbarOverlay {
         }
     }
 
-    /// The grab handle: eight dots, the drag separator and the mouse target.
+    /// A subdued six-dot grab handle.
     fn drag_handle(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = self.palette;
         let dot = if self.dragging {
@@ -814,7 +814,7 @@ impl TaskbarOverlay {
         } else {
             palette.text_muted.opacity(0.8)
         };
-        let rows = (0..4).map(|_| {
+        let rows = (0..3).map(|_| {
             div()
                 .flex()
                 .gap(px(3.0))
@@ -839,18 +839,9 @@ impl TaskbarOverlay {
                 }),
             )
             .child(div().flex().flex_col().gap(px(3.0)).children(rows))
-            .child(
-                div()
-                    .absolute()
-                    .right_0()
-                    .top(px(9.0))
-                    .bottom(px(9.0))
-                    .w(px(1.0))
-                    .bg(palette.border.opacity(90.0 / 255.0)),
-            )
     }
 
-    /// One provider row: icon, bold title, percentage, donut and reset time.
+    /// A compact provider tile; detailed windows and reset times live in the popover.
     fn provider_row(
         &self,
         index: usize,
@@ -860,13 +851,7 @@ impl TaskbarOverlay {
     ) -> impl IntoElement {
         let palette = self.palette;
         let padding = self.size.provider_padding();
-        let label_width = estimate_text_width(&row.display_name, true);
         let percent = row.percent_text();
-        let percent_width = estimate_text_width(&percent, false);
-        let reset_width = row
-            .reset_text
-            .as_deref()
-            .map(|reset| estimate_text_width(reset, false));
         let icon = self.icons.get(&row.provider).cloned();
         let used = row.percent_used.unwrap_or(0.0).clamp(0.0, 1.0) as f32;
         let color = indicator_color(
@@ -882,13 +867,16 @@ impl TaskbarOverlay {
                 row.provider
             )))
             .w(px(width as f32))
-            .h_full()
+            .h(px((self.size.height() - 8) as f32))
             .flex_shrink_0()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(ELEMENT_GAP as f32))
+            .gap(px(8.0))
             .px(px(padding as f32))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .hover(move |style| style.bg(palette.border.opacity(0.24)))
             .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
                 if *hovered {
                     this.report_hover(index, cx);
@@ -910,37 +898,44 @@ impl TaskbarOverlay {
                     .bg(palette.border)
                     .into_any_element(),
             })
-            .child(label(
-                row.display_name.clone(),
-                label_width,
-                palette.text,
-                true,
-            ))
-            .child(label(percent, percent_width, palette.text_muted, false))
             .child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, _, window, _| paint_donut(bounds, used, color, window),
-                )
-                .w(px(USAGE_DONUT_SIZE as f32))
-                .h(px(USAGE_DONUT_SIZE as f32))
-                .flex_shrink_0(),
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(row.display_name.clone()),
+                            )
+                            .child(label(percent, 30, palette.text_muted, false)),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(2.0))
+                            .rounded_full()
+                            .overflow_hidden()
+                            .bg(palette.border.opacity(0.45))
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(gpui::relative(used))
+                                    .rounded_full()
+                                    .bg(color),
+                            ),
+                    ),
             )
-            .when_some(
-                row.reset_text.clone().zip(reset_width),
-                |element, (reset, width)| {
-                    element.child(label(reset, width, palette.text_muted, false))
-                },
-            )
-    }
-
-    /// The thin separator between two provider rows.
-    fn provider_separator(&self) -> impl IntoElement {
-        div()
-            .w(px(1.0))
-            .h(px((self.size.height() - 20) as f32))
-            .flex_shrink_0()
-            .bg(self.palette.border.opacity(110.0 / 255.0))
     }
 }
 
@@ -951,15 +946,12 @@ impl Render for TaskbarOverlay {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px((PROVIDER_GAP / 2) as f32))
+            .gap(px(PROVIDER_GAP as f32))
             .pl(px(OUTER_PADDING as f32))
             .pr(px(OUTER_PADDING as f32))
             .h_full();
 
         for index in 0..self.rows.len() {
-            if index > 0 {
-                providers = providers.child(self.provider_separator());
-            }
             let row = self.rows[index].clone();
             let width = self.row_widths[index];
             providers = providers.child(self.provider_row(index, &row, width, cx));
@@ -976,9 +968,9 @@ impl Render for TaskbarOverlay {
             .border_color(if self.dragging {
                 palette.accent
             } else {
-                palette.border
+                palette.border.opacity(0.55)
             })
-            .rounded(px(8.0))
+            .rounded(px(10.0))
             .font_family("Segoe UI")
             .text_size(px(OVERLAY_FONT_SIZE))
             .text_color(palette.text)
@@ -1005,63 +997,24 @@ fn label(text: impl Into<SharedString>, width: i32, color: Rgba, bold: bool) -> 
         .child(text.into())
 }
 
-/// Paints the usage donut: a faint full ring plus the used arc from 12 o'clock.
-fn paint_donut(bounds: Bounds<Pixels>, used: f32, color: Rgba, window: &mut Window) {
-    let edge = bounds.size.width.min(bounds.size.height);
-    if edge <= px(4.0) {
-        return;
+/// Physical hit testing avoids hover churn when GPUI repaints either window.
+pub fn pointer_in_window(window: &Window) -> bool {
+    let Some(hwnd) = win::hwnd_from_window(window) else {
+        return false;
+    };
+    if !win::is_visible(hwnd) {
+        return false;
     }
-    let radius = edge / 2.0 - px(1.5);
-    let center = bounds.center();
-    let radii = point(radius, radius);
-    let top = point(center.x, center.y - radius);
+    match (win::window_rect(hwnd), win::cursor_position()) {
+        (Some(rect), Some((x, y))) => rect.contains(x, y),
+        _ => false,
+    }
+}
 
-    let mut track = PathBuilder::stroke(px(3.0));
-    track.move_to(point(center.x - radius, center.y));
-    track.arc_to(
-        radii,
-        px(0.0),
-        false,
-        true,
-        point(center.x + radius, center.y),
-    );
-    track.arc_to(
-        radii,
-        px(0.0),
-        false,
-        true,
-        point(center.x - radius, center.y),
-    );
-    if let Ok(path) = track.build() {
-        window.paint_path(path, color.opacity(0.29));
-    }
-
-    let used = used.clamp(0.0, 1.0);
-    if used <= 0.0 {
-        return;
-    }
-
-    let mut value = PathBuilder::stroke(px(3.0));
-    value.move_to(top);
-    if used >= 0.9999 {
-        value.arc_to(
-            radii,
-            px(0.0),
-            false,
-            true,
-            point(center.x, center.y + radius),
-        );
-        value.arc_to(radii, px(0.0), false, true, top);
-    } else {
-        let angle = std::f32::consts::TAU * used;
-        let end = point(
-            center.x + radius * angle.sin(),
-            center.y - radius * angle.cos(),
-        );
-        value.arc_to(radii, px(0.0), angle > std::f32::consts::PI, true, end);
-    }
-    if let Ok(path) = value.build() {
-        window.paint_path(path, color);
+/// Hover previews must not steal keyboard focus from the user's active app.
+pub fn make_nonactivating(window: &Window) {
+    if let Some(hwnd) = win::hwnd_from_window(window) {
+        win::apply_overlay_styles(hwnd);
     }
 }
 
@@ -1099,6 +1052,10 @@ mod win {
     /// Converts the stored handle back into an `HWND`.
     fn hwnd(value: isize) -> HWND {
         HWND(value as *mut c_void)
+    }
+
+    pub fn is_visible(value: isize) -> bool {
+        unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd(value)).as_bool() }
     }
 
     /// Reads a window rectangle.
@@ -1280,6 +1237,10 @@ mod win {
     use gpui::Window;
 
     use super::{OverlayConfig, OverlayPlacement, PhysicalRect, TaskbarPalette};
+
+    pub fn is_visible(_value: isize) -> bool {
+        false
+    }
 
     /// No taskbar on this platform.
     pub fn window_rect(_hwnd: isize) -> Option<PhysicalRect> {
@@ -1541,7 +1502,14 @@ mod tests {
             DRAG_HANDLE_WIDTH + OUTER_PADDING * 2 + row_widths.iter().sum::<i32>() + PROVIDER_GAP;
         assert_eq!(overlay_width(&rows, size), expected);
         assert_eq!(overlay_width(&[], size), 0);
-        assert!(row_widths[0] > row_widths[1], "the reset text adds width");
+        let mut updated = rows[0].clone();
+        updated.percent_used = Some(1.0);
+        updated.reset_text = Some("Reset due".to_string());
+        assert_eq!(
+            row_width(&updated, size),
+            row_widths[0],
+            "usage and countdown updates must not resize the strip"
+        );
     }
 
     #[test]

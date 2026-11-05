@@ -253,6 +253,7 @@ impl UsagePopover {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let hover_owned = provider.is_some();
         let subscription = cx.observe(&state, |_, _, cx| cx.notify());
         let focus_handle = cx.focus_handle();
         let mut popover = Self {
@@ -266,7 +267,9 @@ impl UsagePopover {
         popover.ensure_selection(cx);
         // The popup is shown without activation, but a click inside activates
         // it; focusing the root makes Escape work from that point on.
-        window.focus(&popover.focus_handle, cx);
+        if !hover_owned {
+            window.focus(&popover.focus_handle, cx);
+        }
         popover
     }
 
