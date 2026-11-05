@@ -1714,6 +1714,7 @@ dependencies = [
  "gpui-ce",
  "gpui_ce_platform",
  "image",
+ "raw-window-handle",
  "resvg 0.49.0",
  "serde_json",
  "tauri-winrt-notification",

@@ -12,23 +12,23 @@
 //! the taskbar overlay.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use estao_core::config::{ConfigStore, EstaoConfig};
 use estao_core::models::{UsageHistoryPoint, UsageSnapshot};
 use estao_core::refresh::{AdaptiveRefreshLoop, UsageRefreshService};
-use gpui::{
-    div, prelude::*, px, size, App, Bounds, Context, Render, SharedString, Window, WindowHandle,
-};
+use gpui::{prelude::*, px, size, App, Bounds, Context, WindowHandle};
 use tray_icon::menu::MenuId;
 use tray_icon::TrayIconEvent;
 
 use crate::app::startup;
-use crate::app::theme::{Palette, Theme};
+use crate::app::theme::Theme;
 use crate::app::toasts;
 use crate::app::tray::{TrayAction, TrayHost};
 use crate::app::windows;
+use crate::app::windows::overlay;
 use crate::app::windows::popover;
 use crate::app::windows::settings;
 
@@ -44,9 +44,8 @@ pub struct AppState {
     tray: Option<TrayHost>,
     settings_window: Option<WindowHandle<settings::SettingsWindow>>,
     popover_window: Option<WindowHandle<popover::UsagePopover>>,
-    /// Reserved for the taskbar overlay window owned by Wave 8.
-    #[allow(dead_code)]
-    overlay_window: Option<WindowHandle<PlaceholderWindow>>,
+    overlay_window: Option<WindowHandle<overlay::TaskbarOverlay>>,
+    last_overlay_poll: Option<Instant>,
     /// Newest `updated_at` across the applied snapshots; used to detect a
     /// background refresh without diffing the whole payload.
     last_stamp: Option<DateTime<Utc>>,
@@ -77,6 +76,7 @@ impl AppState {
             settings_window: None,
             popover_window: None,
             overlay_window: None,
+            last_overlay_poll: None,
             last_stamp: None,
             refreshing: false,
             quitting: false,
@@ -200,6 +200,7 @@ impl AppState {
         self.theme = theme;
         self.rebuild_tray_menu();
         cx.notify();
+        self.sync_overlay(cx);
         self.refresh_now(cx);
         Ok(())
     }
@@ -222,6 +223,42 @@ impl AppState {
         }
         self.popover_window = None;
 
+        self.show_popover(anchor, None, cx);
+    }
+
+    /// Opens or selects a provider from the taskbar overlay.
+    pub fn open_popover_for(
+        &mut self,
+        provider: String,
+        anchor: popover::TrayAnchor,
+        cx: &mut Context<Self>,
+    ) {
+        let state = cx.entity();
+        cx.defer(move |cx| {
+            let handle = state.read(cx).popover_window;
+            if let Some(handle) = handle {
+                if handle
+                    .update(cx, |view, _, cx| {
+                        view.select_provider(&provider, cx);
+                    })
+                    .is_ok()
+                {
+                    return;
+                }
+            }
+            state.update(cx, |state, cx| {
+                state.popover_window = None;
+                state.show_popover(Some(anchor), Some(provider), cx);
+            });
+        });
+    }
+
+    fn show_popover(
+        &mut self,
+        anchor: Option<popover::TrayAnchor>,
+        provider: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         // Opening the popover counts as user activity for the adaptive loop.
         self.refresh_loop.mark_interaction();
 
@@ -246,7 +283,16 @@ impl AppState {
 
             let view_state = state.clone();
             match cx.open_window(windows::popover_options(bounds), move |window, cx| {
-                cx.new(|cx| popover::UsagePopover::new(view_state.clone(), palette, window, cx))
+                cx.new(|cx| match provider {
+                    Some(provider) => popover::UsagePopover::new_with_provider(
+                        view_state.clone(),
+                        palette,
+                        Some(provider),
+                        window,
+                        cx,
+                    ),
+                    None => popover::UsagePopover::new(view_state.clone(), palette, window, cx),
+                })
             }) {
                 Ok(handle) => {
                     state.update(cx, |state, _cx| {
@@ -274,6 +320,67 @@ impl AppState {
 
         self.rebuild_tray_menu();
         cx.notify();
+    }
+
+    /// Refreshes taskbar placement and countdowns once per second.
+    pub fn poll_overlay(&mut self, cx: &mut Context<Self>) {
+        if self
+            .last_overlay_poll
+            .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
+        {
+            self.sync_overlay(cx);
+        }
+    }
+
+    /// Defers window access so its view can safely read shared state.
+    pub fn sync_overlay(&mut self, cx: &mut Context<Self>) {
+        self.last_overlay_poll = Some(Instant::now());
+        let state = cx.entity();
+        cx.defer(move |cx| {
+            let handle = state.read(cx).overlay_window;
+            if let Some(handle) = handle {
+                if handle
+                    .update(cx, |view, window, cx| {
+                        view.refresh(window, cx);
+                    })
+                    .is_ok()
+                {
+                    return;
+                }
+            }
+            let placement = {
+                let state = state.read(cx);
+                overlay::desired_placement(
+                    &state.config.overlay,
+                    &state.snapshots,
+                    &state.config.providers,
+                    Utc::now(),
+                )
+            };
+            let Some(placement) = placement else { return };
+            let view_state = state.clone();
+            match cx.open_window(
+                windows::overlay_options(placement.logical_bounds()),
+                move |window, cx| cx.new(|cx| overlay::TaskbarOverlay::new(view_state, window, cx)),
+            ) {
+                Ok(handle) => state.update(cx, |state, _| state.overlay_window = Some(handle)),
+                Err(error) => eprintln!("Estao: failed to open the taskbar overlay: {error:#}"),
+            }
+        });
+    }
+
+    /// Persists a physical-screen drag position without refreshing providers.
+    pub fn set_overlay_position(&mut self, x: i32, y: i32, cx: &mut Context<Self>) {
+        let mut config = self.config.clone();
+        config.overlay.position_x = Some(x);
+        config.overlay.position_y = Some(y);
+        match self.config_store.save(config.clone()) {
+            Ok(()) => {
+                self.config = config;
+                cx.notify();
+            }
+            Err(error) => eprintln!("Estao: failed to save overlay position: {error:#}"),
+        }
     }
 
     /// Stops the refresh loop and exits the application.
@@ -327,6 +434,7 @@ impl AppState {
             self.config_store.path(),
         );
         cx.notify();
+        self.sync_overlay(cx);
     }
 
     fn rebuild_tray_menu(&mut self) {
@@ -386,59 +494,4 @@ fn focus_window<T: 'static>(handle: &Option<WindowHandle<T>>, cx: &mut App) -> b
     };
 
     handle.update(cx, |_, window, _| window.activate()).is_ok()
-}
-
-/// A minimal themed window used until Waves 6/7 ship the real surfaces.
-struct PlaceholderWindow {
-    title: SharedString,
-    subtitle: SharedString,
-    palette: Palette,
-}
-
-#[allow(dead_code)] // Wave 8's overlay still reuses the placeholder shell.
-impl PlaceholderWindow {
-    fn new(
-        title: impl Into<SharedString>,
-        subtitle: impl Into<SharedString>,
-        palette: Palette,
-    ) -> Self {
-        Self {
-            title: title.into(),
-            subtitle: subtitle.into(),
-            palette,
-        }
-    }
-}
-
-impl Render for PlaceholderWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.palette;
-
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p(px(24.0))
-            .bg(palette.background)
-            .text_color(palette.text)
-            .child(
-                div()
-                    .text_size(px(20.0))
-                    .text_color(palette.accent)
-                    .child(self.title.clone()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p(px(20.0))
-                    .bg(palette.surface)
-                    .border_1()
-                    .border_color(palette.border)
-                    .rounded_md()
-                    .child(self.subtitle.clone()),
-            )
-    }
 }

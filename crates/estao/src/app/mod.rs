@@ -91,6 +91,7 @@ pub fn run(options: AppOptions) {
                 cx.new(move |_cx| AppState::new(config, config_store, service, refresh_loop, tray));
             let state_keepalive = state.clone();
             let state_weak = state.downgrade();
+            state.update(cx, |state, cx| state.sync_overlay(cx));
 
             if open_settings {
                 state.update(cx, |state, cx| state.open_settings(cx));
@@ -133,7 +134,10 @@ pub fn run(options: AppOptions) {
                     // of snapshots.
                     cx.update(|cx| {
                         if let Some(state) = state_weak.upgrade() {
-                            state.update(cx, |state, cx| state.poll_service(cx));
+                            state.update(cx, |state, cx| {
+                                state.poll_service(cx);
+                                state.poll_overlay(cx);
+                            });
                         }
                     });
 

@@ -242,12 +242,23 @@ impl UsagePopover {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_provider(state, palette, None, window, cx)
+    }
+
+    /// Opens with the provider hovered in the taskbar overlay selected.
+    pub fn new_with_provider(
+        state: Entity<AppState>,
+        palette: Palette,
+        provider: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscription = cx.observe(&state, |_, _, cx| cx.notify());
         let focus_handle = cx.focus_handle();
         let mut popover = Self {
             state,
             palette,
-            selected: None,
+            selected: provider.map(|id| catalog::normalize_id(&id)),
             focus_handle,
             icons: HashMap::new(),
             _state_subscription: subscription,
@@ -257,6 +268,13 @@ impl UsagePopover {
         // it; focusing the root makes Escape work from that point on.
         window.focus(&popover.focus_handle, cx);
         popover
+    }
+
+    /// Switches an existing popover to the hovered provider.
+    pub fn select_provider(&mut self, provider: &str, cx: &mut Context<Self>) {
+        self.selected = Some(catalog::normalize_id(provider));
+        self.ensure_selection(cx);
+        cx.notify();
     }
 
     /// Drops a selection that no longer exists and falls back to the first

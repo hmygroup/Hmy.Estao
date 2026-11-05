@@ -96,6 +96,20 @@ pub fn provider_icon_path(id: &str) -> Option<PathBuf> {
 /// scaled uniformly and centered, so providers with non-square view boxes
 /// (for example OpenCode's 54x42 mark) keep their aspect ratio.
 pub fn provider_icon_rgba(id: &str, size: u32) -> Result<Option<(Vec<u8>, u32, u32)>> {
+    provider_icon_rgba_with_tint(id, size, None)
+}
+
+/// Rasterizes a provider icon, optionally recoloring its monochrome mark.
+///
+/// Mirrors `ZarpaProviderIconCatalog.CreateBitmap`: the bundled SVGs paint
+/// their mark with `#1F2328` or `#211E1E`, so `tint` (a `0xRRGGBB` value)
+/// replaces both before rasterizing. Icons without those colors are
+/// unaffected, which keeps the brand-colored marks intact.
+pub fn provider_icon_rgba_with_tint(
+    id: &str,
+    size: u32,
+    tint: Option<u32>,
+) -> Result<Option<(Vec<u8>, u32, u32)>> {
     let Some(path) = provider_icon_path(id) else {
         return Ok(None);
     };
@@ -104,6 +118,10 @@ pub fn provider_icon_rgba(id: &str, size: u32) -> Result<Option<(Vec<u8>, u32, u
         .with_context(|| format!("failed to read the provider icon '{}'", path.display()))?;
     let svg = String::from_utf8(data)
         .with_context(|| format!("the provider icon '{}' is not UTF-8", path.display()))?;
+    let svg = match tint {
+        Some(tint) => tint_provider_mark(&svg, tint),
+        None => svg,
+    };
     let tree = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default())
         .with_context(|| format!("failed to parse the provider icon '{}'", path.display()))?;
 
@@ -129,13 +147,56 @@ pub fn provider_icon_rgba(id: &str, size: u32) -> Result<Option<(Vec<u8>, u32, u
     Ok(Some((pixmap.data().to_vec(), size, size)))
 }
 
+/// Replaces the monochrome mark colors with `tint` (`0xRRGGBB`).
+fn tint_provider_mark(svg: &str, tint: u32) -> String {
+    let replacement = format!("#{tint:06X}");
+    ["#1F2328", "#211E1E"]
+        .into_iter()
+        .fold(svg.to_string(), |source, color| {
+            replace_ignore_ascii_case(&source, color, &replacement)
+        })
+}
+
+/// Replaces every ASCII-case-insensitive occurrence of `from` with `to`.
+fn replace_ignore_ascii_case(source: &str, from: &str, to: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut cursor = 0;
+    let from_lower = from.to_ascii_lowercase();
+    let haystack = source.to_ascii_lowercase();
+
+    while let Some(offset) = haystack[cursor..].find(&from_lower) {
+        let start = cursor + offset;
+        result.push_str(&source[cursor..start]);
+        result.push_str(to);
+        cursor = start + from.len();
+    }
+    result.push_str(&source[cursor..]);
+    result
+}
+
 /// Rasterizes a provider icon into a gpui image for [`gpui::img`].
 ///
 /// `tray_icon::Icon` and `gpui::RenderImage` share the same pixel data, but
 /// gpui expects BGRA byte order, so the red and blue channels are swapped
 /// after rasterizing. Returns `None` for providers without a bundled icon.
 pub fn provider_icon_image(id: &str, size: u32) -> Option<Arc<RenderImage>> {
-    let (rgba, width, height) = provider_icon_rgba(id, size).ok().flatten()?;
+    provider_icon_image_with_tint(id, size, None)
+}
+
+/// Rasterizes a tinted provider icon into a gpui image for [`gpui::img`].
+///
+/// See [`provider_icon_rgba_with_tint`] for the tinting rules.
+pub fn provider_icon_image_with_tint(
+    id: &str,
+    size: u32,
+    tint: Option<u32>,
+) -> Option<Arc<RenderImage>> {
+    let (rgba, width, height) = match tint {
+        Some(tint) => provider_icon_rgba_with_tint(id, size, Some(tint)),
+        None => provider_icon_rgba(id, size),
+    }
+    .ok()
+    .flatten()?;
 
     let mut bgra = rgba;
     let (pixels, _) = bgra.as_chunks_mut::<4>();
@@ -149,6 +210,23 @@ pub fn provider_icon_image(id: &str, size: u32) -> Option<Arc<RenderImage>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tint_replaces_only_monochrome_marks_case_insensitively() {
+        assert_eq!(
+            tint_provider_mark("#1f2328 #211E1E #D97757", 0xF5F5F5),
+            "#F5F5F5 #F5F5F5 #D97757"
+        );
+        let original = provider_icon_rgba("codex", 32).unwrap().unwrap();
+        let tinted = provider_icon_rgba_with_tint("codex", 32, Some(0xFFFFFF))
+            .unwrap()
+            .unwrap();
+        assert_ne!(original.0, tinted.0);
+        assert_eq!(
+            original.0.iter().skip(3).step_by(4).collect::<Vec<_>>(),
+            tinted.0.iter().skip(3).step_by(4).collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn rasterizes_the_tray_icon_at_the_expected_size() {
