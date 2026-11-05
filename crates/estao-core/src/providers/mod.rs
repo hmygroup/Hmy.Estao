@@ -195,6 +195,24 @@ impl HttpClient {
         read_response(response)
     }
 
+    /// Issues a form-encoded POST (GitHub's OAuth device flow uses these).
+    pub fn post_form(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        form: &[(&str, &str)],
+    ) -> Result<HttpResponse> {
+        let mut request = self.agent.post(url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+
+        let response = request
+            .send_form(form.iter().copied())
+            .with_context(|| format!("request to {url} failed"))?;
+        read_response(response)
+    }
+
     /// Issues a POST request with a JSON body and the given headers.
     pub fn post_json(
         &self,

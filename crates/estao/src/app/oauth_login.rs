@@ -5,13 +5,11 @@
 //! verification URL, poll for the token, verify the account login) and
 //! terminal launches for `codex login` / `claude login`.
 //!
-//! The .NET implementation uses `System.Net.Http`. This crate deliberately has
-//! no HTTP client of its own, so the device-flow requests are issued with the
-//! system `curl.exe` (present on every supported Windows release). The request
-//! shape is identical to the .NET code: form-encoded POSTs with an
-//! `Accept: application/json` header, and the same endpoints and JSON fields.
-//! All work runs on a background thread; progress crosses back to the UI
-//! through [`CopilotSignInEvent`].
+//! The device-flow requests go through the shared [`HttpClient`] from
+//! `estao_core` (blocking `ureq`, same request shape as the .NET code:
+//! form-encoded POSTs with an `Accept: application/json` header, and the same
+//! endpoints and JSON fields). All work runs on a background thread; progress
+//! crosses back to the UI through [`CopilotSignInEvent`].
 
 use std::io;
 use std::process::{Command, Stdio};
@@ -19,6 +17,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use estao_core::providers::HttpClient;
 use estao_core::security::{OAuthToken, SecureOAuthTokenStore};
 use serde_json::Value;
 
@@ -31,7 +30,6 @@ pub const COPILOT_OAUTH_SCOPE: &str = "read:user";
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL: &str = "https://api.github.com/user";
-const STATUS_MARKER: &str = "__ESTAO_STATUS__:";
 
 /// Progress line sent before the first request.
 pub const REQUESTING_DEVICE_CODE: &str = "Requesting a GitHub device code…";
@@ -250,8 +248,9 @@ fn string_field(value: &Value, name: &str) -> Option<String> {
 }
 
 fn request_device_code() -> Result<CopilotDeviceCode> {
-    let response = http_post_form(
+    let response = HttpClient::new().post_form(
         DEVICE_CODE_URL,
+        &[("Accept", "application/json")],
         &[
             ("client_id", COPILOT_OAUTH_CLIENT_ID),
             ("scope", COPILOT_OAUTH_SCOPE),
@@ -271,12 +270,14 @@ fn request_device_code() -> Result<CopilotDeviceCode> {
 fn poll_token(device_code: &CopilotDeviceCode) -> Result<String> {
     let expires_at = Instant::now() + Duration::from_secs(device_code.expires_in.max(0) as u64);
     let mut delay = initial_poll_delay(device_code.interval);
+    let http = HttpClient::new();
 
     while Instant::now() < expires_at {
         thread::sleep(Duration::from_secs(delay));
 
-        let response = http_post_form(
+        let response = http.post_form(
             ACCESS_TOKEN_URL,
+            &[("Accept", "application/json")],
             &[
                 ("client_id", COPILOT_OAUTH_CLIENT_ID),
                 ("device_code", &device_code.device_code),
@@ -304,7 +305,7 @@ fn poll_token(device_code: &CopilotDeviceCode) -> Result<String> {
 
 fn try_get_github_login(token: &str) -> Result<Option<String>> {
     let authorization = format!("token {token}");
-    let response = http_get(
+    let response = HttpClient::new().get(
         GITHUB_USER_URL,
         &[
             ("Authorization", authorization.as_str()),
@@ -381,88 +382,6 @@ fn open_url(url: &str) -> io::Result<()> {
 #[cfg(not(target_os = "windows"))]
 fn open_url(url: &str) -> io::Result<()> {
     Command::new("xdg-open").arg(url).spawn().map(|_| ())
-}
-
-/// A minimal HTTP response produced by a `curl.exe` invocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CurlResponse {
-    status: u16,
-    body: String,
-}
-
-impl CurlResponse {
-    fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
-    }
-}
-
-fn http_post_form(url: &str, form: &[(&str, &str)]) -> Result<CurlResponse> {
-    let mut args = vec![
-        "-X".to_string(),
-        "POST".to_string(),
-        "-H".to_string(),
-        "Accept: application/json".to_string(),
-        "-H".to_string(),
-        "Content-Type: application/x-www-form-urlencoded".to_string(),
-    ];
-    for (name, value) in form {
-        args.push("--data-urlencode".to_string());
-        args.push(format!("{name}={value}"));
-    }
-    args.push(url.to_string());
-
-    run_curl(args)
-}
-
-fn http_get(url: &str, headers: &[(&str, &str)]) -> Result<CurlResponse> {
-    let mut args = Vec::new();
-    for (name, value) in headers {
-        args.push("-H".to_string());
-        args.push(format!("{name}: {value}"));
-    }
-    args.push(url.to_string());
-
-    run_curl(args)
-}
-
-fn run_curl(mut args: Vec<String>) -> Result<CurlResponse> {
-    args.push("-sS".to_string());
-    args.push("--max-time".to_string());
-    args.push("120".to_string());
-    args.push("--write-out".to_string());
-    args.push(format!("\n{STATUS_MARKER}%{{http_code}}"));
-
-    let output = Command::new("curl.exe")
-        .args(&args)
-        .output()
-        .context("failed to run curl.exe for the GitHub sign-in")?;
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    if let Some(response) = parse_curl_output(&text) {
-        return Ok(response);
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stderr = stderr.trim();
-    if stderr.is_empty() {
-        bail!("the GitHub request failed without a response");
-    }
-
-    bail!("the GitHub request failed: {stderr}")
-}
-
-fn parse_curl_output(text: &str) -> Option<CurlResponse> {
-    let (body, status) = text.rsplit_once(STATUS_MARKER)?;
-    let status = status.trim().parse().ok()?;
-    // `--write-out` is prefixed with a newline so the marker never lands on the
-    // body's last line; remove exactly that separator, not arbitrary trailing
-    // whitespace from the response.
-    let body = body.strip_suffix('\n').unwrap_or(body);
-    let body = body.strip_suffix('\r').unwrap_or(body);
-    Some(CurlResponse {
-        status,
-        body: body.to_string(),
-    })
 }
 
 #[cfg(test)]
@@ -605,22 +524,5 @@ mod tests {
         );
         assert_eq!(parse_github_login(r#"{ "id": 1 }"#), None);
         assert_eq!(parse_github_login("not json"), None);
-    }
-
-    #[test]
-    fn splits_the_curl_status_marker() {
-        let response = parse_curl_output("{\"login\":\"octocat\"}\n__ESTAO_STATUS__:200").unwrap();
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body, "{\"login\":\"octocat\"}");
-        assert!(response.is_success());
-
-        assert_eq!(
-            parse_curl_output("oops\n__ESTAO_STATUS__:404")
-                .unwrap()
-                .status,
-            404
-        );
-        assert!(parse_curl_output("no marker").is_none());
-        assert!(parse_curl_output("\n__ESTAO_STATUS__:abc").is_none());
     }
 }
