@@ -44,7 +44,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
   const normalizeDraft = (value: DesktopState): SettingsUpdate => ({ ...structuredClone(value), theme: resolveTheme(value.theme).id });
   const [draft, setDraft] = useState<SettingsUpdate>(() => normalizeDraft(state));
   useEffect(() => { previewTheme(draft.theme); return () => previewTheme(null); }, [draft.theme, previewTheme]);
-  const [page, setPage] = useState("providers");
+  const [page, setPage] = useState("general");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -88,7 +88,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
         <button key={id} className={page === id ? "nav-item active" : "nav-item"} onClick={() => setPage(id)}
           aria-current={page === id ? "page" : undefined}><span aria-hidden="true">{["⚙", "◐", "◈", "▣", "◷"][i]}</span>{title}</button>)}</nav>
     </aside>
-    <div className="settings-body"><header className="page-header"><div><span className="eyebrow">SETTINGS</span>
+    <div className="settings-body"><header className="page-header"><div>
       <h1>{titles[page][0]}</h1><p>{titles[page][1]}</p></div></header>
       <main className="settings-content"><fieldset className="editor" disabled={busy}>
         {page === "providers" && <>
@@ -115,8 +115,6 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
         {page === "overlay" && <>
           <Section title="Small window. Essential information." description="A lightweight Windows Forms overlay, with no browser running inside it.">
             <Toggle label="Show provider overlay" checked={draft.overlayEnabled} onChange={overlayEnabled => change({ overlayEnabled })} />
-            <div className="overlay-preview" aria-label="Codex overlay: percentage, donut and reset time"><span aria-hidden="true">⠿</span><Icon id="codex" /><small>42%</small><div className="mini-donut" /><small>2h 15m</small></div>
-            <p className="footnote">These three indicators are always shown. The original taskbar pill follows Windows light/dark mode. Drag its grip to move it; hover or click a provider for detailed usage.</p>
           </Section>
           <Section title="Visible providers" description="Choose which enabled providers appear. An empty selection automatically includes all enabled providers.">
             {draft.providers.map(p => <Toggle key={p.id} label={p.name + (!p.enabled ? " (disabled)" : "")} checked={draft.overlayProviderIds.includes(p.id)}
