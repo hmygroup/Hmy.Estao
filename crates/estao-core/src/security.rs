@@ -17,7 +17,10 @@ use crate::catalog;
 use crate::paths;
 
 /// Encrypts/decrypts secret bytes. Swap in a fake in tests.
-pub trait SecretProtector {
+///
+/// `Send + Sync` so stores holding a protector can be shared across the
+/// refresh worker threads.
+pub trait SecretProtector: Send + Sync {
     fn protect(&self, plaintext: &[u8]) -> Result<Vec<u8>>;
     fn unprotect(&self, protected: &[u8]) -> Result<Vec<u8>>;
 }

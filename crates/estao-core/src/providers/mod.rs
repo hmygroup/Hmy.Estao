@@ -68,12 +68,6 @@ impl DefaultCookieSecretStore {
     }
 }
 
-// SAFETY: the wrapper only holds a file-backed store plus a stateless DPAPI
-// protector; every access goes through the mutex, so sharing it is safe even
-// though the `SecretProtector` trait object does not declare `Send + Sync`.
-unsafe impl Send for DefaultCookieSecretStore {}
-unsafe impl Sync for DefaultCookieSecretStore {}
-
 impl CookieSecretStore for DefaultCookieSecretStore {
     fn read_cookie_header(&self, provider_id: &str) -> Result<Option<String>> {
         let store = self
@@ -132,10 +126,6 @@ impl DefaultOAuthTokenStore {
         }
     }
 }
-
-// SAFETY: see `DefaultCookieSecretStore`; access is serialized by the mutex.
-unsafe impl Send for DefaultOAuthTokenStore {}
-unsafe impl Sync for DefaultOAuthTokenStore {}
 
 impl OAuthTokenStore for DefaultOAuthTokenStore {
     fn read(&self, provider_id: &str) -> Result<Option<OAuthToken>> {
