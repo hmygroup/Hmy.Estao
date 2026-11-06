@@ -10,11 +10,11 @@
 .hub-section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:24px 0 9px}
 .hub-helper{font-size:12px;line-height:1.7;margin-bottom:16px}
 .hub-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-.hub-tool{margin:0;padding:20px;display:flex;flex-direction:column;align-items:flex-start;gap:18px}
-.hub-tool-heading{display:flex;align-items:center;gap:14px}
+.hub-tool{margin:0;padding:20px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:18px}
+.hub-tool-heading{display:flex;align-items:center;gap:14px;min-width:0}
 .hub-tool-heading small{display:block;margin-top:5px}
-.hub-tool>.hub-helper{margin:0;overflow-wrap:anywhere}
-.hub-tool>button{margin-top:auto;font-size:12px}
+.hub-tool>.hub-helper{grid-column:1/-1;grid-row:2;margin:0;overflow-wrap:anywhere}
+.hub-tool>button{grid-column:2;grid-row:1;margin:0;font-size:12px}
 .hub-progress{display:flex;align-items:center;justify-content:space-between;gap:15px;margin:18px 0;padding:14px 0;font-size:12px;color:var(--muted)}
 .hub-progress span{overflow-wrap:anywhere}
 .hub-review-summary{font-size:12px;margin:8px 0}
@@ -45,4 +45,4 @@
 .hub-result>div{display:flex;align-items:center;gap:12px;justify-content:space-between;font-size:13px}
 .hub-result p{font-size:12px;margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere}
 @media(max-width:850px){.hub-connection{align-items:flex-start;flex-direction:column}.hub-connection>.hub-actions{flex-direction:row}.hub-section-heading{align-items:flex-start;flex-wrap:wrap}.hub-artifact-row{flex-wrap:wrap}.hub-artifact-copy{flex-basis:70%}.hub-artifact-row>.hub-badge{margin-left:29px}}
-@media(max-width:650px){.hub-tools{grid-template-columns:1fr}}
+@media(max-width:1000px){.hub-tools{grid-template-columns:1fr}}
