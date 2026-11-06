@@ -1,0 +1,48 @@
+/* Reuse the existing glass surfaces and theme tokens. No additional effects. */
+.harness-hub{max-width:940px}
+.hub-connection{display:flex;align-items:center;justify-content:space-between;gap:20px}
+.hub-connection-copy{min-width:0}
+.hub-connection-copy p{font-size:12px;margin-top:8px;overflow-wrap:anywhere}
+.hub-connection-status{display:block;color:var(--muted);font-size:12px;line-height:1.6;margin-top:12px}
+.hub-connection-status.connected{color:var(--accent)}
+.hub-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.hub-connection>.hub-actions{flex-direction:column;align-items:stretch}
+.hub-section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:24px 0 9px}
+.hub-helper{font-size:12px;line-height:1.7;margin-bottom:16px}
+.hub-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.hub-tool{margin:0;padding:20px;display:flex;flex-direction:column;align-items:flex-start;gap:18px}
+.hub-tool-heading{display:flex;align-items:center;gap:14px}
+.hub-tool-heading small{display:block;margin-top:5px}
+.hub-tool>.hub-helper{margin:0;overflow-wrap:anywhere}
+.hub-tool>button{margin-top:auto;font-size:12px}
+.hub-progress{display:flex;align-items:center;justify-content:space-between;gap:15px;margin:18px 0;padding:14px 0;font-size:12px;color:var(--muted)}
+.hub-progress span{overflow-wrap:anywhere}
+.hub-review-summary{font-size:12px;margin:8px 0}
+.hub-destination{display:block;overflow-wrap:anywhere;margin-bottom:16px}
+.hub-artifact{border-top:1px solid var(--divider);padding:15px 0}
+.hub-artifact-row{display:flex;align-items:flex-start;gap:12px}
+.hub-artifact-row>input[type=checkbox]{width:17px;height:17px;margin:3px 0 0;flex-shrink:0}
+.hub-artifact-copy{min-width:0;flex:1}
+.hub-artifact-copy strong{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.hub-artifact-copy p{font-size:12px;line-height:1.65;margin-top:4px}
+.hub-badge{display:inline-block;font-size:10px;line-height:1.5;padding:4px 7px;border-radius:6px;white-space:nowrap;background:var(--glass-high);color:var(--muted);border:1px solid var(--glass-edge)}
+.hub-badge.new,.hub-badge.update{color:var(--accent)}
+.hub-badge.conflict{color:var(--warning-text);background:var(--warning-surface)}
+.hub-artifact details{margin:8px 0 0 29px}
+.harness-hub summary{cursor:pointer;font-size:11px;color:var(--muted);width:fit-content}
+.harness-hub summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+.hub-artifact-details{margin-top:10px;max-height:260px;overflow:auto;border:1px solid var(--divider);border-radius:10px;padding:12px}
+.hub-artifact-details p,.hub-exclusions p{font-size:11px;margin:7px 0;overflow-wrap:anywhere}
+.hub-artifact-details>div{padding:8px 0;border-top:1px solid var(--divider)}
+.hub-artifact-details code{display:block;font-size:10px;overflow-wrap:anywhere;color:var(--text)}
+.hub-artifact-details small{display:block;font-size:10px;line-height:1.6;margin-top:5px}
+.hub-exclusions{border-top:1px solid var(--divider);padding-top:16px;margin-top:5px}
+.hub-review-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:24px}
+.hub-review-actions>span{margin-right:auto;font-size:12px;color:var(--muted)}
+.hub-device-code{display:block;font-size:26px;letter-spacing:3px;padding:20px 0;color:var(--text)}
+.hub-device p{font-size:12px;margin-top:8px}
+.hub-result{padding-top:16px;margin-top:16px;border-top:1px solid var(--divider)}
+.hub-result>div{display:flex;align-items:center;gap:12px;justify-content:space-between;font-size:13px}
+.hub-result p{font-size:12px;margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:850px){.hub-connection{align-items:flex-start;flex-direction:column}.hub-connection>.hub-actions{flex-direction:row}.hub-section-heading{align-items:flex-start;flex-wrap:wrap}.hub-artifact-row{flex-wrap:wrap}.hub-artifact-copy{flex-basis:70%}.hub-artifact-row>.hub-badge{margin-left:29px}}
+@media(max-width:650px){.hub-tools{grid-template-columns:1fr}}

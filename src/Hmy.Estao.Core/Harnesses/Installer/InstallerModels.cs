@@ -47,7 +47,11 @@ public sealed record CoverageItem(string Source, string Classification, string R
 public sealed record PreparedFile(string ArtifactId, string RelativePath, byte[] Content, string Format = "file");
 public sealed record PreparedSnapshot(string Commit, string Tree, string ManifestVersion,
     IReadOnlyList<PreparedFile> Files, IReadOnlyList<CoverageItem> Coverage,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? Dependencies = null);
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? Dependencies = null,
+    IReadOnlyList<PreparedArtifact>? Artifacts = null);
+
+public sealed record PreparedArtifact(string Id, string Category, string Source, string Description,
+    IReadOnlyList<string> Requirements);
 
 public enum InstallAction { Create, Update, Merge, AlreadyPresent, Conflict }
 public sealed record PlannedFile(string ArtifactId, string Path, byte[] Content, string? BeforeHash,

@@ -107,6 +107,10 @@ public sealed class HarnessSourceTests
         var snapshot = await source.PrepareAsync("fake-token", adapter);
         Assert.Equal(Commit, snapshot.Commit);
         Assert.Equal(content, Assert.Single(snapshot.Files).Content);
+        var artifact = Assert.Single(snapshot.Artifacts!);
+        Assert.Equal("Test skill", artifact.Description);
+        Assert.Equal("test", artifact.Id);
+        Assert.Equal("skills/test", artifact.Source);
         Assert.Single(requests, p => p.EndsWith("/commits/main", StringComparison.Ordinal));
         Assert.Contains(requests, p => p.Contains("/git/trees/" + Tree, StringComparison.Ordinal));
         corrupt = true;

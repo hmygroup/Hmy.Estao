@@ -54,6 +54,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
         ManifestContract.Validate(manifest, commit, tree, entries);
         var coverage = new List<CoverageItem>();
         var files = new List<PreparedFile>();
+        var artifacts = new List<PreparedArtifact>();
         var selected = manifest.Artifacts.Where(a => a.Harnesses.Contains(adapter.Id)).ToList();
         foreach (var artifact in manifest.Artifacts)
         {
@@ -74,12 +75,16 @@ public sealed class GitHubRepositorySource(HttpClient client)
                 payloads.AddRange(downloaded);
             }
             files.AddRange(adapter.Prepare(artifact, payloads));
+            var description = artifact.Category == "skill"
+                ? HarnessAdapter.SkillDescription(payloads.Single(p => p.Entry.Path == artifact.Source + "/SKILL.md").Bytes)
+                : "Native " + artifact.Category + " configuration.";
+            artifacts.Add(new(artifact.Id, artifact.Category, artifact.Source, description, artifact.Requirements));
             coverage.Add(new(artifact.Source, "installable", string.Join("; ", artifact.Requirements.Prepend("Formato nativo; no se ejecutan scripts ni se instalan dependencias.")), members.Count));
         }
         coverage.AddRange(manifest.Exclusions.Select(e => new CoverageItem(e.Source, e.Classification, e.Reason,
             entries.Count(f => ManifestContract.Matches(e.Source, f.Path)))));
         return new PreparedSnapshot(commit, tree, manifest.Version, files, coverage,
-            selected.ToDictionary(a => a.Id, a => (IReadOnlyList<string>)a.Dependencies));
+            selected.ToDictionary(a => a.Id, a => (IReadOnlyList<string>)a.Dependencies), artifacts);
     }
 
     private async Task<byte[]> BlobAsync(SourceEntry entry, string token, CancellationToken ct)

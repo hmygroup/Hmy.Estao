@@ -98,7 +98,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     }
 
     private DesktopWindow CreateWindow(string view) => new(view,
-        () => StateAsync(view), SaveSettingsAsync, CommandAsync, _config.Theme);
+        () => StateAsync(view), SaveSettingsAsync, CommandAsync, _config.Theme, _store.Path);
 
     private void ShowPopover(string? provider, Point anchor)
     {

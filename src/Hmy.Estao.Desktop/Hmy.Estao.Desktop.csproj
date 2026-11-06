@@ -21,6 +21,7 @@
     <PackageReference Include="Shofia.WebHost" Version="1.4.0" />
     <PackageReference Include="Svg" Version="3.4.8" />
     <Compile Include="../Hmy.Estao.App/OAuthLoginService.cs" Link="Services/OAuthLoginService.cs" />
+    <Compile Include="../Hmy.Estao.App/Services/HarnessGitHubAuthorization.cs" Link="Services/HarnessGitHubAuthorization.cs" />
     <None Remove="Frontend/node_modules/**/*;Frontend/dist/**/*" />
     <EmbeddedResource Remove="Frontend/**/*" />
   </ItemGroup>

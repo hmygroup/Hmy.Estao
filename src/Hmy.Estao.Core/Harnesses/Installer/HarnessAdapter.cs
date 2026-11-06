@@ -184,6 +184,13 @@ public sealed class HarnessAdapter
         return [new(artifact.Id, InstallerPaths.Within(root, artifact.Id + extension), bytes)];
     }
 
+    public static string SkillDescription(byte[] bytes)
+    {
+        var yaml = ReadFrontmatter(bytes);
+        return yaml.Children.TryGetValue(new YamlScalarNode("description"), out var description)
+            && description is YamlScalarNode scalar ? scalar.Value ?? string.Empty : string.Empty;
+    }
+
     public bool IsAllowedDestination(string path)
     {
         path = Path.GetFullPath(path);

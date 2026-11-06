@@ -3,6 +3,7 @@ import { command, getState, saveSettings, WindowControls } from "./nativeHost";
 import type { DesktopState, HistoryPoint, Provider, RateWindow, SettingsUpdate, UsageAlerts } from "./types";
 import { applyTheme, cachedTheme, cacheTheme, resolveTheme } from "./themes";
 import ThemePicker from "./themes/ThemePicker";
+import HarnessHub from "./HarnessHub";
 
 function Icon({ id }: { id: string }) {
   return <img className="provider-icon" src={`/providers/${id}.svg`} alt="" />;
@@ -81,16 +82,17 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
     providers: ["Providers", "Connect the tools you use. Keep an eye on what’s left."],
     overlay: ["Overlay", "A small native window. Always within reach."],
     alerts: ["Usage alerts", "One set of thresholds. Every provider."],
+    hub: ["Harness Hub", "Shared skills. Your tools. Your configuration stays yours."],
   };
   return <div className="settings-shell">
     <aside>
       <nav aria-label="Settings">{Object.entries(titles).map(([id, [title]], i) =>
         <button key={id} className={page === id ? "nav-item active" : "nav-item"} onClick={() => setPage(id)}
-          aria-current={page === id ? "page" : undefined}><span aria-hidden="true">{["⚙", "◐", "◈", "▣", "◷"][i]}</span>{title}</button>)}</nav>
+          aria-current={page === id ? "page" : undefined}><span aria-hidden="true">{["⚙", "◐", "◈", "▣", "◷", "◇"][i]}</span>{title}</button>)}</nav>
     </aside>
     <div className="settings-body"><header className="page-header"><div>
       <h1>{titles[page][0]}</h1><p>{titles[page][1]}</p></div></header>
-      <main className="settings-content"><fieldset className="editor" disabled={busy}>
+      <main className="settings-content">{page === "hub" ? <HarnessHub /> : <fieldset className="editor" disabled={busy}>
         {page === "providers" && <>
           <div className="section-caption">YOUR CONNECTIONS <span>{draft.providers.filter(p => p.enabled).length} enabled</span></div>
           {draft.providers.map(p => <ProviderCard key={p.id} provider={p} update={u => providerChange(p.id, u)}
@@ -133,7 +135,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
               {[1, 5, 10, 15, 30, 60].map(n => <option key={n} value={n}>{n} minutes</option>)}</select></Field>
           </Section>
         </>}
-      </fieldset></main>
+      </fieldset>}</main>
       <footer className="settings-footer"><span role="status">{message || state.status || (dirty ? "Unsaved changes" : "All changes saved")}</span>
         <button className="secondary" disabled={busy || !dirty} onClick={() => void discard()}>Discard</button>
         <button className="primary" disabled={busy || !dirty} onClick={() => void save()}>{busy ? "Saving…" : "Save changes"}</button></footer>
