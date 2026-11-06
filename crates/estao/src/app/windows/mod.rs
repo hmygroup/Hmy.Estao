@@ -30,6 +30,7 @@ pub fn settings_options(bounds: Bounds<Pixels>) -> WindowOptions {
         is_minimizable: true,
         window_min_size: Some(size(px(560.0), px(420.0))),
         app_id: Some("estao".to_string()),
+        inactive_frame_interval: None,
         ..WindowOptions::default()
     }
 }
@@ -38,9 +39,8 @@ pub fn settings_options(bounds: Bounds<Pixels>) -> WindowOptions {
 ///
 /// The bounds are the requested popup rectangle, already anchored above the
 /// tray icon by [`popover::popover_bounds`] (or centered when the platform
-/// reports no anchor). Unlike the Wave 5 stub this window takes keyboard
-/// focus when it opens: GPUI 0.3 has no window-deactivation hook, so Escape is
-/// the only keyboard dismissal and requires the popup to be active.
+/// reports no anchor). It takes focus so Escape and GPUI's activation
+/// observer can dismiss it on outside clicks.
 pub fn popover_options(bounds: Bounds<Pixels>) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -75,6 +75,7 @@ pub fn overlay_options(bounds: Bounds<Pixels>) -> WindowOptions {
         is_resizable: false,
         is_minimizable: false,
         app_id: Some("estao".to_string()),
+        inactive_frame_interval: None,
         #[cfg(target_os = "windows")]
         windows_window_background: WindowsWindowBackground::Transparent,
         ..WindowOptions::default()

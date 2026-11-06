@@ -43,6 +43,21 @@ pub struct TrayHost {
 }
 
 impl TrayHost {
+    /// Avoid closing and reopening the popover on the same tray click.
+    pub fn contains_pointer(&self) -> bool {
+        let Some(rect) = self.tray.rect() else {
+            return false;
+        };
+        let Some((x, y)) = crate::app::windows::overlay::cursor_position() else {
+            return false;
+        };
+        let x = f64::from(x);
+        let y = f64::from(y);
+        x >= rect.position.x
+            && x < rect.position.x + f64::from(rect.size.width)
+            && y >= rect.position.y
+            && y < rect.position.y + f64::from(rect.size.height)
+    }
     /// Creates the tray icon and its first context menu.
     pub fn new(snapshots: &[UsageSnapshot], startup_enabled: bool) -> Result<Self> {
         let icon = icons::tray_icon().context("failed to build the Estao tray icon")?;

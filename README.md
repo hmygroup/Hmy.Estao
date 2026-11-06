@@ -5,7 +5,7 @@ A Windows tray usage monitor for Codex, Claude, GitHub Copilot, OpenCode and Z.a
 ## App
 
 - Tray icon and native menu; left-click opens usage, reset countdowns and history charts.
-- Floating GPUI taskbar strip with compact provider tiles, slim usage bars, threshold colors and a drag handle. Hover a provider to preview usage without taking keyboard focus; leave the strip and popover to dismiss it. Drag to save the strip's screen position.
+- Floating GPUI taskbar strip with aligned provider tiles, slim usage bars, threshold colors and a drag handle. Click a provider to open usage; click again or click outside to dismiss it. Moving the pointer does not open or highlight anything. Drag to save the strip's screen position.
 - Settings for providers and authentication, refresh interval, launch at sign-in, light/dark theme, per-provider pacing and usage colors.
 - Copilot device-code sign-in, terminal-based provider logins and manual cookie/token setup.
 - Pacing notifications, adaptive background refresh and locally persisted history.
@@ -52,7 +52,7 @@ The simplified overlay can still be configured in JSON:
 }
 ```
 
-Sizes are `compact`, `normal` and `spacious`. Empty `providerIds` shows up to four enabled providers with usage. Optional `positionX`/`positionY` are physical screen pixels; remove both to restore automatic taskbar placement. The overlay follows the Windows taskbar palette, independently of the app theme. Restart after editing config externally.
+Sizes are `compact`, `normal` and `spacious`. Empty `providerIds` shows up to four enabled providers with usage. Optional `positionX`/`positionY` are physical screen pixels; remove both to restore automatic taskbar placement. The strip shares the app's light/dark theme and design tokens. Restart after editing config externally.
 
 ## Build and test
 
@@ -69,13 +69,15 @@ cargo build --locked --release --bin estao
 
 The workspace has two crates: `estao-core` (providers, config, HTTP, security, history, pacing and refresh) and `estao` (clap CLI, GPUI windows and Windows tray integration). Provider SVGs and their license are under `assets/ProviderIcons`; keep that directory next to the packaged executable as `assets/ProviderIcons`.
 
+With the app running on an interactive Windows desktop, `pwsh -STA -File scripts/Test-Desktop.ps1` checks click toggling, outside dismissal, absence of hover opening and native geometry/visibility churn while idle. It temporarily moves the pointer and opens a test window; do not use the mouse during this check. This is not a GPU frame-rate benchmark.
+
 CI runs formatting, clippy, tests and a Windows build. The release workflow builds `estao.exe` and packages it with `assets`, this README and `VERSION.txt` in a Windows x64 ZIP. Update the workspace version in `Cargo.toml` and regenerate `Cargo.lock` before pushing a matching `vX.Y.Z` tag, or dispatch the workflow with that version. MSIX/App Installer packaging has been removed.
 
 ## Current limitations
 
 - Refresh-interval changes take effect after restart; an already-open popover retains its theme until reopened.
-- Tray-click popovers stay open until dismissed with Escape or the tray toggle; outside-click dismissal is not implemented. Hover previews close automatically after leaving both surfaces, with a short grace period to cross the gap.
-- Overlay hover opens immediately (rather than after the .NET app's delay), and the overlay captures clicks inside its bounds rather than passing unused-area clicks through to the taskbar.
+- Popovers close on repeat click, Escape or loss of activation (for example, clicking another app or the desktop). Clicks inside the popover leave it open.
+- The strip captures clicks inside its bounds rather than passing unused-area clicks through to the taskbar. Drag follows GPUI frame callbacks instead of a separate timer; inactive windows are not capped at 30 fps, but idle content does not continuously redraw.
 - Reset details live in the popover rather than the compact strip; there is no overlay customization panel.
 - Multi-monitor/DPI transitions, drag persistence and all provider sign-in flows still need full manual regression testing. No memory/CPU target is claimed without measurement.
 

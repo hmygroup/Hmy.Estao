@@ -3,7 +3,7 @@
 //! A small borderless always-on-top no-activate window painted over the
 //! taskbar's unused area: compact provider tiles with percentage and usage
 //! bars; hides when the taskbar cannot accommodate it; draggable with
-//! persisted position; hovering a provider opens the usage popover for it.
+//! persisted position; clicking a provider toggles its usage popover.
 //! Ported from `src/Hmy.Estao.App/Controls/Zarpa/TaskbarUsageOverlay.cs`.
 //!
 //! GPUI owns the painting, so the layout is a row of divs instead of the
@@ -12,9 +12,9 @@
 //! 0.3 cannot move an existing window or make it topmost.
 //!
 //! Documented deviations from the .NET control:
-//! - Hover opens the popover immediately instead of after 350 ms.
+//! - Pointer movement has no visual effect and never opens the popover.
 //! - Compact GPUI tiles replace the legacy icon/title/donut/reset layout;
-//!   detailed reset times are shown in the hover popover.
+//!   detailed reset times are shown in the click popover.
 //! - Click-through hit-testing (`WM_NCHITTEST`/`HTTRANSPARENT`) is omitted, so
 //!   clicks inside the small unused-taskbar pill are captured instead of
 //!   reaching the taskbar.
@@ -37,6 +37,7 @@ use gpui::{
 
 use crate::app::icons;
 use crate::app::state::AppState;
+use crate::app::theme::Theme;
 use crate::app::windows::popover;
 
 /// Height of the compact overlay, in logical pixels.
@@ -63,12 +64,10 @@ const OUTER_PADDING: i32 = 7;
 const PROVIDER_PADDING: i32 = 6;
 /// Extra provider padding used by the spacious size.
 const PROVIDER_PADDING_SPACIOUS: i32 = 5;
-/// Gap between the elements of a provider row.
-const ELEMENT_GAP: i32 = 6;
 /// Gap between provider rows.
 const PROVIDER_GAP: i32 = 10;
 /// Provider icon edge length, in logical pixels.
-const PROVIDER_ICON_SIZE: i32 = 20;
+const PROVIDER_ICON_SIZE: i32 = 16;
 /// Rasterization size of the provider icons, in physical pixels.
 const OVERLAY_ICON_RASTER: u32 = 48;
 /// Overlay font size, in logical pixels (8.5 pt at 96 DPI).
@@ -300,11 +299,8 @@ fn reset_text(reset_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Option<Str
 }
 
 /// Width of one provider row, in logical pixels.
-fn row_width(row: &OverlayRow, size: OverlaySize) -> i32 {
-    size.provider_padding() * 2
-        + PROVIDER_ICON_SIZE
-        + 8
-        + (estimate_text_width(&row.display_name, false) + ELEMENT_GAP + 30).max(84)
+fn row_width(_row: &OverlayRow, size: OverlaySize) -> i32 {
+    size.provider_padding() * 2 + PROVIDER_ICON_SIZE + 8 + 96
 }
 
 /// Total overlay width, in logical pixels.
@@ -312,36 +308,10 @@ pub fn overlay_width(rows: &[OverlayRow], size: OverlaySize) -> i32 {
     if rows.is_empty() {
         return 0;
     }
-    DRAG_HANDLE_WIDTH
+    2 + DRAG_HANDLE_WIDTH
         + OUTER_PADDING * 2
         + rows.iter().map(|row| row_width(row, size)).sum::<i32>()
         + PROVIDER_GAP * (rows.len() as i32 - 1)
-}
-
-/// Estimates the rendered width of `text` for layout before painting.
-///
-/// GPUI can only measure text with a window, and the overlay needs its target
-/// width before the window exists, so this uses the same per-glyph heuristic
-/// for every frame. It overestimates slightly to avoid clipping.
-fn estimate_text_width(text: &str, bold: bool) -> i32 {
-    let base: i32 = text.chars().map(character_width).sum();
-    let width = if bold {
-        (base as f32 * 1.06).round() as i32
-    } else {
-        base
-    };
-    (width + 2).max(1)
-}
-
-/// Approximate advance width of one glyph at [`OVERLAY_FONT_SIZE`].
-fn character_width(character: char) -> i32 {
-    match character {
-        ' ' | '.' | ',' | ':' | ';' | '|' | '\'' | 'i' | 'l' | 'I' | '!' => 3,
-        'm' | 'w' | 'M' | 'W' | '%' | '@' | '—' => 9,
-        '0'..='9' => 6,
-        'A'..='Z' => 7,
-        _ => 6,
-    }
 }
 
 /// Places the overlay in the taskbar's unused area.
@@ -415,11 +385,7 @@ pub fn placement_for_rows(config: &OverlayConfig, rows: &[OverlayRow]) -> Option
     win::place(config, overlay_width(rows, size), size.height())
 }
 
-/// The taskbar palette.
-///
-/// Follows the Windows personalization setting rather than the Estao theme,
-/// mirroring `WindowsTaskbarPalette.Read`: the light/dark preference comes
-/// from the registry and the accent/text colors from the system colors.
+/// The strip uses the same theme tokens as the other app surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TaskbarPalette {
     /// Card background.
@@ -437,51 +403,23 @@ pub struct TaskbarPalette {
 }
 
 impl TaskbarPalette {
-    /// Reads the current Windows taskbar palette.
-    pub fn read() -> Self {
-        let light = apps_use_light_theme();
-        win::palette(light)
-    }
-
-    /// Builds the palette from an explicit light/dark choice and system colors.
-    pub fn build(light: bool, accent: Rgba, window_text: Rgba, gray_text: Rgba) -> Self {
-        // `SystemColors.Highlight` is black or white in some high-contrast
-        // configurations; the .NET control replaces it with a visible blue.
-        let accent = if accent == rgb(0x000000) || accent == rgb(0xFFFFFF) {
-            if light {
-                rgb(0x0067C0)
-            } else {
-                rgb(0x60A5FA)
-            }
-        } else {
-            accent
-        };
-
-        if light {
-            Self {
-                surface: rgb(0xF8F8F8),
-                border: rgb(0xD2D2D2),
-                text: window_text,
-                text_muted: gray_text,
-                accent,
-                text_hex: rgba_hex(window_text),
-            }
-        } else {
-            Self {
-                surface: rgb(0x202020),
-                border: rgb(0x484848),
-                text: rgb(0xF5F5F5),
-                text_muted: rgb(0xB9B9B9),
-                accent,
-                text_hex: 0xF5F5F5,
-            }
+    /// Reuses the same design tokens as settings and the usage popover.
+    pub fn from_theme(theme: Theme) -> Self {
+        let palette = theme.palette();
+        Self {
+            surface: palette.surface,
+            border: palette.border,
+            text: palette.text,
+            text_muted: palette.text_muted,
+            accent: palette.accent,
+            text_hex: rgba_hex(palette.text),
         }
     }
 }
 
 impl Default for TaskbarPalette {
     fn default() -> Self {
-        Self::build(true, rgb(0x0067C0), rgb(0x000000), rgb(0x6D6D6D))
+        Self::from_theme(Theme::default())
     }
 }
 
@@ -491,17 +429,7 @@ fn rgba_hex(color: Rgba) -> u32 {
     (channel(color.red) << 16) | (channel(color.green) << 8) | channel(color.blue)
 }
 
-/// Reads `AppsUseLightTheme`; the .NET default is light when missing.
-fn apps_use_light_theme() -> bool {
-    windows_registry::CURRENT_USER
-        .open(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-        .ok()
-        .and_then(|key| key.get_u32("AppsUseLightTheme").ok())
-        .map(|value| value != 0)
-        .unwrap_or(true)
-}
-
-/// Warn/critical override used by the donut, falling back to the accent.
+/// Warn/critical override used by the usage bar, falling back to the accent.
 fn indicator_color(
     config: &EstaoConfig,
     provider: &str,
@@ -555,7 +483,6 @@ pub struct TaskbarOverlay {
     drag_offset: (i32, i32),
     drag_start: (i32, i32),
     drag_rect: PhysicalRect,
-    hovered: Option<String>,
     _state_subscription: Subscription,
 }
 
@@ -567,9 +494,10 @@ impl TaskbarOverlay {
         if let Some(hwnd) = hwnd {
             win::apply_overlay_styles(hwnd);
         }
+        let palette = TaskbarPalette::from_theme(state.read(cx).theme());
         let mut overlay = Self {
             state,
-            palette: TaskbarPalette::read(),
+            palette,
             rows: Vec::new(),
             row_widths: Vec::new(),
             icons: HashMap::new(),
@@ -581,7 +509,6 @@ impl TaskbarOverlay {
             drag_offset: (0, 0),
             drag_start: (0, 0),
             drag_rect: PhysicalRect::default(),
-            hovered: None,
             _state_subscription: subscription,
         };
         overlay.refresh(window, cx);
@@ -626,13 +553,12 @@ impl TaskbarOverlay {
             self.icons.clear();
             self.placement = None;
             self.dragging = false;
-            self.hovered = None;
             window.set_visible(false);
             cx.notify();
             return;
         };
 
-        let palette = TaskbarPalette::read();
+        let palette = TaskbarPalette::from_theme(Theme::from_name(&config.theme));
         let previous = self.placement;
         let changed = self.rows != rows || self.size != size || self.palette != palette;
         if palette.text_hex != self.palette.text_hex {
@@ -648,11 +574,13 @@ impl TaskbarOverlay {
 
         if previous != Some(placement.rect) {
             if let Some(hwnd) = self.hwnd {
-                win::set_placement(hwnd, placement.rect);
+                let show = previous.is_none();
+                cx.foreground_executor()
+                    .spawn(async move {
+                        win::set_placement(hwnd, placement.rect, show);
+                    })
+                    .detach();
             }
-        }
-        if previous.is_none() {
-            window.set_visible(true);
         }
         if changed || previous != Some(placement.rect) {
             cx.notify();
@@ -695,22 +623,20 @@ impl TaskbarOverlay {
         self.drag_offset = (cursor.0 - rect.left, cursor.1 - rect.top);
         self.drag_start = (rect.left, rect.top);
         self.drag_rect = rect;
-        self.hovered = None;
         cx.notify();
 
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(16))
-                .await;
-            let keep_going = cx.update(|cx| {
-                this.update(cx, |overlay, cx| overlay.poll_drag(cx))
-                    .unwrap_or(false)
+        self.schedule_drag_frame(window, cx);
+    }
+
+    fn schedule_drag_frame(&self, window: &Window, cx: &Context<Self>) {
+        let this = cx.weak_entity();
+        window.on_next_frame(move |window, cx| {
+            let _ = this.update(cx, |overlay, cx| {
+                if overlay.poll_drag(cx) {
+                    overlay.schedule_drag_frame(window, cx);
+                }
             });
-            if !keep_going {
-                break;
-            }
-        })
-        .detach();
+        });
     }
 
     /// Advances the drag; returns whether the button is still down.
@@ -736,7 +662,13 @@ impl TaskbarOverlay {
         );
         let placed = win::constrain(desired);
         if placed.left != self.drag_rect.left || placed.top != self.drag_rect.top {
-            win::set_placement(hwnd, placed);
+            // A monitor change sends synchronous Win32 callbacks into GPUI.
+            // Move only after the current App borrow has been released.
+            cx.foreground_executor()
+                .spawn(async move {
+                    win::set_placement(hwnd, placed, false);
+                })
+                .detach();
             self.drag_rect = placed;
             self.placement = Some(placed);
         }
@@ -756,33 +688,19 @@ impl TaskbarOverlay {
         cx.notify();
     }
 
-    /// Opens the popover for the hovered row (or switches its provider).
-    fn report_hover(&mut self, index: usize, cx: &mut Context<Self>) {
+    /// Toggle only on an explicit click; pointer movement never opens a window.
+    fn click_provider(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.dragging {
             return;
         }
         let Some(row) = self.rows.get(index) else {
             return;
         };
-        if self.hovered.as_deref() == Some(row.provider.as_str()) {
-            return;
-        }
         let Some(placement) = self.placement else {
             return;
         };
         let provider = row.provider.clone();
-        let has_snapshot = self
-            .state
-            .read(cx)
-            .snapshots()
-            .iter()
-            .any(|snapshot| catalog::normalize_id(&snapshot.provider) == provider);
-        if !has_snapshot {
-            return;
-        }
-
-        self.hovered = Some(provider.clone());
-        let offset: i32 = (DRAG_HANDLE_WIDTH + OUTER_PADDING)
+        let offset: i32 = (1 + DRAG_HANDLE_WIDTH + OUTER_PADDING)
             + self.row_widths[..index]
                 .iter()
                 .map(|width| width + PROVIDER_GAP)
@@ -792,17 +710,21 @@ impl TaskbarOverlay {
         let anchor = popover::TrayAnchor {
             x: center_x,
             y: placement.top as f32,
+            height: placement.height as f32,
         };
-        self.state
-            .update(cx, |state, cx| state.open_popover_for(provider, anchor, cx));
+        self.state.update(cx, |state, cx| {
+            state.toggle_provider_popover(provider, anchor, cx)
+        });
     }
 
-    /// Forgets the hovered row so re-entering it opens the popover again.
-    fn clear_hover(&mut self, index: usize) {
-        if let Some(row) = self.rows.get(index) {
-            if self.hovered.as_deref() == Some(row.provider.as_str()) {
-                self.hovered = None;
-            }
+    pub fn contains_pointer(&self) -> bool {
+        let Some(hwnd) = self.hwnd else { return false };
+        if !win::is_visible(hwnd) {
+            return false;
+        }
+        match (win::window_rect(hwnd), win::cursor_position()) {
+            (Some(rect), Some((x, y))) => rect.contains(x, y),
+            _ => false,
         }
     }
 
@@ -876,14 +798,12 @@ impl TaskbarOverlay {
             .px(px(padding as f32))
             .rounded(px(6.0))
             .cursor_pointer()
-            .hover(move |style| style.bg(palette.border.opacity(0.24)))
-            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
-                if *hovered {
-                    this.report_hover(index, cx);
-                } else {
-                    this.clear_hover(index);
-                }
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.click_provider(index, cx);
+                }),
+            )
             .child(match icon {
                 Some(icon) => img(icon)
                     .w(px(PROVIDER_ICON_SIZE as f32))
@@ -916,9 +836,13 @@ impl TaskbarOverlay {
                                     .min_w_0()
                                     .truncate()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child(row.display_name.clone()),
+                                    .child(if row.provider == "copilot" {
+                                        "Copilot".to_string()
+                                    } else {
+                                        row.display_name.clone()
+                                    }),
                             )
-                            .child(label(percent, 30, palette.text_muted, false)),
+                            .child(label(percent, 32, palette.text, false)),
                     )
                     .child(
                         div()
@@ -973,6 +897,7 @@ impl Render for TaskbarOverlay {
             .rounded(px(10.0))
             .font_family("Segoe UI")
             .text_size(px(OVERLAY_FONT_SIZE))
+            .line_height(px(14.0))
             .text_color(palette.text)
             .child(self.drag_handle(cx))
             .child(providers)
@@ -997,25 +922,8 @@ fn label(text: impl Into<SharedString>, width: i32, color: Rgba, bold: bool) -> 
         .child(text.into())
 }
 
-/// Physical hit testing avoids hover churn when GPUI repaints either window.
-pub fn pointer_in_window(window: &Window) -> bool {
-    let Some(hwnd) = win::hwnd_from_window(window) else {
-        return false;
-    };
-    if !win::is_visible(hwnd) {
-        return false;
-    }
-    match (win::window_rect(hwnd), win::cursor_position()) {
-        (Some(rect), Some((x, y))) => rect.contains(x, y),
-        _ => false,
-    }
-}
-
-/// Hover previews must not steal keyboard focus from the user's active app.
-pub fn make_nonactivating(window: &Window) {
-    if let Some(hwnd) = win::hwnd_from_window(window) {
-        win::apply_overlay_styles(hwnd);
-    }
+pub fn cursor_position() -> Option<(i32, i32)> {
+    win::cursor_position()
 }
 
 /// Win32 access, all of it physical pixels.
@@ -1028,20 +936,19 @@ mod win {
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{HWND, POINT, RECT};
     use windows::Win32::Graphics::Gdi::{
-        CreateDCW, DeleteDC, GetDeviceCaps, GetMonitorInfoW, GetSysColor, MonitorFromPoint,
-        COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_WINDOWTEXT, LOGPIXELSX, MONITORINFO, MONITORINFOEXW,
-        MONITOR_DEFAULTTONEAREST,
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
     };
+    use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
     use windows::Win32::UI::WindowsAndMessaging::{
         FindWindowExW, FindWindowW, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW,
-        SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW, WS_EX_NOACTIVATE,
-        WS_EX_TOOLWINDOW,
+        SetWindowPos, GWLP_HWNDPARENT, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOSIZE, SWP_SHOWWINDOW, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_POPUP, WS_THICKFRAME,
     };
 
     use super::{
         constrain_to_monitor, place_against_taskbar, OverlayConfig, OverlayPlacement, PhysicalRect,
-        TaskbarPalette,
     };
 
     /// Converts a `HWND` into the opaque handle stored by the overlay.
@@ -1102,15 +1009,9 @@ mod win {
             return None;
         }
 
-        let device = PCWSTR(info.szDevice.as_ptr());
-        let dc = unsafe { CreateDCW(PCWSTR::null(), device, PCWSTR::null(), None) };
-        if dc.is_invalid() {
-            return None;
-        }
-        let dpi = unsafe { GetDeviceCaps(Some(dc), LOGPIXELSX) };
-        unsafe {
-            let _ = DeleteDC(dc);
-        }
+        let mut dpi = 96;
+        let mut dpi_y = 96;
+        unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut dpi_y) }.ok()?;
 
         let scale = if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 };
         let monitor = info.monitorInfo.rcMonitor;
@@ -1169,7 +1070,16 @@ mod win {
     }
 
     /// Moves the overlay to `rect`, topmost and without activating it.
-    pub fn set_placement(hwnd_value: isize, rect: PhysicalRect) {
+    pub fn set_placement(hwnd_value: isize, rect: PhysicalRect, show: bool) {
+        let mut flags = SWP_NOACTIVATE;
+        if show {
+            flags |= SWP_SHOWWINDOW | SWP_FRAMECHANGED;
+        }
+        if window_rect(hwnd_value)
+            .is_some_and(|old| old.width == rect.width && old.height == rect.height)
+        {
+            flags |= SWP_NOSIZE;
+        }
         let _ = unsafe {
             SetWindowPos(
                 hwnd(hwnd_value),
@@ -1178,7 +1088,7 @@ mod win {
                 rect.top,
                 rect.width,
                 rect.height,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                flags,
             )
         };
     }
@@ -1190,6 +1100,16 @@ mod win {
         let style = style | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0;
         unsafe {
             SetWindowLongPtrW(window, GWL_EXSTYLE, style as isize);
+            // GPUI's PopUp currently uses WS_OVERLAPPED, leaving invisible
+            // resize borders that shrink the client area and clip the tiles.
+            let style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
+            let style = (style & !(WS_CAPTION.0 | WS_THICKFRAME.0)) | WS_POPUP.0;
+            SetWindowLongPtrW(window, GWL_STYLE, style as isize);
+            // Owned popups stay above their owner when Explorer raises the
+            // taskbar. No periodic hide/show or z-order tug-of-war is needed.
+            if let Ok(taskbar) = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) {
+                SetWindowLongPtrW(window, GWLP_HWNDPARENT, taskbar.0 as isize);
+            }
         }
     }
 
@@ -1213,22 +1133,6 @@ mod win {
     pub fn left_button_down() -> bool {
         (unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } & 0x8000u16 as i16) != 0
     }
-
-    /// Reads the taskbar palette from the Windows personalization settings.
-    pub fn palette(light: bool) -> TaskbarPalette {
-        let accent = colorref(unsafe { GetSysColor(COLOR_HIGHLIGHT) });
-        let window_text = colorref(unsafe { GetSysColor(COLOR_WINDOWTEXT) });
-        let gray_text = colorref(unsafe { GetSysColor(COLOR_GRAYTEXT) });
-        TaskbarPalette::build(light, accent, window_text, gray_text)
-    }
-
-    /// Converts a Win32 `COLORREF` (`0x00BBGGRR`) into a gpui color.
-    fn colorref(value: u32) -> gpui::Rgba {
-        let red = value & 0xFF;
-        let green = (value >> 8) & 0xFF;
-        let blue = (value >> 16) & 0xFF;
-        gpui::rgb((red << 16) | (green << 8) | blue)
-    }
 }
 
 /// Non-Windows stubs: the tray app itself is Windows-only.
@@ -1236,7 +1140,7 @@ mod win {
 mod win {
     use gpui::Window;
 
-    use super::{OverlayConfig, OverlayPlacement, PhysicalRect, TaskbarPalette};
+    use super::{OverlayConfig, OverlayPlacement, PhysicalRect};
 
     pub fn is_visible(_value: isize) -> bool {
         false
@@ -1258,7 +1162,7 @@ mod win {
     }
 
     /// No-op.
-    pub fn set_placement(_hwnd: isize, _rect: PhysicalRect) {}
+    pub fn set_placement(_hwnd: isize, _rect: PhysicalRect, _show: bool) {}
 
     /// No-op.
     pub fn apply_overlay_styles(_hwnd: isize) {}
@@ -1276,16 +1180,6 @@ mod win {
     /// No mouse polling on this platform.
     pub fn left_button_down() -> bool {
         false
-    }
-
-    /// Fallback palette.
-    pub fn palette(light: bool) -> TaskbarPalette {
-        TaskbarPalette::build(
-            light,
-            gpui::rgb(0x0067C0),
-            gpui::rgb(0x000000),
-            gpui::rgb(0x6D6D6D),
-        )
     }
 }
 
@@ -1498,9 +1392,16 @@ mod tests {
 
         let size = OverlaySize::Normal;
         let row_widths: Vec<i32> = rows.iter().map(|row| row_width(row, size)).collect();
-        let expected =
-            DRAG_HANDLE_WIDTH + OUTER_PADDING * 2 + row_widths.iter().sum::<i32>() + PROVIDER_GAP;
+        let expected = 2
+            + DRAG_HANDLE_WIDTH
+            + OUTER_PADDING * 2
+            + row_widths.iter().sum::<i32>()
+            + PROVIDER_GAP;
         assert_eq!(overlay_width(&rows, size), expected);
+        assert_eq!(
+            row_widths[0], row_widths[1],
+            "provider columns must share the same alignment"
+        );
         assert_eq!(overlay_width(&[], size), 0);
         let mut updated = rows[0].clone();
         updated.percent_used = Some(1.0);
@@ -1593,27 +1494,16 @@ mod tests {
     }
 
     #[test]
-    fn builds_the_light_and_dark_taskbar_palettes() {
-        let black = rgb(0x000000);
-        let white = rgb(0xFFFFFF);
-        let light = TaskbarPalette::build(true, rgb(0x0078D4), black, rgb(0x6D6D6D));
-        let dark = TaskbarPalette::build(false, rgb(0x0078D4), black, rgb(0x6D6D6D));
-
-        assert_eq!(light.surface, rgb(0xF8F8F8));
-        assert_eq!(light.border, rgb(0xD2D2D2));
-        assert_eq!(light.text, black);
-        assert_eq!(light.text_hex, 0x000000);
-        assert_eq!(dark.surface, rgb(0x202020));
-        assert_eq!(dark.border, rgb(0x484848));
-        assert_eq!(dark.text, rgb(0xF5F5F5));
-        assert_eq!(dark.text_muted, rgb(0xB9B9B9));
-        assert_eq!(dark.text_hex, 0xF5F5F5);
-
-        // A black/white system highlight is replaced with the .NET blue.
-        let fallback = TaskbarPalette::build(false, white, black, black);
-        assert_eq!(fallback.accent, rgb(0x60A5FA));
-        let fallback = TaskbarPalette::build(true, black, black, black);
-        assert_eq!(fallback.accent, rgb(0x0067C0));
+    fn strip_uses_the_same_theme_tokens_as_the_other_windows() {
+        for theme in [Theme::Light, Theme::Dark] {
+            let strip = TaskbarPalette::from_theme(theme);
+            let app = theme.palette();
+            assert_eq!(strip.surface, app.surface);
+            assert_eq!(strip.border, app.border);
+            assert_eq!(strip.text, app.text);
+            assert_eq!(strip.accent, app.accent);
+            assert_eq!(strip.text_hex, rgba_hex(app.text));
+        }
     }
 
     #[test]

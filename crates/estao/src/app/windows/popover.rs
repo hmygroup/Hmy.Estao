@@ -8,12 +8,8 @@
 //!
 //! The view renders straight from the shared [`AppState`] entity and observes
 //! it, so a background refresh repaints the popup without any polling of its
-//! own. Dismissal mirrors the .NET widget where GPUI exposes the hooks:
-//! Escape closes it, and both footer actions close it before running (the
-//! .NET popover closes itself before opening Settings). GPUI 0.3 does not
-//! publish a window-deactivation callback (only element focus and window
-//! visibility), so outside-click dismissal is not wired; the tray toggle and
-//! Escape remain the documented ways to close the popup.
+//! own. Escape and outside activation dismiss it; launcher clicks use the
+//! shared toggle, so the same click cannot dismiss and reopen the popup.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -53,6 +49,8 @@ pub struct TrayAnchor {
     pub x: f32,
     /// Top edge of the tray icon; the popup opens above it.
     pub y: f32,
+    /// Height of the launcher, in physical pixels, for placement below it.
+    pub height: f32,
 }
 
 /// A rectangle in physical screen pixels.
@@ -87,6 +85,7 @@ pub fn anchor_from_event(event: &TrayIconEvent) -> Option<TrayAnchor> {
     Some(TrayAnchor {
         x: x as f32,
         y: y as f32,
+        height: rect.size.height as f32,
     })
 }
 
@@ -137,7 +136,7 @@ fn anchored_bounds(
     } else {
         1.0
     };
-    let (width, height) = dimensions;
+    let (width, mut height) = dimensions;
     let anchor_x = anchor.x / scale;
     let anchor_y = anchor.y / scale;
 
@@ -149,6 +148,16 @@ fn anchored_bounds(
         let top = area.top / scale;
         let right = area.right / scale;
         let bottom = area.bottom / scale;
+        let anchor_bottom = anchor_y + anchor.height / scale;
+        let above = (anchor_y.min(bottom) - ANCHOR_GAP - top).max(0.0);
+        let below = (bottom - anchor_bottom.max(top) - ANCHOR_GAP).max(0.0);
+        if above < height && below > above {
+            height = height.min(below);
+            y = anchor_bottom + ANCHOR_GAP;
+        } else {
+            height = height.min(above);
+            y = anchor_y - height - ANCHOR_GAP;
+        }
         // Use `max` so a window taller/wider than the screen still starts at
         // the top/left edge instead of producing an inverted clamp range.
         x = x.clamp(left, (right - width).max(left));
@@ -165,12 +174,11 @@ fn anchored_bounds(
 /// factor of the monitor that owns the tray icon.
 #[cfg(target_os = "windows")]
 fn screen_metrics_at(x: f32, y: f32) -> Option<(f32, PhysicalRect)> {
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::{
-        CreateDCW, DeleteDC, GetDeviceCaps, GetMonitorInfoW, MonitorFromPoint, LOGPIXELSX,
-        MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
     };
+    use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 
     let cursor = POINT {
         x: x.round() as i32,
@@ -193,16 +201,10 @@ fn screen_metrics_at(x: f32, y: f32) -> Option<(f32, PhysicalRect)> {
         return None;
     }
 
-    let device = PCWSTR(info.szDevice.as_ptr());
-    let dc = unsafe { CreateDCW(PCWSTR::null(), device, PCWSTR::null(), None) };
-    if dc.is_invalid() {
-        return None;
-    }
-    let dpi = unsafe { GetDeviceCaps(Some(dc), LOGPIXELSX) };
-    unsafe {
-        let _ = DeleteDC(dc);
-    }
-    if dpi <= 0 {
+    let mut dpi = 96;
+    let mut dpi_y = 96;
+    unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut dpi_y) }.ok()?;
+    if dpi == 0 {
         return None;
     }
 
@@ -232,6 +234,8 @@ pub struct UsagePopover {
     focus_handle: FocusHandle,
     icons: HashMap<String, Arc<RenderImage>>,
     _state_subscription: Subscription,
+    _activation_subscription: Subscription,
+    closing: bool,
 }
 
 impl UsagePopover {
@@ -245,7 +249,7 @@ impl UsagePopover {
         Self::new_with_provider(state, palette, None, window, cx)
     }
 
-    /// Opens with the provider hovered in the taskbar overlay selected.
+    /// Opens with the clicked provider selected.
     pub fn new_with_provider(
         state: Entity<AppState>,
         palette: Palette,
@@ -253,8 +257,14 @@ impl UsagePopover {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let hover_owned = provider.is_some();
         let subscription = cx.observe(&state, |_, _, cx| cx.notify());
+        let activation_subscription = cx.observe_window_activation(window, |_, window, cx| {
+            cx.defer_in(window, |this, window, cx| {
+                if !window.is_window_active() && !this.state.read(cx).pointer_on_launcher(cx) {
+                    this.dismiss(window, cx);
+                }
+            });
+        });
         let focus_handle = cx.focus_handle();
         let mut popover = Self {
             state,
@@ -263,21 +273,32 @@ impl UsagePopover {
             focus_handle,
             icons: HashMap::new(),
             _state_subscription: subscription,
+            _activation_subscription: activation_subscription,
+            closing: false,
         };
         popover.ensure_selection(cx);
-        // The popup is shown without activation, but a click inside activates
-        // it; focusing the root makes Escape work from that point on.
-        if !hover_owned {
-            window.focus(&popover.focus_handle, cx);
-        }
+        window.focus(&popover.focus_handle, cx);
         popover
     }
 
-    /// Switches an existing popover to the hovered provider.
-    pub fn select_provider(&mut self, provider: &str, cx: &mut Context<Self>) {
-        self.selected = Some(catalog::normalize_id(provider));
-        self.ensure_selection(cx);
-        cx.notify();
+    /// Hide before destroying: destroying the active HWND synchronously can
+    /// re-enter GPUI through Win32 focus messages while its App is borrowed.
+    pub fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.closing {
+            return;
+        }
+        self.closing = true;
+        window.set_visible(false);
+        let handle = window.window_handle();
+        cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(32))
+                .await;
+            cx.update(|cx| {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            });
+        })
+        .detach();
     }
 
     /// Drops a selection that no longer exists and falls back to the first
@@ -529,9 +550,9 @@ impl UsagePopover {
                             .cursor_pointer()
                             .hover(|style| style.opacity(0.85))
                             .child("Refresh")
-                            .on_click(cx.listener(move |_this, _, window, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 refresh_state.update(cx, |state, cx| state.refresh_now(cx));
-                                window.remove_window();
+                                this.dismiss(window, cx);
                             })),
                     )
                     .child(
@@ -546,9 +567,12 @@ impl UsagePopover {
                             .cursor_pointer()
                             .hover(|style| style.opacity(0.85))
                             .child("Settings")
-                            .on_click(cx.listener(move |_this, _, window, cx| {
-                                settings_state.update(cx, |state, cx| state.open_settings(cx));
-                                window.remove_window();
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.dismiss(window, cx);
+                                let state = settings_state.clone();
+                                cx.defer(move |cx| {
+                                    state.update(cx, |state, cx| state.open_settings(cx))
+                                });
                             })),
                     ),
             )
@@ -619,9 +643,9 @@ impl Render for UsagePopover {
             .bg(palette.background)
             .text_color(palette.text)
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|_this, event: &KeyDownEvent, window, _cx| {
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
-                    window.remove_window();
+                    this.dismiss(window, cx);
                 }
             }))
             .child(tabs)
@@ -1124,6 +1148,7 @@ mod tests {
         let anchor = TrayAnchor {
             x: 1500.0,
             y: 1000.0,
+            height: 0.0,
         };
         let work_area = PhysicalRect {
             left: 0.0,
@@ -1143,6 +1168,7 @@ mod tests {
         let anchor = TrayAnchor {
             x: 3800.0,
             y: 2120.0,
+            height: 0.0,
         };
         // 4K monitor at 200%: work area is 1920x1040 logical pixels.
         let work_area = PhysicalRect {
@@ -1165,6 +1191,7 @@ mod tests {
         let anchor = TrayAnchor {
             x: 2000.0,
             y: 1050.0,
+            height: 0.0,
         };
         let work_area = PhysicalRect {
             left: 1920.0,
@@ -1181,7 +1208,11 @@ mod tests {
 
     #[test]
     fn anchors_without_a_work_area() {
-        let anchor = TrayAnchor { x: 500.0, y: 400.0 };
+        let anchor = TrayAnchor {
+            x: 500.0,
+            y: 400.0,
+            height: 0.0,
+        };
 
         let bounds = anchored_bounds(anchor, 1.0, None, (420.0, 620.0));
 
@@ -1190,11 +1221,37 @@ mod tests {
 
     #[test]
     fn treats_a_missing_scale_factor_as_unscaled() {
-        let anchor = TrayAnchor { x: 500.0, y: 400.0 };
+        let anchor = TrayAnchor {
+            x: 500.0,
+            y: 400.0,
+            height: 0.0,
+        };
 
         let bounds = anchored_bounds(anchor, 0.0, None, (420.0, 620.0));
 
         assert_eq!(bounds.origin, point(px(290.0), px(-228.0)));
+    }
+
+    #[test]
+    fn opens_below_a_floating_launcher_instead_of_covering_its_toggle() {
+        let anchor = TrayAnchor {
+            x: 1000.0,
+            y: 240.0,
+            height: 38.0,
+        };
+        let area = PhysicalRect {
+            left: 0.0,
+            top: 0.0,
+            right: 1920.0,
+            bottom: 1040.0,
+        };
+        let bounds = anchored_bounds(anchor, 1.0, Some(area), (420.0, 620.0));
+        assert_eq!(bounds.origin.y, px(286.0));
+        assert_eq!(bounds.size.height, px(620.0));
+        let center = TrayAnchor { y: 500.0, ..anchor };
+        let bounds = anchored_bounds(center, 1.0, Some(area), (420.0, 620.0));
+        assert!(bounds.origin.y >= px(538.0));
+        assert!(bounds.origin.y + bounds.size.height <= px(1040.0));
     }
 
     #[test]

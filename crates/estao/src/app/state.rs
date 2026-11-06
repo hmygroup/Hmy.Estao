@@ -40,8 +40,6 @@ pub struct AppState {
     tray: Option<TrayHost>,
     settings_window: Option<WindowHandle<settings::SettingsWindow>>,
     popover_window: Option<WindowHandle<popover::UsagePopover>>,
-    popover_hover_owned: bool,
-    popover_hover_left_at: Option<Instant>,
     overlay_window: Option<WindowHandle<overlay::TaskbarOverlay>>,
     last_overlay_poll: Option<Instant>,
     /// Newest `updated_at` across the applied snapshots; used to detect a
@@ -73,8 +71,6 @@ impl AppState {
             tray,
             settings_window: None,
             popover_window: None,
-            popover_hover_owned: false,
-            popover_hover_left_at: None,
             overlay_window: None,
             last_overlay_poll: None,
             last_stamp: None,
@@ -212,47 +208,47 @@ impl AppState {
 
     /// Toggles the usage popover, anchoring it to the tray icon when known.
     fn toggle_popover(&mut self, anchor: Option<popover::TrayAnchor>, cx: &mut Context<Self>) {
+        self.toggle_popover_for(anchor, None, cx);
+    }
+
+    fn toggle_popover_for(
+        &mut self,
+        anchor: Option<popover::TrayAnchor>,
+        provider: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(handle) = &self.popover_window {
             if handle
-                .update(cx, |_, window, _| window.remove_window())
+                .update(cx, |view, window, cx| view.dismiss(window, cx))
                 .is_ok()
             {
                 self.popover_window = None;
-                self.popover_hover_owned = false;
-                self.popover_hover_left_at = None;
                 return;
             }
         }
         self.popover_window = None;
 
-        self.show_popover(anchor, None, cx);
+        self.show_popover(anchor, provider, cx);
     }
 
-    /// Opens or selects a provider from the taskbar overlay.
-    pub fn open_popover_for(
+    /// Clicking the strip toggles a popover for that provider.
+    pub fn toggle_provider_popover(
         &mut self,
         provider: String,
         anchor: popover::TrayAnchor,
         cx: &mut Context<Self>,
     ) {
-        let state = cx.entity();
-        cx.defer(move |cx| {
-            let handle = state.read(cx).popover_window;
-            if let Some(handle) = handle {
-                if handle
-                    .update(cx, |view, _, cx| {
-                        view.select_provider(&provider, cx);
-                    })
-                    .is_ok()
-                {
-                    return;
-                }
-            }
-            state.update(cx, |state, cx| {
-                state.popover_window = None;
-                state.show_popover(Some(anchor), Some(provider), cx);
-            });
-        });
+        self.toggle_popover_for(Some(anchor), Some(provider), cx);
+    }
+
+    /// Launcher clicks are handled by their own toggle, not by deactivation.
+    pub fn pointer_on_launcher(&self, cx: &App) -> bool {
+        self.tray.as_ref().is_some_and(TrayHost::contains_pointer)
+            || self.overlay_window.is_some_and(|handle| {
+                handle
+                    .read_with(cx, |view, _| view.contains_pointer())
+                    .unwrap_or(false)
+            })
     }
 
     fn show_popover(
@@ -261,7 +257,6 @@ impl AppState {
         provider: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let hover_owned = provider.is_some();
         // Opening the popover counts as user activity for the adaptive loop.
         self.refresh_loop.mark_interaction();
 
@@ -285,12 +280,7 @@ impl AppState {
                 .unwrap_or_else(|| Bounds::centered(None, popover_size, cx));
 
             let view_state = state.clone();
-            let mut options = windows::popover_options(bounds);
-            options.focus = !hover_owned;
-            match cx.open_window(options, move |window, cx| {
-                if hover_owned {
-                    overlay::make_nonactivating(window);
-                }
+            match cx.open_window(windows::popover_options(bounds), move |window, cx| {
                 cx.new(|cx| match provider {
                     Some(provider) => popover::UsagePopover::new_with_provider(
                         view_state.clone(),
@@ -305,8 +295,6 @@ impl AppState {
                 Ok(handle) => {
                     state.update(cx, |state, _cx| {
                         state.popover_window = Some(handle);
-                        state.popover_hover_owned = hover_owned;
-                        state.popover_hover_left_at = None;
                     });
                 }
                 Err(error) => {
@@ -334,51 +322,12 @@ impl AppState {
 
     /// Refreshes taskbar placement and countdowns once per second.
     pub fn poll_overlay(&mut self, cx: &mut Context<Self>) {
-        self.poll_hover_popover(cx);
         if self
             .last_overlay_poll
             .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
         {
             self.sync_overlay(cx);
         }
-    }
-
-    fn poll_hover_popover(&mut self, cx: &mut Context<Self>) {
-        if !self.popover_hover_owned {
-            return;
-        }
-        let state = cx.entity();
-        let popover = self.popover_window;
-        let overlay = self.overlay_window;
-        cx.defer(move |cx| {
-            let inside_popover = popover.is_some_and(|handle| {
-                handle
-                    .update(cx, |_, window, _| overlay::pointer_in_window(window))
-                    .unwrap_or(false)
-            });
-            let inside_overlay = overlay.is_some_and(|handle| {
-                handle
-                    .update(cx, |_, window, _| overlay::pointer_in_window(window))
-                    .unwrap_or(false)
-            });
-            let close = state.update(cx, |state, _| {
-                hover_dismiss_due(
-                    inside_popover || inside_overlay,
-                    &mut state.popover_hover_left_at,
-                    Instant::now(),
-                )
-            });
-            if close {
-                if let Some(handle) = popover {
-                    let _ = handle.update(cx, |_, window, _| window.remove_window());
-                }
-                state.update(cx, |state, _| {
-                    state.popover_window = None;
-                    state.popover_hover_owned = false;
-                    state.popover_hover_left_at = None;
-                });
-            }
-        });
     }
 
     /// Defers window access so its view can safely read shared state.
@@ -536,16 +485,6 @@ fn snapshot_stamp(snapshots: &[UsageSnapshot]) -> Option<DateTime<Utc>> {
     snapshots.iter().map(|snapshot| snapshot.updated_at).max()
 }
 
-// A short grace period bridges the gap between the strip and its popover.
-fn hover_dismiss_due(inside: bool, left_at: &mut Option<Instant>, now: Instant) -> bool {
-    if inside {
-        *left_at = None;
-        return false;
-    }
-    let left = left_at.get_or_insert(now);
-    now.duration_since(*left) >= Duration::from_millis(200)
-}
-
 /// Brings an existing window to the front, returning `false` when it is gone.
 fn focus_window<T: 'static>(handle: &Option<WindowHandle<T>>, cx: &mut App) -> bool {
     let Some(handle) = handle else {
@@ -553,37 +492,4 @@ fn focus_window<T: 'static>(handle: &Option<WindowHandle<T>>, cx: &mut App) -> b
     };
 
     handle.update(cx, |_, window, _| window.activate()).is_ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hover_popover_closes_after_leaving_both_surfaces_but_allows_crossing_the_gap() {
-        let now = Instant::now();
-        let mut left = None;
-        assert!(!hover_dismiss_due(false, &mut left, now));
-        assert!(!hover_dismiss_due(
-            false,
-            &mut left,
-            now + Duration::from_millis(100)
-        ));
-        assert!(!hover_dismiss_due(
-            true,
-            &mut left,
-            now + Duration::from_millis(150)
-        ));
-        assert!(left.is_none());
-        assert!(!hover_dismiss_due(
-            false,
-            &mut left,
-            now + Duration::from_millis(200)
-        ));
-        assert!(hover_dismiss_due(
-            false,
-            &mut left,
-            now + Duration::from_millis(400)
-        ));
-    }
 }
