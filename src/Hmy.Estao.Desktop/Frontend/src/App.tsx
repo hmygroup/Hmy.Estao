@@ -30,9 +30,9 @@ export default function App() {
   const load = async () => { try { setState(await getState()); } catch (e) { setError(String(e)); } };
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(), 4000);
+    const timer = window.setInterval(() => void load(), state?.providerSignIn?.pending ? 500 : 4000);
     return () => clearInterval(timer);
-  }, []);
+  }, [state?.providerSignIn?.pending]);
   const view = state?.view || new URLSearchParams(window.location.search).get("view") || "settings";
   return <div className={`desktop-shell${view === "popover" ? " popover-shell" : ""}`}>
     {view !== "popover" && <header className="window-header"><span>Estao · Settings</span><WindowControls /></header>}
@@ -95,8 +95,9 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
       <main className="settings-content">{page === "hub" ? <HarnessHub /> : <fieldset className="editor" disabled={busy}>
         {page === "providers" && <>
           <div className="section-caption">YOUR CONNECTIONS <span>{draft.providers.filter(p => p.enabled).length} enabled</span></div>
-          {draft.providers.map(p => <ProviderCard key={p.id} provider={p} update={u => providerChange(p.id, u)}
-            snapshot={state.snapshots.find(s => s.provider === p.id)} signIn={() => void run("signin", p.id)} />)}
+           {draft.providers.map(p => <ProviderCard key={p.id} provider={p} update={u => providerChange(p.id, u)}
+             snapshot={state.snapshots.find(s => s.provider === p.id)} signIn={() => void run("signin", p.id)}
+             signInState={state.providerSignIn} signInCommand={action => void run(action)} />)}
         </>}
         {page === "alerts" && <>
           <Section title="Color thresholds" description="Usage indicators in the overlay and popover use the same warning and critical colors.">
@@ -143,8 +144,9 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
   </div>;
 }
 
-function ProviderCard({ provider: p, update, snapshot, signIn }: {
+function ProviderCard({ provider: p, update, snapshot, signIn, signInState, signInCommand }: {
   provider: Provider; update: (change: Partial<Provider>) => void; snapshot: DesktopState["snapshots"][number] | undefined; signIn: () => void;
+  signInState: DesktopState["providerSignIn"]; signInCommand: (action: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasCookies = ["claude", "opencode"].includes(p.id);
@@ -177,7 +179,17 @@ function ProviderCard({ provider: p, update, snapshot, signIn }: {
           placeholder="Leave blank to keep saved key" onChange={e => update({ apiKey: e.target.value, clearApiKey: false })} /></Field>
           <Toggle label="Remove saved API key on save" checked={p.clearApiKey || false} onChange={clearApiKey => update({ clearApiKey })} /></>}
       </div>
-      {["codex", "claude", "copilot"].includes(p.id) && <button className="secondary" onClick={signIn}>Sign in to {p.name} ↗</button>}
+      {["codex", "claude", "copilot"].includes(p.id) && <button className="secondary" disabled={signInState?.pending} onClick={signIn}>
+        {signInState?.pending && signInState.provider === p.id ? "Signing in…" : `Sign in to ${p.name} ↗`}</button>}
+      {signInState?.provider === p.id && <div className="provider-signin info-box" role="status" aria-live="polite">
+        <p>{signInState.message}</p>
+        {signInState.pending && signInState.userCode && <>
+          <strong className="provider-device-code" aria-label="GitHub device authorization code">{signInState.userCode}</strong>
+          <div className="hub-actions"><button type="button" className="secondary" onClick={() => signInCommand("copy-signin-code")}>Copy code</button>
+            <button type="button" className="secondary" onClick={() => signInCommand("open-signin-page")}>Open GitHub ↗</button></div>
+        </>}
+        {signInState.pending && p.id === "copilot" && <button type="button" className="secondary" onClick={() => signInCommand("cancel-signin")}>Cancel sign-in</button>}
+      </div>}
       <div className="pacing"><h3>Daily pacing</h3><Toggle label="Enable pacing for this provider" checked={p.pacing.enabled}
         onChange={enabled => update({ pacing: { ...p.pacing, enabled } })} />
         <div className="fields-grid"><Field label="Daily target (% / day)"><input type="number" min="1" max="100" disabled={!p.pacing.enabled} value={p.pacing.dailyTargetPercent}

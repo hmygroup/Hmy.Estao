@@ -20,11 +20,13 @@ internal static class OAuthLoginService
 
     public static void StartClaudeLogin() => StartInteractiveCli("claude", "claude login", "Claude Code CLI");
 
-    public static async Task<CopilotOAuthLogin> SignInToCopilotAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+    public static async Task<CopilotOAuthLogin> SignInToCopilotAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default,
+        Action<string>? userCodeReceived = null)
     {
         progress?.Report("Requesting a GitHub device code…");
         var deviceCode = await RequestCopilotDeviceCodeAsync(CopilotOAuthClientId, "read:user", cancellationToken).ConfigureAwait(false);
         var verificationUrl = deviceCode.VerificationUriComplete ?? deviceCode.VerificationUri;
+        userCodeReceived?.Invoke(deviceCode.UserCode);
         progress?.Report($"Enter code {deviceCode.UserCode} in GitHub. Waiting for confirmation…");
 
         try

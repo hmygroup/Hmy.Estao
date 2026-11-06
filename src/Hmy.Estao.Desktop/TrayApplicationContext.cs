@@ -27,6 +27,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private string? _selectedProvider;
     private string? _status;
     private bool _signingIn;
+    private ProviderSignInState? _providerSignIn;
+    private CancellationTokenSource? _signInCancellation;
     private DateTimeOffset _nextRefresh;
     private long _hoverLeftAt;
 
@@ -93,7 +95,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _popover?.Close();
         _settings = CreateWindow("settings");
         _settings.StartPosition = FormStartPosition.CenterScreen;
-        _settings.FormClosed += (_, _) => _settings = null;
+        _settings.FormClosed += (_, _) => { _settings = null; _signInCancellation?.Cancel(); };
         _settings.Show();
     }
 
@@ -160,7 +162,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return new DesktopState(view, _selectedProvider, providers, _config.UsageAlerts!, _config.Refresh,
             _config.TaskbarOverlay.Enabled, _config.TaskbarOverlay.ProviderIds, StartupManager.Enabled,
             _service.LastSnapshots, view == "popover" ? _service.History : [], accounts, _status,
-            DesktopThemeCatalog.Resolve(_config.Theme).Id);
+            DesktopThemeCatalog.Resolve(_config.Theme).Id, view == "settings" ? _providerSignIn : null);
     }
 
     private async Task SaveSettingsAsync(SettingsUpdate update)
@@ -260,6 +262,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 if (_signingIn) throw new InvalidOperationException("A sign-in is already in progress.");
                 _ = SignInAsync(command.Provider);
                 break;
+            case "copy-signin-code":
+                if (_providerSignIn is not { Pending: true, UserCode: not null } active)
+                    throw new InvalidOperationException("Start GitHub sign-in to get a new code.");
+                Clipboard.SetText(active.UserCode);
+                break;
+            case "open-signin-page":
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/login/device") { UseShellExecute = true });
+                break;
+            case "cancel-signin": _signInCancellation?.Cancel(); break;
             default: throw new ArgumentException("Unknown command.");
         }
     }
@@ -267,6 +278,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task SignInAsync(string? provider)
     {
         _signingIn = true;
+        _providerSignIn = new(provider ?? "", true, null, "Starting sign-in…");
+        _signInCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         try
         {
             switch (provider)
@@ -274,7 +287,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 case "codex": OAuthLoginService.StartCodexLogin(); _status = "Complete Codex sign-in in the terminal, then refresh."; break;
                 case "claude": OAuthLoginService.StartClaudeLogin(); _status = "Complete Claude sign-in in the terminal, then refresh."; break;
                 case "copilot":
-                    var login = await OAuthLoginService.SignInToCopilotAsync(new Progress<string>(s => _status = s), _lifetime.Token);
+                    var login = await OAuthLoginService.SignInToCopilotAsync(new Progress<string>(s =>
+                    {
+                        if (_providerSignIn is { Pending: true } current) _providerSignIn = current with { Message = s };
+                    }), _signInCancellation.Token, code =>
+                    {
+                        _providerSignIn = new("copilot", true, code, "Enter this code on GitHub to finish signing in. This is not an API key.");
+                    });
                     await new SecureOAuthTokenStore().SaveAsync("copilot", new OAuthToken(login.AccessToken, login.AccountLabel));
                     _status = "GitHub sign-in complete. Choose OAuth as the usage source and save.";
                     await RefreshAsync();
@@ -282,9 +301,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 default: throw new ArgumentException("This provider does not support sign-in.");
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { _status = "Sign-in cancelled."; }
         catch (Exception exception) { _status = $"Sign-in failed: {exception.Message}"; }
-        finally { _signingIn = false; }
+        finally
+        {
+            _signingIn = false;
+            _providerSignIn = new(provider ?? "", false, null, _status ?? "Sign-in finished.");
+            _signInCancellation.Dispose();
+            _signInCancellation = null;
+        }
     }
 
     private async Task CheckPacingAsync(IReadOnlyList<UsageSnapshot> snapshots)

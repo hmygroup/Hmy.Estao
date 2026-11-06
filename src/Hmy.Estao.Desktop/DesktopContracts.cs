@@ -21,7 +21,8 @@ internal sealed record ProviderSettings(
 internal sealed record SettingsUpdate(List<ProviderSettings> Providers, UsageColorConfig UsageAlerts,
     RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds, bool LaunchAtSignIn, string Theme);
 internal sealed record AccountChoice(int Index, string Label);
+internal sealed record ProviderSignInState(string Provider, bool Pending, string? UserCode, string Message);
 internal sealed record DesktopState(string View, string? SelectedProvider, List<ProviderSettings> Providers,
     UsageColorConfig UsageAlerts, RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds,
     bool LaunchAtSignIn, IReadOnlyList<UsageSnapshot> Snapshots, IReadOnlyList<UsageHistoryPoint> History,
-    Dictionary<string, List<AccountChoice>> Accounts, string? Status, string Theme);
+    Dictionary<string, List<AccountChoice>> Accounts, string? Status, string Theme, ProviderSignInState? ProviderSignIn = null);

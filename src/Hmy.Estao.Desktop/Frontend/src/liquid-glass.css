@@ -167,6 +167,10 @@ button:disabled { opacity: .48; }
 }
 .inline-warning { color: var(--warning-text); background: var(--warning-surface); border-color: var(--border); border-radius: 12px; }
 .inline-warning p { color: inherit; }
+.provider-signin{margin-top:16px}
+.provider-signin p{color:inherit;font-size:12px}
+.provider-device-code{display:block;font-size:28px;letter-spacing:4px;padding:18px 0;color:var(--text);user-select:all}
+.provider-signin>button{margin-top:12px}
 .settings-footer { background: var(--chrome); border-top: 1px solid var(--glass-edge); }
 .settings-content, .popover-content { scrollbar-color: color-mix(in srgb, var(--muted) 50%, transparent) transparent; }
 
