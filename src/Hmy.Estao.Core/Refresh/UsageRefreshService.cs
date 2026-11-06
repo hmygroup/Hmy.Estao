@@ -28,9 +28,20 @@ public sealed class UsageRefreshService
 
     public IReadOnlyList<UsageHistoryPoint> History => _history;
 
-    public async Task<IReadOnlyList<UsageSnapshot>> RefreshAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<UsageSnapshot>> RefreshAsync(CancellationToken cancellationToken = default)
+        => RefreshCoreAsync(null, cancellationToken);
+
+    public Task<IReadOnlyList<UsageSnapshot>> RefreshProviderAsync(string providerId, CancellationToken cancellationToken = default)
     {
-        if (!await _refreshGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        if (!ProviderCatalog.IsSupported(providerId)) throw new ArgumentException("Unknown provider.", nameof(providerId));
+        return RefreshCoreAsync(ProviderCatalog.NormalizeId(providerId), cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<UsageSnapshot>> RefreshCoreAsync(string? providerId, CancellationToken cancellationToken)
+    {
+        // A credential change must not be dropped behind an in-flight refresh.
+        if (providerId is not null) await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        else if (!await _refreshGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
             return _lastSnapshots;
         }
@@ -60,19 +71,24 @@ public sealed class UsageRefreshService
             }
 
             var config = await _configStore.LoadAsync(cancellationToken).ConfigureAwait(false);
-            var enabledProviders = config.Providers.Where(provider => provider.Enabled == true && ProviderCatalog.IsSupported(provider.Id)).ToList();
+            var enabledProviders = config.Providers.Where(provider => provider.Enabled == true && ProviderCatalog.IsSupported(provider.Id)
+                && (providerId is null || provider.Id == providerId)).ToList();
             cancellationToken.ThrowIfCancellationRequested();
             // Provider requests are independent. Fetching them concurrently keeps
             // startup and manual refresh bounded by the slowest provider instead
             // of the sum of every provider's network latency.
-            var snapshots = (await Task.WhenAll(enabledProviders.Select(providerConfig =>
+            var fetched = (await Task.WhenAll(enabledProviders.Select(providerConfig =>
                     FetchProviderAsync(providerConfig, cancellationToken)))
                 .ConfigureAwait(false)).ToList();
+
+            var snapshots = providerId is null ? fetched : _lastSnapshots.Where(snapshot => snapshot.Provider != providerId
+                    && config.Providers.Any(p => p.Id == snapshot.Provider && p.Enabled == true))
+                .Concat(fetched).OrderBy(snapshot => config.Providers.FindIndex(p => p.Id == snapshot.Provider)).ToList();
 
             _lastSnapshots = snapshots;
             try
             {
-                _history = await _historyStore.AppendAsync(snapshots, cancellationToken: cancellationToken)
+                _history = await _historyStore.AppendAsync(fetched, cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (IOException)

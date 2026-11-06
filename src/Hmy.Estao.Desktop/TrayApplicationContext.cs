@@ -33,6 +33,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private CodexAccountStatus? _codexAuthentication;
     private string? _codexCheckedProfile;
     private bool _checkingCodex;
+    private readonly Dictionary<string, CodexAccountStatus> _providerAuthentication = [];
+    private readonly HashSet<string> _checkingProviders = [];
+    private readonly Dictionary<string, int> _providerCheckVersions = [];
+    private CancellationTokenSource? _providerCheckCancellation;
     private DateTimeOffset _nextRefresh;
     private long _hoverLeftAt;
 
@@ -104,13 +108,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _settings = null;
             _signInCancellation?.Cancel();
             _codexCheckCancellation?.Cancel();
+            _providerCheckCancellation?.Cancel();
+            _providerAuthentication.Clear();
+            _checkingProviders.Clear();
             _codexCheckedProfile = null;
         };
         _settings.Show();
     }
 
     private DesktopWindow CreateWindow(string view) => new(view,
-        () => StateAsync(view), SaveSettingsAsync, CommandAsync, _config.Theme, _store.Path);
+        () => StateAsync(view), SaveSettingsAsync, CommandAsync, _config.Theme, _store.Path, BeginProviderSignInAsync);
 
     private void ShowPopover(string? provider, Point anchor)
     {
@@ -144,12 +151,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _popover.Bounds = PopoverPlacement.Calculate(_popover.Size, anchorBounds, area);
     }
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(string? provider = null)
     {
-        _nextRefresh = DateTimeOffset.UtcNow.AddMinutes(_config.Refresh.IntervalMinutes);
+        if (provider is null) _nextRefresh = DateTimeOffset.UtcNow.AddMinutes(_config.Refresh.IntervalMinutes);
         try
         {
-            var snapshots = await _service.RefreshAsync(_lifetime.Token);
+            var snapshots = provider is null ? await _service.RefreshAsync(_lifetime.Token)
+                : await _service.RefreshProviderAsync(provider, _lifetime.Token);
             if (_lifetime.IsCancellationRequested) return;
             _overlay.UpdateUsage(_config, snapshots);
             await CheckPacingAsync(snapshots);
@@ -160,14 +168,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task<DesktopState> StateAsync(string view)
     {
-        if (view == "settings") CheckCodexAccount();
+        if (view == "settings") { CheckCodexAccount(); CheckOtherProviderAccounts(); }
         var providers = new List<ProviderSettings>();
         foreach (var p in _config.Providers.Where(p => ProviderCatalog.IsSupported(p.Id)))
             providers.Add(new ProviderSettings(p.Id, ProviderCatalog.DisplayName(p.Id), p.Enabled == true,
                 p.Source ?? "auto", p.CookieSource ?? "auto", p.WorkspaceId, p.EnterpriseHost, p.Region,
                 p.CodexProfileHomePaths, p.Pacing, !string.IsNullOrWhiteSpace(p.ApiKey),
                 !string.IsNullOrWhiteSpace(p.CookieHeader) || !string.IsNullOrWhiteSpace(await _cookies.ReadCookieHeaderAsync(p.Id)),
-                Authentication: p.Id == "codex" ? _codexAuthentication : null));
+                Authentication: p.Id == "codex" ? _codexAuthentication : _providerAuthentication.GetValueOrDefault(p.Id)));
         var accounts = _config.Providers.Where(p => p.Enabled == true && ProviderCatalog.IsSupported(p.Id))
             .ToDictionary(p => p.Id, p => _factory.Create(p.Id).GetAccounts(p)
                 .Select((a, i) => new AccountChoice(i, a.Label)).ToList());
@@ -231,6 +239,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         finally { _saveGate.Release(); }
         await RefreshAsync();
+        InvalidateAuthentication();
     }
 
     private async Task SavePositionAsync(Point point)
@@ -284,6 +293,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 break;
             case "cancel-signin": _signInCancellation?.Cancel(); break;
             case "check-codex-signin": _codexCheckedProfile = null; CheckCodexAccount(); break;
+            case "signout":
+                if (_signingIn) throw new InvalidOperationException("A sign-in or sign-out is already in progress.");
+                if (!ProviderCatalog.IsSupported(command.Provider ?? "")) throw new ArgumentException("Unknown provider.");
+                _ = SignOutAsync(command.Provider!);
+                break;
             default: throw new ArgumentException("Unknown command.");
         }
     }
@@ -291,8 +305,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task SignInAsync(string? provider)
     {
         _signingIn = true;
-        _codexCheckCancellation?.Cancel();
-        _codexCheckedProfile = null;
+        if (provider == "codex") { _codexCheckCancellation?.Cancel(); _codexCheckedProfile = null; }
+        var failed = false;
         _providerSignIn = new(provider ?? "", true, null, "Starting sign-in…");
         _signInCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         try
@@ -311,13 +325,42 @@ internal sealed class TrayApplicationContext : ApplicationContext
                                 _providerSignIn = current with { Message = message };
                         }), _signInCancellation.Token);
                     _status = "Codex sign-in complete.";
-                    _codexAuthentication = new(true, "Signed in with ChatGPT");
+                    _codexAuthentication = await CodexLoginService.ReadAccountAsync(profile, _signInCancellation.Token);
+                    if (_codexAuthentication.SignedIn != true) throw new InvalidOperationException("Codex did not confirm the sign-in. Please try again.");
                     _codexCheckedProfile = profile;
                     _providerSignIn = new("codex", false, null, _status);
-                    await RefreshAsync();
+                    await RefreshAsync("codex");
                     break;
-                case "claude": OAuthLoginService.StartClaudeLogin(); _status = "Complete Claude sign-in in the terminal, then refresh."; break;
+                case "claude":
+                    var claudeConfig = _config.Providers.First(p => p.Id == "claude");
+                    if (claudeConfig.Source == "web" || !string.IsNullOrWhiteSpace(claudeConfig.ApiKey))
+                        await VerifyProviderSignInAsync(claudeConfig, _signInCancellation.Token);
+                    else
+                    {
+                        OAuthLoginService.StartClaudeLogin();
+                        _providerSignIn = new("claude", true, null, "Complete Claude sign-in in the terminal. Estao will detect when you finish.");
+                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_signInCancellation.Token);
+                        timeout.CancelAfter(TimeSpan.FromMinutes(5));
+                        var service = AuthenticationService();
+                        while (true)
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(2), timeout.Token);
+                            var status = await service.CheckAsync(claudeConfig, timeout.Token);
+                            if (status.SignedIn == true) { _providerAuthentication["claude"] = status; break; }
+                        }
+                    }
+                    _status = "Claude sign-in complete.";
+                    await RefreshAsync("claude");
+                    break;
                 case "copilot":
+                    var copilotConfig = _config.Providers.First(p => p.Id == "copilot");
+                    if (copilotConfig.Source == "api")
+                    {
+                        await VerifyProviderSignInAsync(copilotConfig, _signInCancellation.Token);
+                        _status = "GitHub Copilot sign-in complete.";
+                        await RefreshAsync("copilot");
+                        break;
+                    }
                     var login = await OAuthLoginService.SignInToCopilotAsync(new Progress<string>(s =>
                     {
                         if (_providerSignIn is { Pending: true } current) _providerSignIn = current with { Message = s };
@@ -326,20 +369,176 @@ internal sealed class TrayApplicationContext : ApplicationContext
                         _providerSignIn = new("copilot", true, code, "Enter this code on GitHub to finish signing in. This is not an API key.");
                     });
                     await new SecureOAuthTokenStore().SaveAsync("copilot", new OAuthToken(login.AccessToken, login.AccountLabel));
-                    _status = "GitHub sign-in complete. Choose OAuth as the usage source and save.";
-                    await RefreshAsync();
+                    await VerifyProviderSignInAsync(copilotConfig, _signInCancellation.Token);
+                    _status = "GitHub Copilot sign-in complete.";
+                    await RefreshAsync("copilot");
+                    break;
+                case "opencode":
+                case "zai":
+                    await VerifyProviderSignInAsync(_config.Providers.First(p => p.Id == provider), _signInCancellation.Token);
+                    _status = $"{ProviderCatalog.DisplayName(provider)} sign-in complete.";
+                    await RefreshAsync(provider);
                     break;
                 default: throw new ArgumentException("This provider does not support sign-in.");
             }
         }
-        catch (OperationCanceledException) { _status = "Sign-in cancelled."; }
-        catch (Exception exception) { _status = $"Sign-in failed: {exception.Message}"; }
+        catch (OperationCanceledException) { failed = !_signInCancellation.IsCancellationRequested; _status = failed ? "Sign-in timed out. Start sign-in again." : "Sign-in cancelled."; }
+        catch (Exception exception) { failed = true; _status = $"Sign-in failed: {exception.Message}"; }
         finally
         {
             _signingIn = false;
-            _providerSignIn = new(provider ?? "", false, null, _status ?? "Sign-in finished.");
+            _providerSignIn = new(provider ?? "", false, null, _status ?? "Sign-in finished.", failed);
             _signInCancellation.Dispose();
             _signInCancellation = null;
+            CheckOtherProviderAccounts();
+        }
+    }
+
+    private ProviderAuthenticationService AuthenticationService() => new(_cookies, new SecureOAuthTokenStore(), _factory);
+
+    private async Task VerifyProviderSignInAsync(ProviderConfig provider, CancellationToken ct)
+    {
+        var status = await AuthenticationService().CheckAsync(provider, ct);
+        _providerAuthentication[provider.Id] = status;
+        if (status.SignedIn != true) throw new InvalidOperationException(status.SignedIn == false
+            ? "Sign-in was not accepted. Check your credentials and try again." : status.Message);
+    }
+
+    private async Task BeginProviderSignInAsync(ProviderSettings change)
+    {
+        if (_signingIn) throw new InvalidOperationException("A sign-in or sign-out is already in progress.");
+        if (!ProviderCatalog.IsSupported(change.Id)) throw new ArgumentException("Unknown provider.");
+        ProviderAuthenticationService.ValidateSource(change.Id, change.Source);
+        _signingIn = true;
+        _providerSignIn = new(change.Id, true, null, "Starting sign-in…");
+        try
+        {
+            await _saveGate.WaitAsync();
+            try
+            {
+                var config = await _store.LoadAsync();
+                var provider = config.Providers.First(p => p.Id == change.Id);
+                provider.Source = change.Source;
+                provider.CookieSource = change.CookieSource;
+                provider.CodexProfileHomePaths = change.CodexProfileHomePaths;
+                provider.EnterpriseHost = change.EnterpriseHost;
+                provider.WorkspaceId = change.WorkspaceId;
+                if ((change.Id is "copilot" or "claude") && change.Source == "oauth")
+                {
+                    provider.ApiKey = null;
+                    provider.TokenAccounts = null;
+                }
+                if (!string.IsNullOrWhiteSpace(change.ApiKey)) provider.ApiKey = change.ApiKey.Trim();
+                var errors = ConfigValidation.Validate(config);
+                if (errors.Count != 0) throw new ArgumentException(string.Join("\n", errors));
+                if (change.Id == "zai" && string.IsNullOrWhiteSpace(provider.ApiKey)) throw new ArgumentException("Enter your Z.ai API key.");
+                if (change.Id == "copilot" && change.Source == "api" && string.IsNullOrWhiteSpace(provider.ApiKey)) throw new ArgumentException("Enter your GitHub Copilot API token.");
+                if ((change.Id == "opencode" || change.Source == "web") && string.IsNullOrWhiteSpace(change.NewCookie)
+                    && string.IsNullOrWhiteSpace(provider.CookieHeader)
+                    && string.IsNullOrWhiteSpace(await _cookies.ReadCookieHeaderAsync(change.Id))) throw new ArgumentException("Enter your provider cookie header.");
+                if (!string.IsNullOrWhiteSpace(change.NewCookie))
+                {
+                    await _cookies.SaveCookieHeaderAsync(change.Id, change.NewCookie);
+                    provider.CookieHeader = null;
+                }
+                await _store.SaveAsync(config);
+                _config = config;
+                InvalidateAuthentication(change.Id);
+            }
+            finally { _saveGate.Release(); }
+            _ = SignInAsync(change.Id);
+        }
+        catch (Exception exception)
+        {
+            _signingIn = false;
+            _providerSignIn = new(change.Id, false, null, exception.Message, true);
+            throw;
+        }
+    }
+
+    private async Task SignOutAsync(string providerId)
+    {
+        _signingIn = true;
+        _providerSignIn = new(providerId, true, null, "Signing out…");
+        InvalidateAuthentication(providerId);
+        var failed = false;
+        try
+        {
+            await _saveGate.WaitAsync(_lifetime.Token);
+            try
+            {
+                var config = await _store.LoadAsync(_lifetime.Token);
+                var provider = config.Providers.First(p => p.Id == providerId);
+                if (providerId == "codex")
+                    await CodexLoginService.SignOutAsync(CodexLoginService.ActiveProfile(provider, _factory.Create(providerId).GetAccounts(provider)), _lifetime.Token);
+                if (providerId == "claude" && File.Exists(ProviderAuthenticationService.ClaudeCredentialPath))
+                    File.Delete(ProviderAuthenticationService.ClaudeCredentialPath);
+                await _cookies.ClearCookieHeaderAsync(providerId, _lifetime.Token);
+                await new SecureOAuthTokenStore().ClearAsync(providerId, _lifetime.Token);
+                ProviderAuthenticationService.ClearConfiguredCredentials(provider);
+                await _store.SaveAsync(config, _lifetime.Token);
+                _config = config;
+            }
+            finally { _saveGate.Release(); }
+            if (providerId == "codex") _codexAuthentication = new(false, "Not signed in");
+            else _providerAuthentication[providerId] = new(false, "Not signed in");
+            _status = $"Signed out of {ProviderCatalog.DisplayName(providerId)}.";
+            await RefreshAsync(providerId);
+        }
+        catch (OperationCanceledException) { _status = "Sign-out cancelled."; }
+        catch (Exception exception) { failed = true; _status = $"Sign-out failed: {exception.Message}"; }
+        finally
+        {
+            _signingIn = false;
+            _providerSignIn = new(providerId, false, null, _status ?? "Sign-out finished.", failed);
+            if (providerId == "codex") _codexCheckedProfile = null;
+        }
+    }
+
+    private void InvalidateAuthentication(string? provider = null)
+    {
+        if (provider is null or "codex")
+        {
+            _codexCheckCancellation?.Cancel();
+            _codexCheckedProfile = null;
+        }
+        if (provider is not null)
+        {
+            _providerCheckVersions[provider] = _providerCheckVersions.GetValueOrDefault(provider) + 1;
+            _providerAuthentication.Remove(provider);
+            _checkingProviders.Remove(provider);
+            return;
+        }
+        _providerCheckCancellation?.Cancel();
+        _providerCheckCancellation?.Dispose();
+        _providerCheckCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _providerAuthentication.Clear();
+        _checkingProviders.Clear();
+    }
+
+    private void CheckOtherProviderAccounts()
+    {
+        if (_settings is not { IsDisposed: false } || _signingIn || _lifetime.IsCancellationRequested) return;
+        if (_providerCheckCancellation is null || _providerCheckCancellation.IsCancellationRequested)
+            _providerCheckCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        var ct = _providerCheckCancellation.Token;
+        foreach (var provider in _config.Providers.Where(p => p.Id != "codex" && ProviderCatalog.IsSupported(p.Id)))
+        {
+            if (_providerAuthentication.ContainsKey(provider.Id) || !_checkingProviders.Add(provider.Id)) continue;
+            _providerAuthentication[provider.Id] = new(null, "Checking sign-in…");
+            _ = ReadAsync(provider, _providerCheckVersions.GetValueOrDefault(provider.Id));
+        }
+        async Task ReadAsync(ProviderConfig provider, int version)
+        {
+            bool Current() => !ct.IsCancellationRequested && _providerCheckVersions.GetValueOrDefault(provider.Id) == version;
+            try
+            {
+                var status = await AuthenticationService().CheckAsync(provider, ct);
+                if (Current()) _providerAuthentication[provider.Id] = status;
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception) { if (Current()) _providerAuthentication[provider.Id] = new(null, "Could not check sign-in."); }
+            finally { if (Current()) _checkingProviders.Remove(provider.Id); }
         }
     }
 

@@ -96,6 +96,12 @@ h2, h3, .brand { color: var(--text); }
 .provider-expand { color: var(--text); }
 .provider-expand strong { font-weight: 600; }
 .provider-expand small { color: var(--muted); }
+.provider-expand small.connection-status{color:var(--text)}
+.provider-expand small.connection-status.warning{color:var(--warning-text)}
+.provider-auth-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:20px}
+.provider-auth-row>.fields-grid{margin-bottom:0}
+.provider-auth-row>button{margin:0;white-space:nowrap}
+.provider-auth-row.provider-signed-in{align-items:center}
 .provider-details { border-top: 1px solid var(--divider); padding: 24px; }
 .provider-icon { filter: var(--icon-filter); }
 .provider-header .chevron { color: var(--muted); border-radius: 50%; }
@@ -167,10 +173,20 @@ button:disabled { opacity: .48; }
 }
 .inline-warning { color: var(--warning-text); background: var(--warning-surface); border-color: var(--border); border-radius: 12px; }
 .inline-warning p { color: inherit; }
-.provider-signin{margin-top:16px}
-.provider-signin p{color:inherit;font-size:12px}
-.provider-device-code{display:block;font-size:28px;letter-spacing:4px;padding:18px 0;color:var(--text);user-select:all}
-.provider-signin>button{margin-top:12px}
+.provider-signin{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:20px;margin-top:16px}
+.provider-signin:first-child{margin-top:0}
+.provider-signin p{grid-column:1;color:inherit;font-size:12px}
+.provider-signin>.provider-device-code-row{grid-column:1}
+.provider-device-code-row{display:flex;align-items:center;gap:12px;padding:18px 0}
+.provider-device-code{display:block;font-size:28px;letter-spacing:4px;color:var(--text);user-select:all}
+.provider-copy-code{display:grid;place-items:center;flex-shrink:0;width:36px;height:36px;padding:0}
+.provider-signin-actions{grid-column:2;grid-row:1;display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.provider-signin-actions>button{white-space:nowrap}
+.provider-signin-actions:empty{display:none}
+@media (max-width:650px){
+  .provider-signin{grid-template-columns:minmax(0,1fr);row-gap:12px}
+  .provider-signin-actions{grid-column:1;grid-row:auto;justify-self:end}
+}
 .settings-footer { background: var(--chrome); border-top: 1px solid var(--glass-edge); }
 .settings-content, .popover-content { scrollbar-color: color-mix(in srgb, var(--muted) 50%, transparent) transparent; }
 
@@ -236,12 +252,17 @@ button:disabled { opacity: .48; }
   .theme-option>input { top: 15px; right: 15px; }
   .theme-swatch { height: 85px; }
 }
-@media (max-width: 650px) { .theme-grid { grid-template-columns: 1fr; } }
+@media (max-width: 650px) {
+  .theme-grid { grid-template-columns: 1fr; }
+  .provider-auth-row{grid-template-columns:minmax(0,1fr)}
+  .provider-auth-row>button{justify-self:end}
+}
 @media (prefers-reduced-transparency: reduce) {
   .window-header, .settings-shell aside { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--canvas); }
   .provider-card, .section, .usage-window, .settings-footer, .popover-footer, .theme-option { background: var(--solid-surface); }
 }
 @media (forced-colors: active) {
+  :root[data-theme-mode] .provider-expand small.connection-status.warning{color:CanvasText}
   .desktop-shell, .window-header, .settings-shell aside, .provider-card, .section, .usage-window,
   .settings-footer, .popover-footer, .popover-header, .popover-toolbar, .info-box, .inline-warning, .theme-option {
     background: Canvas; color: CanvasText; box-shadow: none;

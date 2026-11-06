@@ -67,6 +67,14 @@ public sealed class SecureOAuthTokenStore : IOAuthTokenStore
         await SaveAsync(file, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task ClearAsync(string providerId, CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(_path)) return;
+        var file = await LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (file.Tokens.Remove(NormalizeProviderId(providerId)))
+            await SaveAsync(file, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<OAuthSecretsFile> LoadAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(_path))

@@ -8,6 +8,43 @@ namespace Hmy.Estao.Desktop;
 
 internal static class CodexLoginService
 {
+    public static Task SignOutAsync(string profileHome, CancellationToken ct)
+    {
+        if (!Directory.Exists(profileHome)) return Task.CompletedTask;
+        return RunServerAsync(CreateStartInfo(FindExecutable(), profileHome), SignOutExchangeAsync,
+            TimeSpan.FromSeconds(20), "Codex sign-out timed out. Try again.", ct);
+    }
+
+    internal static async Task<bool> SignOutExchangeAsync(TextReader output, TextWriter input, CancellationToken ct)
+    {
+        await Send(new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "estao", version = "0.0.9" } } });
+        var stage = 1;
+        while (await output.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
+        {
+            if (line.Length > 1024 * 1024) throw new InvalidOperationException("Codex returned an oversized sign-out response.");
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(line); } catch (JsonException) { continue; }
+            using (doc)
+            {
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("id", out var id)
+                    || id.ValueKind != JsonValueKind.Number || !id.TryGetInt32(out var requestId) || requestId != stage) continue;
+                if (root.TryGetProperty("error", out _)) throw new InvalidOperationException("Codex could not sign out. Update Codex CLI and try again.");
+                if (!root.TryGetProperty("result", out _)) continue;
+                if (stage == 2) return true;
+                stage = 2;
+                await Send(new { method = "initialized", @params = new { } });
+                await Send(new { id = 2, method = "account/logout", @params = new { } });
+            }
+        }
+        throw new InvalidOperationException("Codex closed before confirming sign-out.");
+        async Task Send<T>(T message)
+        {
+            await input.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), ct).ConfigureAwait(false);
+            await input.FlushAsync(ct).ConfigureAwait(false);
+        }
+    }
+
     public static Task<CodexAccountStatus> ReadAccountAsync(string profileHome, CancellationToken ct)
     {
         if (!Directory.Exists(profileHome)) return Task.FromResult(new CodexAccountStatus(false, "Not signed in to this Codex profile."));

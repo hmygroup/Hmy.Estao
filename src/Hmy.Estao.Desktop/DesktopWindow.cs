@@ -13,7 +13,8 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
     private readonly HarnessHubSession? _hub;
 
     public DesktopWindow(string view, Func<Task<DesktopState>> state,
-        Func<SettingsUpdate, Task> save, Func<DesktopCommand, Task> command, string? theme = null, string? configPath = null)
+        Func<SettingsUpdate, Task> save, Func<DesktopCommand, Task> command, string? theme = null, string? configPath = null,
+        Func<ProviderSettings, Task>? providerSignIn = null)
         : base(new WebViewHostOptions(new Uri(LocalFrontendContent.Origin, $"/?view={view}"), LocalFrontendContent.Origin)
         {
             LocalFrontend = new LocalFrontendContent(typeof(DesktopWindow).Assembly),
@@ -37,6 +38,9 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
             await OnUiAsync(state, ct)));
         if (view == "settings")
         {
+            if (providerSignIn is not null)
+                _handlers.Add(Messages.Handle(DesktopContracts.ProviderSignIn, async (request, ct) =>
+                    await OnUiAsync(async () => { await providerSignIn(request); return new EmptyRequest(); }, ct)));
             _hub = new HarnessHubSession(configPath ?? new Hmy.Estao.Core.Configuration.ConfigStore().Path);
             _handlers.Add(Messages.Handle(HubContracts.State, (_, _) => ValueTask.FromResult(_hub.State)));
             _handlers.Add(Messages.Handle(HubContracts.Command, async (request, ct) =>

@@ -9,6 +9,7 @@ internal static class DesktopContracts
     public static readonly RequestType<EmptyRequest, DesktopState> State = new("estao.state");
     public static readonly RequestType<SettingsUpdate, EmptyRequest> Save = new("estao.settings.save");
     public static readonly RequestType<DesktopCommand, EmptyRequest> Command = new("estao.command");
+    public static readonly RequestType<ProviderSettings, EmptyRequest> ProviderSignIn = new("estao.provider.signIn");
 }
 
 internal sealed record EmptyRequest;
@@ -22,7 +23,7 @@ internal sealed record SettingsUpdate(List<ProviderSettings> Providers, UsageCol
     RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds, bool LaunchAtSignIn, string Theme);
 internal sealed record AccountChoice(int Index, string Label);
 internal sealed record CodexAccountStatus(bool? SignedIn, string Message);
-internal sealed record ProviderSignInState(string Provider, bool Pending, string? UserCode, string Message);
+internal sealed record ProviderSignInState(string Provider, bool Pending, string? UserCode, string Message, bool IsError = false);
 internal sealed record DesktopState(string View, string? SelectedProvider, List<ProviderSettings> Providers,
     UsageColorConfig UsageAlerts, RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds,
     bool LaunchAtSignIn, IReadOnlyList<UsageSnapshot> Snapshots, IReadOnlyList<UsageHistoryPoint> History,

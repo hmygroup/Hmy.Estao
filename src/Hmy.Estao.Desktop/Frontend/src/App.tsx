@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
-import { command, getState, saveSettings, WindowControls } from "./nativeHost";
+import { command, getState, saveSettings, signInProvider, WindowControls } from "./nativeHost";
 import type { DesktopState, HistoryPoint, Provider, RateWindow, SettingsUpdate, UsageAlerts } from "./types";
 import { applyTheme, cachedTheme, cacheTheme, resolveTheme } from "./themes";
 import ThemePicker from "./themes/ThemePicker";
 import HarnessHub from "./HarnessHub";
+import { connectionPresentation } from "./providerConnection";
 
 function Icon({ id }: { id: string }) {
   return <img className="provider-icon" src={`/providers/${id}.svg`} alt="" />;
@@ -71,6 +72,25 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
     try { await command(action, provider); await reload(); }
     catch (e) { setMessage(String(e)); }
   };
+  const providerSignIn = async (provider: Provider) => {
+    setMessage("");
+    try {
+      const source = provider.id === "zai" ? "api" : provider.id === "opencode" ? "web"
+        : provider.id === "copilot" ? (provider.source === "api" ? "api" : "oauth")
+        : provider.id === "claude" ? (provider.source === "web" ? "web" : "oauth")
+        : ["auto", "cli", "oauth"].includes(provider.source) ? provider.source : "auto";
+      await signInProvider({ ...provider, source, cookieSource: source === "web" ? "manual" : provider.cookieSource });
+      const fresh = await getState();
+      const saved = fresh.providers.find(p => p.id === provider.id)!;
+      setDraft(d => ({ ...d, providers: d.providers.map(p => p.id === provider.id
+        ? { ...p, source: saved.source, cookieSource: saved.cookieSource, apiKey: "", newCookie: "", clearApiKey: false, clearCookie: false } : p) }));
+      await reload();
+    } catch (e) { setMessage(String(e)); }
+  };
+  const providerSignOut = async (id: string) => {
+    setDraft(d => ({ ...d, providers: d.providers.map(p => p.id === id ? { ...p, apiKey: "", newCookie: "", clearApiKey: false, clearCookie: false } : p) }));
+    await run("signout", id);
+  };
   useEffect(() => {
     const listener = (event: BeforeUnloadEvent) => { if (dirty) event.preventDefault(); };
     window.addEventListener("beforeunload", listener);
@@ -96,7 +116,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
         {page === "providers" && <>
           <div className="section-caption">YOUR CONNECTIONS <span>{draft.providers.filter(p => p.enabled).length} enabled</span></div>
            {draft.providers.map(p => <ProviderCard key={p.id} provider={p} update={u => providerChange(p.id, u)}
-             snapshot={state.snapshots.find(s => s.provider === p.id)} signIn={() => void run("signin", p.id)}
+             signIn={() => void providerSignIn(p)} signOut={() => void providerSignOut(p.id)}
              signInState={state.providerSignIn} signInCommand={action => void run(action)}
              authentication={state.providers.find(provider => provider.id === p.id)?.authentication} />)}
         </>}
@@ -145,65 +165,64 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
   </div>;
 }
 
-function ProviderCard({ provider: p, update, snapshot, signIn, signInState, signInCommand, authentication }: {
-  provider: Provider; update: (change: Partial<Provider>) => void; snapshot: DesktopState["snapshots"][number] | undefined; signIn: () => void;
+function ProviderCard({ provider: p, update, signIn, signOut, signInState, signInCommand, authentication }: {
+  provider: Provider; update: (change: Partial<Provider>) => void; signIn: () => void; signOut: () => void;
   signInState: DesktopState["providerSignIn"]; signInCommand: (action: string) => void;
   authentication: Provider["authentication"];
 }) {
   const [expanded, setExpanded] = useState(false);
-  const hasCookies = ["claude", "opencode"].includes(p.id);
-  const hasKey = ["claude", "copilot", "zai"].includes(p.id);
+  const signedIn = authentication?.signedIn === true;
+  const pending = signInState?.pending === true;
+  const activeSignIn = signInState?.provider === p.id && pending;
+  const checking = authentication?.signedIn == null && (!authentication || authentication.message.startsWith("Checking"));
+  const connection = connectionPresentation(p.enabled, authentication);
   return <article className={`provider-card ${expanded ? "expanded" : ""}`}>
     <div className="provider-header"><Icon id={p.id} /><button className="provider-expand" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
-      <strong>{p.name}</strong><small>{!p.enabled ? "Disabled" : authentication?.signedIn
-        ? `${authentication.message}${snapshot?.error ? " · Usage unavailable" : ""}`
-        : snapshot?.error ? "Needs attention" : snapshot ? `${snapshot.account || "Connected"} · ${snapshot.source}` : "Enabled · awaiting refresh"}</small>
+      <strong>{p.name}</strong>{!(activeSignIn && checking) && <small className={connection.warning ? "connection-status warning" : "connection-status"}>{connection.label}</small>}
     </button><button type="button" className="chevron" aria-label={`${expanded ? "Collapse" : "Expand"} ${p.name} settings`}
       aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points={expanded ? "4 10 8 6 12 10" : "4 6 8 10 12 6"} />
     </svg></button>
       <Toggle label={`Enable ${p.name}`} checked={p.enabled} onChange={enabled => update({ enabled })} /></div>
     {expanded && <div className="provider-details">
-      {snapshot?.error && <p className="inline-warning">{snapshot.error}</p>}
+      {activeSignIn ? null : signedIn ? <div className="provider-auth-row provider-signed-in"><div><p>You are currently signed in to {p.name}.</p>
+        {p.id === "codex" && <p className="footnote">Signing out also signs out the active Codex CLI profile.</p>}
+        {p.id === "claude" && <p className="footnote">Signing out also clears the Claude CLI credential used by Estao.</p>}
+        </div>
+        <button type="button" className="secondary" disabled={pending} onClick={signOut}>Sign out</button>
+      </div> : checking ? <p role="status">Checking sign-in…</p> : <>
+      {authentication?.signedIn == null && <p className="inline-warning">{authentication?.message}</p>}
+      <div className="provider-auth-row">
       <div className="fields-grid">
-        <Field label="Usage source"><select value={p.source} onChange={e => update({ source: e.target.value })}>
-          {["auto", "web", "cli", "oauth", "api"].map(v => <option key={v} value={v}>{v === "auto" ? "Automatic" : v.toUpperCase()}</option>)}</select></Field>
+        {p.id === "copilot" && <Field label="Sign-in method"><select value={p.source === "api" ? "api" : "oauth"} onChange={e => update({ source: e.target.value })}>
+          <option value="oauth">GitHub browser sign-in</option><option value="api">API token</option></select></Field>}
+        {p.id === "claude" && <Field label="Sign-in method"><select value={p.source === "web" ? "web" : "oauth"} onChange={e => update({ source: e.target.value })}>
+          <option value="oauth">Claude CLI sign-in</option><option value="web">Session cookie</option></select></Field>}
         {p.id === "codex" && <Field label="Codex profile homes (semicolon separated)"><input value={p.codexProfileHomePaths?.join("; ") || ""}
           onChange={e => update({ codexProfileHomePaths: e.target.value.split(";").map(s => s.trim()).filter(Boolean) })} /></Field>}
         {p.id === "copilot" && <Field label="Enterprise host"><input value={p.enterpriseHost || ""} onChange={e => update({ enterpriseHost: e.target.value })} placeholder="github.example.com" /></Field>}
         {p.id === "opencode" && <Field label="Workspace"><input value={p.workspaceId || ""} onChange={e => update({ workspaceId: e.target.value })} /></Field>}
-        {hasCookies && <>
-          <Field label="Cookie source"><select value={p.cookieSource} onChange={e => update({ cookieSource: e.target.value })}>
-            {["auto", "manual", "off"].map(v => <option key={v} value={v}>{v}</option>)}</select></Field>
-          <Field label={`New cookie header · ${p.hasCookie ? "saved" : "not configured"}`}><input type="password" autoComplete="new-password" value={p.newCookie || ""}
-            placeholder="Leave blank to keep saved cookie" onChange={e => update({ newCookie: e.target.value, clearCookie: false })} /></Field>
-          <Toggle label="Remove saved cookie on save" checked={p.clearCookie || false} onChange={clearCookie => update({ clearCookie })} />
-        </>}
-        {hasKey && <><Field label={`API key / token · ${p.hasApiKey ? "saved" : "not configured"}`}><input type="password" autoComplete="new-password" value={p.apiKey || ""}
-          placeholder="Leave blank to keep saved key" onChange={e => update({ apiKey: e.target.value, clearApiKey: false })} /></Field>
-          <Toggle label="Remove saved API key on save" checked={p.clearApiKey || false} onChange={clearApiKey => update({ clearApiKey })} /></>}
+        {(p.id === "opencode" || (p.id === "claude" && p.source === "web")) && <Field label="Cookie header"><input type="password" autoComplete="new-password" value={p.newCookie || ""}
+          placeholder="Enter a session cookie" onChange={e => update({ newCookie: e.target.value })} /></Field>}
+        {(p.id === "zai" || (p.id === "copilot" && p.source === "api")) && <Field label={p.id === "zai" ? "API key" : "API token"}><input type="password" autoComplete="new-password" value={p.apiKey || ""}
+          placeholder="Enter your credential" onChange={e => update({ apiKey: e.target.value })} /></Field>}
       </div>
-      {p.id === "codex" && <p className="footnote" role="status">{authentication?.message || "Checking Codex sign-in…"}</p>}
-      {["codex", "claude", "copilot"].includes(p.id) && <div className="hub-actions">
-        <button className="secondary" disabled={signInState?.pending} onClick={signIn}>
-          {signInState?.pending && signInState.provider === p.id ? "Signing in…" : authentication?.signedIn ? "Sign in again ↗" : `Sign in to ${p.name} ↗`}</button>
-        {p.id === "codex" && <button type="button" className="secondary" disabled={signInState?.pending} onClick={() => signInCommand("check-codex-signin")}>Check sign-in</button>}
-      </div>}
-      {signInState?.provider === p.id && <div className="provider-signin info-box" role="status" aria-live="polite">
+      <button type="button" className="secondary" disabled={pending} onClick={signIn}>{pending && signInState.provider === p.id ? "Signing in…" : "Sign in"}</button>
+      </div>
+      </>}
+      {signInState?.provider === p.id && (signInState.pending || signInState.isError) && <div className="provider-signin" role="status" aria-live="polite">
         <p>{signInState.message}</p>
         {signInState.pending && signInState.userCode && <>
-          <strong className="provider-device-code" aria-label="GitHub device authorization code">{signInState.userCode}</strong>
-          <div className="hub-actions"><button type="button" className="secondary" onClick={() => signInCommand("copy-signin-code")}>Copy code</button>
-            <button type="button" className="secondary" onClick={() => signInCommand("open-signin-page")}>Open GitHub ↗</button></div>
+          <div className="provider-device-code-row"><strong className="provider-device-code" aria-label="GitHub device authorization code">{signInState.userCode}</strong>
+            <button type="button" className="icon-button provider-copy-code" aria-label="Copy code" title="Copy code" onClick={() => signInCommand("copy-signin-code")}>
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>
+            </button></div>
         </>}
-        {signInState.pending && ["codex", "copilot"].includes(p.id) && <button type="button" className="secondary" onClick={() => signInCommand("cancel-signin")}>Cancel sign-in</button>}
+        <div className="provider-signin-actions">
+          {signInState.pending && signInState.userCode && <button type="button" className="secondary" onClick={() => signInCommand("open-signin-page")}>Open GitHub ↗</button>}
+          {signInState.pending && signInState.message !== "Signing out…" && <button type="button" className="secondary" onClick={() => signInCommand("cancel-signin")}>Cancel sign-in</button>}
+        </div>
       </div>}
-      <div className="pacing"><h3>Daily pacing</h3><Toggle label="Enable pacing for this provider" checked={p.pacing.enabled}
-        onChange={enabled => update({ pacing: { ...p.pacing, enabled } })} />
-        <div className="fields-grid"><Field label="Daily target (% / day)"><input type="number" min="1" max="100" disabled={!p.pacing.enabled} value={p.pacing.dailyTargetPercent}
-          onChange={e => update({ pacing: { ...p.pacing, dailyTargetPercent: e.target.valueAsNumber } })} /></Field>
-          <Toggle label="Notify once a day when over pace" checked={p.pacing.notifyOnExceed} disabled={!p.pacing.enabled}
-            onChange={notifyOnExceed => update({ pacing: { ...p.pacing, notifyOnExceed } })} /></div></div>
     </div>}
   </article>;
 }

@@ -25,7 +25,7 @@ export interface SettingsUpdate {
   overlayEnabled: boolean; overlayProviderIds: string[]; launchAtSignIn: boolean;
 }
 export interface DesktopState extends SettingsUpdate {
-  providerSignIn?: { provider: string; pending: boolean; userCode: string | null; message: string } | null;
+  providerSignIn?: { provider: string; pending: boolean; userCode: string | null; message: string; isError?: boolean } | null;
   view: string; selectedProvider: string | null; snapshots: Snapshot[]; history: HistoryPoint[];
   accounts: Record<string, { index: number; label: string }[]>; status: string | null;
 }

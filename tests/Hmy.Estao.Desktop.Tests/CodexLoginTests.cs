@@ -13,6 +13,16 @@ public sealed class CodexLoginTests
     private const string InitializeResult = "{\"id\":1,\"result\":{\"userAgent\":\"fixture\"}}";
     private const string Success = "{\"method\":\"account/login/completed\",\"params\":{\"loginId\":\"expected\",\"success\":true}}";
 
+    [Fact]
+    public async Task SignOutUsesTheAccountLogoutProtocolWithoutStartingLogin()
+    {
+        using var output = new StringReader(InitializeResult + "\n{\"id\":2,\"result\":{}}");
+        using var input = new StringWriter();
+        Assert.True(await CodexLoginService.SignOutExchangeAsync(output, input, CancellationToken.None));
+        Assert.Contains("account/logout", input.ToString());
+        Assert.DoesNotContain("account/login/start", input.ToString());
+    }
+
     [Theory]
     [InlineData("{\"type\":\"chatgpt\",\"email\":\"private@example.test\",\"planType\":\"plus\"}", true, "Signed in with ChatGPT")]
     [InlineData("{\"type\":\"apiKey\"}", true, "API key configured")]

@@ -1,7 +1,7 @@
 import { createWebHostClient, isWebHostAvailable } from "@shofia/webhost-client";
 import { registerWindowControls, type WindowControlsElement } from "@shofia/webhost-client/window-controls";
 import { createElement } from "react";
-import type { DesktopState, SettingsUpdate } from "./types";
+import type { DesktopState, SettingsUpdate, Provider } from "./types";
 import type { HubCommand, HubState } from "./hubTypes";
 
 const client = isWebHostAvailable() ? createWebHostClient() : null;
@@ -26,5 +26,6 @@ export const getState = () => request<DesktopState>("estao.state", {});
 export const getHubState = () => request<HubState>("estao.hub.state", {});
 export const hubCommand = (command: HubCommand) => request("estao.hub.command", command);
 export const saveSettings = (settings: SettingsUpdate) => request("estao.settings.save", settings);
+export const signInProvider = (provider: Provider) => request("estao.provider.signIn", provider);
 export const command = (action: string, provider?: string, accountIndex?: number) =>
   request("estao.command", { action, provider, accountIndex });

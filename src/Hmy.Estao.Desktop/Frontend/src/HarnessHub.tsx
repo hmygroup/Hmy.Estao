@@ -52,7 +52,7 @@ export default function HarnessHub() {
     <section className="section hub-connection">
       <div className="hub-connection-copy"><h2>HMY shared skills</h2>
         <p>Install reviewed skills from <strong>hmygroup/hmy-prompt-engineer</strong> into your personal tools.</p>
-        <span className={`hub-connection-status ${state?.connected ? "connected" : ""}`} role="status">{state?.connection || "Checking GitHub access…"}</span>
+        {!state?.connected && <span className="hub-connection-status" role="status">{state?.connection || "Checking GitHub access…"}</span>}
       </div>
       <div className="hub-actions">
         <button type="button" className="secondary" onClick={() => void run({ action: "open-repo" })}>Open GitHub repository ↗</button>
