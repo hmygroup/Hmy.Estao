@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Models;
+using Hmy.Estao.Core.Platform;
 
 namespace Hmy.Estao.Core.Providers;
 
@@ -88,18 +89,69 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
 
     private async Task<UsageSnapshot> FetchCliAsync(string home, string? accountLabel, CancellationToken cancellationToken)
     {
-        var initialize = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"Estao\",\"version\":\"0.1\"}}}\n";
-        var initialized = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}\n";
-        var accountRead = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/read\",\"params\":{}}\n";
-        var limitsRead = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"account/rateLimits/read\",\"params\":{}}\n";
-        var output = await ProviderHelpers.RunProcessAsync(
-            OperatingSystem.IsWindows() ? "codex.cmd" : "codex",
-            "-s read-only -a untrusted app-server",
-            home,
-            new Dictionary<string, string?> { ["CODEX_HOME"] = home },
-            initialize + initialized + accountRead + limitsRead,
-            cancellationToken).ConfigureAwait(false);
+        if (!Directory.Exists(home)) return SignedOut();
+        string executable;
+        try { executable = CodexProcess.FindExecutable(); }
+        catch (FileNotFoundException exception) { return UsageSnapshot.Failure(Id, "cli", exception.Message); }
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(20));
+        try
+        {
+            return await CodexProcess.RunAsync(CodexProcess.CreateStartInfo(executable, home, ["app-server"]),
+                (output, input, ct) => ReadCliUsageAsync(output, input, accountLabel, ct), timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        { return UsageSnapshot.Failure(Id, "cli", "Codex usage check timed out. Check your Codex sign-in and try again."); }
+    }
 
+    internal static async Task<UsageSnapshot> ReadCliUsageAsync(TextReader output, TextWriter input, string? accountLabel, CancellationToken ct)
+    {
+        await SendAsync(new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "estao", version = "0.0.9" } } });
+        var stage = 1;
+        string? accountResponse = null;
+        while (await output.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
+        {
+            if (line.Length > 1024 * 1024) return UsageSnapshot.Failure("codex", "cli", "Codex returned an oversized usage response.");
+            JsonDocument document;
+            try { document = JsonDocument.Parse(line); }
+            catch (JsonException) { continue; }
+            using (document)
+            {
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("id", out var id)
+                    || id.ValueKind != JsonValueKind.Number || !id.TryGetInt32(out var requestId) || requestId != stage) continue;
+                if (root.TryGetProperty("error", out _)) return UsageSnapshot.Failure("codex", "cli", "Codex could not read account usage. Check your sign-in or update Codex CLI.");
+                if (!root.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object) continue;
+                if (stage == 1)
+                {
+                    stage = 2;
+                    await SendAsync(new { method = "initialized", @params = new { } });
+                    await SendAsync(new { id = 2, method = "account/read", @params = new { refreshToken = false } });
+                }
+                else if (stage == 2)
+                {
+                    if (result.TryGetProperty("account", out var account) && account.ValueKind == JsonValueKind.Null) return SignedOut();
+                    accountResponse = line;
+                    stage = 3;
+                    await SendAsync(new { id = 3, method = "account/rateLimits/read", @params = new { } });
+                }
+                else return ParseCliOutput(accountResponse + "\n" + line, accountLabel);
+            }
+        }
+        return UsageSnapshot.Failure("codex", "cli", "Codex closed before returning account usage. Try again or update Codex CLI.");
+
+        async Task SendAsync<T>(T message)
+        {
+            await input.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), ct).ConfigureAwait(false);
+            await input.FlushAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    private static UsageSnapshot SignedOut() => UsageSnapshot.Failure("codex", "cli",
+        "Codex is not signed in. Open Settings > Providers > Codex and sign in.");
+
+    internal static UsageSnapshot ParseCliOutput(string output, string? accountLabel)
+    {
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var windows = new List<RateWindow>();
         string? email = accountLabel;
@@ -115,6 +167,11 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
 
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("id", out var id)
+                && id.ValueKind == JsonValueKind.Number && id.TryGetInt32(out var requestId) && requestId == 2
+                && root.TryGetProperty("result", out var accountResult) && accountResult.ValueKind == JsonValueKind.Object
+                && accountResult.TryGetProperty("account", out var account) && account.ValueKind == JsonValueKind.Null)
+                return SignedOut();
             var parsed = ParseRateLimits(root, "cli", email);
             if (ProviderHelpers.FindProperty(root, "email") is { } emailElement && emailElement.ValueKind == JsonValueKind.String)
             {
@@ -139,10 +196,10 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
 
         if (windows.Count == 0 && credits is null)
         {
-            return UsageSnapshot.Failure(Id, "cli", "codex app-server did not return rate-limit data.");
+            return UsageSnapshot.Failure("codex", "cli", "codex app-server did not return rate-limit data.");
         }
 
-        return new UsageSnapshot(Id, ProviderCatalog.DisplayName(Id), "cli", DateTimeOffset.UtcNow, windows, email, plan, credits);
+        return new UsageSnapshot("codex", ProviderCatalog.DisplayName("codex"), "cli", DateTimeOffset.UtcNow, windows, email, plan, credits);
     }
 
     internal static UsageSnapshot ParseRateLimits(JsonElement root, string source, string? accountLabel)

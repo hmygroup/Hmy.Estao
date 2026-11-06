@@ -3,6 +3,7 @@ export interface UsageAlerts {
   enabled: boolean; warningPercent: number; warningColor: string; criticalPercent: number; criticalColor: string;
 }
 export interface Provider {
+  authentication?: { signedIn: boolean | null; message: string } | null;
   id: string; name: string; enabled: boolean; source: string; cookieSource: string;
   workspaceId: string | null; enterpriseHost: string | null; region: string | null;
   codexProfileHomePaths: string[] | null; pacing: Pacing; hasApiKey: boolean; hasCookie: boolean;

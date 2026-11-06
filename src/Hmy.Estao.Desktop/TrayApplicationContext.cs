@@ -29,6 +29,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool _signingIn;
     private ProviderSignInState? _providerSignIn;
     private CancellationTokenSource? _signInCancellation;
+    private CancellationTokenSource? _codexCheckCancellation;
+    private CodexAccountStatus? _codexAuthentication;
+    private string? _codexCheckedProfile;
+    private bool _checkingCodex;
     private DateTimeOffset _nextRefresh;
     private long _hoverLeftAt;
 
@@ -95,7 +99,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _popover?.Close();
         _settings = CreateWindow("settings");
         _settings.StartPosition = FormStartPosition.CenterScreen;
-        _settings.FormClosed += (_, _) => { _settings = null; _signInCancellation?.Cancel(); };
+        _settings.FormClosed += (_, _) =>
+        {
+            _settings = null;
+            _signInCancellation?.Cancel();
+            _codexCheckCancellation?.Cancel();
+            _codexCheckedProfile = null;
+        };
         _settings.Show();
     }
 
@@ -150,12 +160,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task<DesktopState> StateAsync(string view)
     {
+        if (view == "settings") CheckCodexAccount();
         var providers = new List<ProviderSettings>();
         foreach (var p in _config.Providers.Where(p => ProviderCatalog.IsSupported(p.Id)))
             providers.Add(new ProviderSettings(p.Id, ProviderCatalog.DisplayName(p.Id), p.Enabled == true,
                 p.Source ?? "auto", p.CookieSource ?? "auto", p.WorkspaceId, p.EnterpriseHost, p.Region,
                 p.CodexProfileHomePaths, p.Pacing, !string.IsNullOrWhiteSpace(p.ApiKey),
-                !string.IsNullOrWhiteSpace(p.CookieHeader) || !string.IsNullOrWhiteSpace(await _cookies.ReadCookieHeaderAsync(p.Id))));
+                !string.IsNullOrWhiteSpace(p.CookieHeader) || !string.IsNullOrWhiteSpace(await _cookies.ReadCookieHeaderAsync(p.Id)),
+                Authentication: p.Id == "codex" ? _codexAuthentication : null));
         var accounts = _config.Providers.Where(p => p.Enabled == true && ProviderCatalog.IsSupported(p.Id))
             .ToDictionary(p => p.Id, p => _factory.Create(p.Id).GetAccounts(p)
                 .Select((a, i) => new AccountChoice(i, a.Label)).ToList());
@@ -271,6 +283,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/login/device") { UseShellExecute = true });
                 break;
             case "cancel-signin": _signInCancellation?.Cancel(); break;
+            case "check-codex-signin": _codexCheckedProfile = null; CheckCodexAccount(); break;
             default: throw new ArgumentException("Unknown command.");
         }
     }
@@ -278,13 +291,31 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task SignInAsync(string? provider)
     {
         _signingIn = true;
+        _codexCheckCancellation?.Cancel();
+        _codexCheckedProfile = null;
         _providerSignIn = new(provider ?? "", true, null, "Starting sign-in…");
         _signInCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         try
         {
             switch (provider)
             {
-                case "codex": OAuthLoginService.StartCodexLogin(); _status = "Complete Codex sign-in in the terminal, then refresh."; break;
+                case "codex":
+                    var config = await _store.LoadAsync(_signInCancellation.Token);
+                    var configured = config.Providers.First(p => p.Id == "codex");
+                    var profile = CodexLoginService.ActiveProfile(configured, _factory.Create("codex").GetAccounts(configured));
+                    await CodexLoginService.SignInAsync(profile,
+                        uri => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }),
+                        new Progress<string>(message =>
+                        {
+                            if (_providerSignIn is { Provider: "codex", Pending: true } current)
+                                _providerSignIn = current with { Message = message };
+                        }), _signInCancellation.Token);
+                    _status = "Codex sign-in complete.";
+                    _codexAuthentication = new(true, "Signed in with ChatGPT");
+                    _codexCheckedProfile = profile;
+                    _providerSignIn = new("codex", false, null, _status);
+                    await RefreshAsync();
+                    break;
                 case "claude": OAuthLoginService.StartClaudeLogin(); _status = "Complete Claude sign-in in the terminal, then refresh."; break;
                 case "copilot":
                     var login = await OAuthLoginService.SignInToCopilotAsync(new Progress<string>(s =>
@@ -309,6 +340,40 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _providerSignIn = new(provider ?? "", false, null, _status ?? "Sign-in finished.");
             _signInCancellation.Dispose();
             _signInCancellation = null;
+        }
+    }
+
+    private void CheckCodexAccount()
+    {
+        if (_checkingCodex || _signingIn || _lifetime.IsCancellationRequested) return;
+        try
+        {
+            var configured = _config.Providers.First(p => p.Id == "codex");
+            var profile = CodexLoginService.ActiveProfile(configured, _factory.Create("codex").GetAccounts(configured));
+            if (profile == _codexCheckedProfile) return;
+            _codexCheckedProfile = profile;
+            _codexAuthentication = new(null, "Checking Codex sign-in…");
+            _codexCheckCancellation?.Dispose();
+            _codexCheckCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            _checkingCodex = true;
+            _ = ReadAsync(profile, _codexCheckCancellation.Token);
+        }
+        catch (Exception) { _codexAuthentication = new(null, "Could not check the saved Codex profile. Check its path and try again."); }
+
+        async Task ReadAsync(string profile, CancellationToken ct)
+        {
+            try
+            {
+                var status = await CodexLoginService.ReadAccountAsync(profile, ct);
+                if (!ct.IsCancellationRequested) _codexAuthentication = status;
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception exception)
+            {
+                if (!ct.IsCancellationRequested) _codexAuthentication = new(null,
+                    exception is InvalidOperationException or TimeoutException ? exception.Message : "Could not check Codex sign-in. Try Check sign-in again.");
+            }
+            finally { _checkingCodex = false; }
         }
     }
 

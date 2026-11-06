@@ -6,6 +6,75 @@ namespace Hmy.Estao.Tests;
 public sealed class CodexProviderTests
 {
     [Fact]
+    public async Task cli_waits_for_handshake_and_detects_signed_out_before_requesting_usage()
+    {
+        using var output = new StringReader("""
+            {"id":1,"result":{}}
+            {"id":2,"result":{"account":null,"requiresOpenaiAuth":true}}
+            """);
+        using var input = new StringWriter();
+        var snapshot = await CodexProvider.ReadCliUsageAsync(output, input, "Default", CancellationToken.None);
+        Assert.Contains("not signed in", snapshot.Error);
+        Assert.Contains("account/read", input.ToString());
+        Assert.DoesNotContain("account/rateLimits/read", input.ToString());
+        Assert.DoesNotContain("account/login/start", input.ToString());
+    }
+
+    [Fact]
+    public async Task cli_requests_usage_after_the_account_response()
+    {
+        using var output = new StringReader("""
+            {"id":1,"result":{}}
+            {"method":"account/updated","params":{"authMode":"chatgpt"}}
+            {"id":2,"result":{"account":{"type":"chatgpt","email":"fixture@example.test","planType":"plus"}}}
+            {"id":3,"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300}}}}
+            """);
+        using var input = new StringWriter();
+        var snapshot = await CodexProvider.ReadCliUsageAsync(output, input, "Default", CancellationToken.None);
+        Assert.Null(snapshot.Error);
+        Assert.Equal(.25, Assert.Single(snapshot.Windows).PercentUsed);
+        Assert.Contains("account/rateLimits/read", input.ToString());
+        Assert.DoesNotContain("jsonrpc", input.ToString());
+    }
+
+    [Fact]
+    public async Task cli_errors_do_not_expose_raw_server_details()
+    {
+        using var output = new StringReader("""
+            {"id":1,"error":{"message":"sensitive details"}}
+            """);
+        using var input = new StringWriter();
+        var snapshot = await CodexProvider.ReadCliUsageAsync(output, input, "Default", CancellationToken.None);
+        Assert.NotNull(snapshot.Error);
+        Assert.DoesNotContain("sensitive details", snapshot.Error);
+    }
+
+    [Fact]
+    public void signed_out_cli_account_reports_sign_in_guidance()
+    {
+        var snapshot = CodexProvider.ParseCliOutput("""
+            {"id":1,"result":{}}
+            {"id":2,"result":{"account":null,"requiresOpenaiAuth":true}}
+            {"id":3,"error":{"message":"not authenticated"}}
+            """, "Default");
+        Assert.Contains("not signed in", snapshot.Error);
+        Assert.Contains("Settings", snapshot.Error);
+        Assert.DoesNotContain("codex.cmd", snapshot.Error);
+    }
+
+    [Fact]
+    public void signed_in_cli_output_still_returns_usage()
+    {
+        var snapshot = CodexProvider.ParseCliOutput("""
+            {"id":1,"result":{}}
+            {"id":2,"result":{"account":{"type":"chatgpt","email":"fixture@example.test","planType":"plus"}}}
+            {"id":3,"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300}}}}
+            """, "Default");
+        Assert.Null(snapshot.Error);
+        Assert.Equal(.25, Assert.Single(snapshot.Windows).PercentUsed);
+    }
+
+    [Fact]
     public void parses_current_app_server_rate_limits_and_maps_by_duration()
     {
         using var document = JsonDocument.Parse("""

@@ -97,7 +97,8 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
           <div className="section-caption">YOUR CONNECTIONS <span>{draft.providers.filter(p => p.enabled).length} enabled</span></div>
            {draft.providers.map(p => <ProviderCard key={p.id} provider={p} update={u => providerChange(p.id, u)}
              snapshot={state.snapshots.find(s => s.provider === p.id)} signIn={() => void run("signin", p.id)}
-             signInState={state.providerSignIn} signInCommand={action => void run(action)} />)}
+             signInState={state.providerSignIn} signInCommand={action => void run(action)}
+             authentication={state.providers.find(provider => provider.id === p.id)?.authentication} />)}
         </>}
         {page === "alerts" && <>
           <Section title="Color thresholds" description="Usage indicators in the overlay and popover use the same warning and critical colors.">
@@ -144,16 +145,19 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
   </div>;
 }
 
-function ProviderCard({ provider: p, update, snapshot, signIn, signInState, signInCommand }: {
+function ProviderCard({ provider: p, update, snapshot, signIn, signInState, signInCommand, authentication }: {
   provider: Provider; update: (change: Partial<Provider>) => void; snapshot: DesktopState["snapshots"][number] | undefined; signIn: () => void;
   signInState: DesktopState["providerSignIn"]; signInCommand: (action: string) => void;
+  authentication: Provider["authentication"];
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasCookies = ["claude", "opencode"].includes(p.id);
   const hasKey = ["claude", "copilot", "zai"].includes(p.id);
   return <article className={`provider-card ${expanded ? "expanded" : ""}`}>
     <div className="provider-header"><Icon id={p.id} /><button className="provider-expand" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
-      <strong>{p.name}</strong><small>{!p.enabled ? "Disabled" : snapshot?.error ? "Needs attention" : snapshot ? `${snapshot.account || "Connected"} · ${snapshot.source}` : "Enabled · awaiting refresh"}</small>
+      <strong>{p.name}</strong><small>{!p.enabled ? "Disabled" : authentication?.signedIn
+        ? `${authentication.message}${snapshot?.error ? " · Usage unavailable" : ""}`
+        : snapshot?.error ? "Needs attention" : snapshot ? `${snapshot.account || "Connected"} · ${snapshot.source}` : "Enabled · awaiting refresh"}</small>
     </button><button type="button" className="chevron" aria-label={`${expanded ? "Collapse" : "Expand"} ${p.name} settings`}
       aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points={expanded ? "4 10 8 6 12 10" : "4 6 8 10 12 6"} />
@@ -179,8 +183,12 @@ function ProviderCard({ provider: p, update, snapshot, signIn, signInState, sign
           placeholder="Leave blank to keep saved key" onChange={e => update({ apiKey: e.target.value, clearApiKey: false })} /></Field>
           <Toggle label="Remove saved API key on save" checked={p.clearApiKey || false} onChange={clearApiKey => update({ clearApiKey })} /></>}
       </div>
-      {["codex", "claude", "copilot"].includes(p.id) && <button className="secondary" disabled={signInState?.pending} onClick={signIn}>
-        {signInState?.pending && signInState.provider === p.id ? "Signing in…" : `Sign in to ${p.name} ↗`}</button>}
+      {p.id === "codex" && <p className="footnote" role="status">{authentication?.message || "Checking Codex sign-in…"}</p>}
+      {["codex", "claude", "copilot"].includes(p.id) && <div className="hub-actions">
+        <button className="secondary" disabled={signInState?.pending} onClick={signIn}>
+          {signInState?.pending && signInState.provider === p.id ? "Signing in…" : authentication?.signedIn ? "Sign in again ↗" : `Sign in to ${p.name} ↗`}</button>
+        {p.id === "codex" && <button type="button" className="secondary" disabled={signInState?.pending} onClick={() => signInCommand("check-codex-signin")}>Check sign-in</button>}
+      </div>}
       {signInState?.provider === p.id && <div className="provider-signin info-box" role="status" aria-live="polite">
         <p>{signInState.message}</p>
         {signInState.pending && signInState.userCode && <>
@@ -188,7 +196,7 @@ function ProviderCard({ provider: p, update, snapshot, signIn, signInState, sign
           <div className="hub-actions"><button type="button" className="secondary" onClick={() => signInCommand("copy-signin-code")}>Copy code</button>
             <button type="button" className="secondary" onClick={() => signInCommand("open-signin-page")}>Open GitHub ↗</button></div>
         </>}
-        {signInState.pending && p.id === "copilot" && <button type="button" className="secondary" onClick={() => signInCommand("cancel-signin")}>Cancel sign-in</button>}
+        {signInState.pending && ["codex", "copilot"].includes(p.id) && <button type="button" className="secondary" onClick={() => signInCommand("cancel-signin")}>Cancel sign-in</button>}
       </div>}
       <div className="pacing"><h3>Daily pacing</h3><Toggle label="Enable pacing for this provider" checked={p.pacing.enabled}
         onChange={enabled => update({ pacing: { ...p.pacing, enabled } })} />
