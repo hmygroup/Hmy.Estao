@@ -131,7 +131,6 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
             <Field label="Refresh interval"><select value={draft.refresh.intervalMinutes} disabled={!draft.refresh.enabled}
               onChange={e => change({ refresh: { ...draft.refresh, intervalMinutes: Number(e.target.value) } })}>
               {[1, 5, 10, 15, 30, 60].map(n => <option key={n} value={n}>{n} minutes</option>)}</select></Field>
-            <button className="secondary" onClick={() => void run("refresh")}>Refresh now</button>
           </Section>
         </>}
       </fieldset></main>
