@@ -14,7 +14,9 @@ public sealed class LocalizationTests
     [Theory]
     [InlineData("system", "es-MX", "es")]
     [InlineData("en", "es-ES", "en")]
-    [InlineData("fr", "es-ES", "en")]
+    [InlineData("de", "es-ES", "en")]
+    [InlineData("system", "fr-CA", "fr")]
+    [InlineData("fr-FR", "en-US", "fr")]
     public void LanguagesResolveWithEnglishFallback(string requested, string system, string expected)
         => Assert.Equal(expected, DesktopLocalization.Resolve(requested, system));
 
@@ -23,12 +25,15 @@ public sealed class LocalizationTests
     {
         var assembly = typeof(DesktopWindow).Assembly;
         using var en = assembly.GetManifestResourceStream("Localization.en.json");
-        using var es = assembly.GetManifestResourceStream("Localization.es.json");
         Assert.NotNull(en);
-        Assert.NotNull(es);
         var english = JsonSerializer.Deserialize<Dictionary<string, string>>(en)!;
-        var spanish = JsonSerializer.Deserialize<Dictionary<string, string>>(es)!;
-        Assert.Equal(english.Keys.Order(), spanish.Keys.Order());
+        foreach (var language in new[] { "es", "fr" })
+        {
+            using var stream = assembly.GetManifestResourceStream($"Localization.{language}.json");
+            Assert.NotNull(stream);
+            var translated = JsonSerializer.Deserialize<Dictionary<string, string>>(stream)!;
+            Assert.Equal(english.Keys.Order(), translated.Keys.Order());
+        }
     }
 
     [Fact]
@@ -42,6 +47,12 @@ public sealed class LocalizationTests
             Assert.Contains(DesktopBranding.DisplayName, DesktopLocalization.Text("native.overlay_title"));
             Assert.Contains("401", DesktopLocalization.Format(new("error.http", "Claude", 401)));
             Assert.DoesNotContain("secret", DesktopLocalization.Error(new Exception("secret")));
+            DesktopLocalization.SetLanguage("fr");
+            Assert.True(DesktopLocalization.IsSupported("fr"));
+            Assert.Equal("Paramètres", DesktopLocalization.Text("settings"));
+            Assert.Equal("Actualiser maintenant", DesktopLocalization.Text("tray.refresh"));
+            Assert.Contains(DesktopBranding.DisplayName, DesktopLocalization.Text("native.overlay_title"));
+            Assert.Equal("Claude a renvoyé le code HTTP 401.", DesktopLocalization.Format(new("error.http", "Claude", 401)));
             DesktopLocalization.SetLanguage("en");
             Assert.Equal("Settings", DesktopLocalization.Text("settings"));
         }
@@ -78,8 +89,10 @@ public sealed class LocalizationTests
         if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
-    [Fact]
-    public async Task SavingLanguageUpdatesTheNativeTrayAndPersistsOnlyTheFixtureConfiguration()
+    [Theory]
+    [InlineData("es", "Actualizar ahora", "Configuración", "barra de tareas")]
+    [InlineData("fr", "Actualiser maintenant", "Paramètres", "barre des tâches")]
+    public async Task SavingLanguageUpdatesTheNativeTrayAndPersistsOnlyTheFixtureConfiguration(string language, string refresh, string settings, string overlayTitle)
     {
         var initial = DesktopLocalization.Language;
         var directory = Path.Combine(Path.GetTempPath(), "estao-native-language-" + Guid.NewGuid().ToString("N"));
@@ -106,13 +119,13 @@ public sealed class LocalizationTests
                     try
                     {
                         var update = new SettingsUpdate([], config.UsageAlerts!, config.Refresh, false, [], StartupManager.Enabled,
-                            DesktopThemeCatalog.Resolve(config.Theme).Id, "es");
+                            DesktopThemeCatalog.Resolve(config.Theme).Id, language);
                         await (Task)typeof(TrayApplicationContext).GetMethod("SaveSettingsAsync", flags)!.Invoke(context, [update])!;
                         var tray = (System.Windows.Forms.NotifyIcon)typeof(TrayApplicationContext).GetField("_tray", flags)!.GetValue(context)!;
-                        Assert.Equal("Actualizar ahora", tray.ContextMenuStrip!.Items[1].Text);
-                        Assert.Contains("Configuración", tray.ContextMenuStrip.Items[2].Text);
-                        Assert.Equal("es", (await store.LoadAsync()).Language);
-                        Assert.Contains("barra de tareas", overlay.Text);
+                        Assert.Equal(refresh, tray.ContextMenuStrip!.Items[1].Text);
+                        Assert.Contains(settings, tray.ContextMenuStrip.Items[2].Text);
+                        Assert.Equal(language, (await store.LoadAsync()).Language);
+                        Assert.Contains(overlayTitle, overlay.Text);
                     }
                     catch (Exception exception) { failure = exception; }
                     finally { deadline.Stop(); context.ExitThread(); }

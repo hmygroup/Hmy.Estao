@@ -8,14 +8,14 @@ namespace Hmy.Estao.Desktop;
 internal static class DesktopLocalization
 {
     private static readonly Regex Placeholder = new(@"\{(appName|\d+)\}", RegexOptions.CultureInvariant);
-    private static readonly Dictionary<string, Dictionary<string, string>> Catalogs = new[] { "en", "es" }.ToDictionary(id => id, id =>
+    private static readonly Dictionary<string, Dictionary<string, string>> Catalogs = new[] { "en", "es", "fr" }.ToDictionary(id => id, id =>
     {
         using var stream = typeof(DesktopLocalization).Assembly.GetManifestResourceStream($"Localization.{id}.json")!;
         return JsonSerializer.Deserialize<Dictionary<string, string>>(stream)!;
     });
     public static string Language { get; private set; } = Resolve("system");
     public static CultureInfo Culture => CultureInfo.GetCultureInfo(Language);
-    public static bool IsSupported(string value) => value is "system" or "en" or "es";
+    public static bool IsSupported(string value) => value is "system" or "en" or "es" or "fr";
     public static string Preference(string? value) => value is null ? "system" : IsSupported(value) ? value : Resolve(value);
     internal static string Resolve(string? value, string? system = null)
     {

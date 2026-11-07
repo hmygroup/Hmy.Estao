@@ -1,9 +1,10 @@
 import en from "./locales/en.json";
 import es from "./locales/es.json";
+import fr from "./locales/fr.json";
 import { appName } from "./branding";
 
 export interface UserMessage { code: string; arguments: unknown[] }
-const catalogs: Record<string, Record<string, string>> = { en, es };
+const catalogs: Record<string, Record<string, string>> = { en, es, fr };
 export function resolveLanguage(value?: string, system = navigator.language): string {
   const requested = (!value || value === "system" ? system : value).toLowerCase().split(/[-_]/)[0];
   return requested in catalogs ? requested : "en";
@@ -24,8 +25,11 @@ export function t(key: string, ...args: unknown[]): string {
     return value == null ? token : typeof value === "number" ? new Intl.NumberFormat(language).format(value) : String(value);
   });
 }
-export const plural = (key: string, count: number, ...args: unknown[]) =>
-  t(`${key}_${new Intl.PluralRules(language).select(count)}`, ...(args.length ? args : [count]));
+export const plural = (key: string, count: number, ...args: unknown[]) => {
+  const variant = `${key}_${new Intl.PluralRules(language).select(count)}`;
+  // French also has a "many" category for millions; use the plural form unless explicitly provided.
+  return t(variant in catalogs[language] || variant in en ? variant : `${key}_other`, ...(args.length ? args : [count]));
+};
 export function message(value?: UserMessage | null): string {
   if (!value) return "";
   const args = value.arguments.map(v => v && typeof v === "object" && "code" in v ? message(v as UserMessage) : v);

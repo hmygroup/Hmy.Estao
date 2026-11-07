@@ -1,13 +1,13 @@
 # Localization
 
-Settings → General → Language selects **System language**, **English** or **Español**. Save applies the language to the web UI, native window titles, tray menu, overlay accessibility and subsequent notifications. The preference is stored in `config.json` as `language` (`system`, `en`, `es`). Old configurations default to `system`; unsupported system languages fall back to English. The bridge also returns the effective native language so WebView and WinForms agree even if the browser's preferred language differs from Windows.
+Settings → General → Language selects **System language**, **English**, **Español** or **Français**. Save applies the language to the web UI, native window titles, tray menu, overlay accessibility and subsequent notifications. The preference is stored in `config.json` as `language` (`system`, `en`, `es`, `fr`). Old configurations default to `system`; unsupported system languages fall back to English. Regional French preferences such as `fr-FR` and `fr-CA` resolve to French. The bridge also returns the effective native language so WebView and WinForms agree even if the browser's preferred language differs from Windows.
 
 ## Resources and formatting
 
-- `Frontend/src/locales/en.json` is the fallback catalog; `es.json` supplies Spanish. Both are bundled into the website and embedded in the Desktop assembly. Native UI does not need a WebView, network connection or frontend process to translate text.
+- `Frontend/src/locales/en.json` is the fallback catalog; `es.json` supplies Spanish and `fr.json` supplies French. All are bundled into the website and embedded in the Desktop assembly. Native UI does not need a WebView, network connection or frontend process to translate text.
 - `Frontend/src/i18n.ts` formats frontend messages, plural forms, dates, times, percentages and numbers. It has no native-host dependency. Browser storage is optional.
 - `DesktopLocalization.cs` formats the same message codes for native surfaces without changing the process culture or Core's parsing behavior.
-- Use stable keys and numbered arguments (`{0}`, `{1}`). Do not concatenate translated sentence fragments. Plural entries use `_one` and `_other`; `plural` uses `Intl.PluralRules`.
+- Use stable keys and numbered arguments (`{0}`, `{1}`). Do not concatenate translated sentence fragments. Plural entries use `_one` and `_other`; `plural` uses `Intl.PluralRules`. Additional categories (such as French `many` for millions) fall back to `_other` unless explicitly translated.
 - The app name is a separate `{appName}` argument supplied by `DesktopBranding.DisplayName` for native text and `Frontend/src/branding.json` for the frontend. HTML title branding is escaped during the frontend build. Technical identifiers and saved-data locations do not follow branding or language changes.
 
 ## Core messages

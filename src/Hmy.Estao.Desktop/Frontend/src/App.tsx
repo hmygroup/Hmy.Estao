@@ -153,7 +153,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
         </>}
         {page === "general" && <>
           <Section title={t("language")} description={t("language.description")}><Field label={t("language")}><select value={draft.language || "system"} onChange={e => change({ language: e.target.value })}>
-            <option value="system">{t("language.system")}</option><option value="en">English</option><option value="es">Español</option>
+            <option value="system">{t("language.system")}</option><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option>
           </select></Field></Section>
           <Section title={t("startup")}><Toggle label={t("startup.enable")} checked={draft.launchAtSignIn} onChange={launchAtSignIn => change({ launchAtSignIn })} /></Section>
           <Section title={t("refresh")} description={t("refresh.description")}>
