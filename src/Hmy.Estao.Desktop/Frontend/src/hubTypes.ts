@@ -1,5 +1,6 @@
-export interface HubTool { id: string; name: string; detected: boolean; status: string; error: string | null }
-export interface HubFile { path: string; action: string; reason: string }
+import type { UserMessage } from "./i18n";
+export interface HubTool { id: string; name: string; detected: boolean; status: string; error: string | null; errorMessage?: UserMessage }
+export interface HubFile { path: string; action: string; reason: string; reasonMessage?: UserMessage }
 export interface HubArtifact {
   id: string; description: string; category: string; status: "new" | "update" | "present" | "conflict";
   fileCount: number; source: string; requirements: string[]; dependencies: string[]; files: HubFile[];
@@ -9,8 +10,9 @@ export interface HubToolReview {
   exclusions: { source: string; classification: string; reason: string; fileCount: number }[];
 }
 export interface HubReview { id: string; commit: string; tools: HubToolReview[] }
-export interface HubResult { id: string; name: string; outcome: string; created: number; updated: number; unchanged: number; conflicts: number; error: string | null }
+export interface HubResult { id: string; name: string; outcome: string; created: number; updated: number; unchanged: number; conflicts: number; error: string | null; errorMessage?: UserMessage }
 export interface HubState {
+  progressMessage?: UserMessage; connectionMessage?: UserMessage; errorMessage?: UserMessage;
   busy: boolean; phase: string; progress: string; connected: boolean; connection: string;
   tools: HubTool[]; review: HubReview | null; results: HubResult[];
   deviceCode: { code: string; verificationUrl: string } | null; error: string | null;

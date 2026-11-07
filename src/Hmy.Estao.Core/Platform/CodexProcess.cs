@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Hmy.Estao.Core.Models;
 using System.Text;
 
 namespace Hmy.Estao.Core.Platform;
@@ -7,7 +8,7 @@ namespace Hmy.Estao.Core.Platform;
 public static class CodexProcess
 {
     public static string FindExecutable() => FindIn(SearchDirectories(), OperatingSystem.IsWindows())
-        ?? throw new FileNotFoundException("Codex CLI could not be found. Install or update Codex, then restart Estao.");
+        ?? throw new FileNotFoundException("Codex CLI could not be found. Install or update Codex, then restart Estao.").WithUserMessage("error.codex_missing");
 
     internal static string? FindIn(IEnumerable<string> directories, bool windows)
     {

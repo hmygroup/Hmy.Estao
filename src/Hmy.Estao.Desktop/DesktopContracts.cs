@@ -12,7 +12,7 @@ internal static class DesktopContracts
     public static readonly RequestType<ProviderSettings, EmptyRequest> ProviderSignIn = new("estao.provider.signIn");
 }
 
-internal sealed record EmptyRequest;
+internal sealed record EmptyRequest(UserMessage? Error = null);
 internal sealed record DesktopCommand(string Action, string? Provider = null, int? AccountIndex = null);
 internal sealed record ProviderSettings(
     string Id, string Name, bool Enabled, string Source, string CookieSource,
@@ -20,11 +20,13 @@ internal sealed record ProviderSettings(
     PacingConfig Pacing, bool HasApiKey, bool HasCookie, string? ApiKey = null,
     string? NewCookie = null, bool ClearApiKey = false, bool ClearCookie = false, CodexAccountStatus? Authentication = null);
 internal sealed record SettingsUpdate(List<ProviderSettings> Providers, UsageColorConfig UsageAlerts,
-    RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds, bool LaunchAtSignIn, string Theme);
-internal sealed record AccountChoice(int Index, string Label);
-internal sealed record CodexAccountStatus(bool? SignedIn, string Message);
-internal sealed record ProviderSignInState(string Provider, bool Pending, string? UserCode, string Message, bool IsError = false);
+    RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds, bool LaunchAtSignIn, string Theme, string Language = "system");
+internal sealed record AccountChoice(int Index, string Label, UserMessage? LabelMessage = null);
+internal sealed record CodexAccountStatus(bool? SignedIn, string Message, UserMessage? MessageInfo = null, bool Checking = false);
+internal sealed record ProviderSignInState(string Provider, bool Pending, string? UserCode, string Message, bool IsError = false,
+    UserMessage? MessageInfo = null, string Operation = "signin");
 internal sealed record DesktopState(string View, string? SelectedProvider, List<ProviderSettings> Providers,
     UsageColorConfig UsageAlerts, RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds,
     bool LaunchAtSignIn, IReadOnlyList<UsageSnapshot> Snapshots, IReadOnlyList<UsageHistoryPoint> History,
-    Dictionary<string, List<AccountChoice>> Accounts, string? Status, string Theme, ProviderSignInState? ProviderSignIn = null);
+    Dictionary<string, List<AccountChoice>> Accounts, string? Status, string Theme, ProviderSignInState? ProviderSignIn = null,
+    string Language = "system", UserMessage? StatusMessage = null, string EffectiveLanguage = "en");

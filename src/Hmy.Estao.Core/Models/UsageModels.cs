@@ -10,6 +10,25 @@ public sealed record RateWindow(
     string? Unit = null)
 {
     public double? PercentRemaining => PercentUsed is null ? null : Math.Clamp(1 - PercentUsed.Value, 0, 1);
+    public UserMessage? UnitMessage => Unit switch
+    {
+        "credits" => new("credits"),
+        "tokens" => new("window.tokens"),
+        "requests" => new("window.requests"),
+        _ => null
+    };
+    private UserMessage? _titleMessage;
+    public UserMessage TitleMessage
+    {
+        get => _titleMessage ?? (Id switch
+        {
+            "session" or "weekly" or "daily" or "monthly" or "chat" or "tools" or "tokens" or "requests" => new UserMessage($"window.{Id}"),
+            "premium" or "premium_interactions" or "premiumInteractions" => new("window.premium"),
+            "mcp-monthly" => new("window.mcp_monthly"),
+            _ => new("window.named", Title)
+        });
+        init => _titleMessage = value;
+    }
 }
 
 public sealed record CreditsSnapshot(double? Balance, string? Unit, bool? Unlimited = null);
@@ -24,11 +43,14 @@ public sealed record UsageSnapshot(
     string? Plan = null,
     CreditsSnapshot? Credits = null,
     string? Error = null,
-    bool IsStale = false)
+    bool IsStale = false,
+    UserMessage? ErrorMessage = null,
+    UserMessage? AccountMessage = null)
 {
-    public static UsageSnapshot Failure(string provider, string source, string error)
+    public static UsageSnapshot Failure(string provider, string source, string error, UserMessage? message = null)
     {
-        return new UsageSnapshot(provider, Configuration.ProviderCatalog.DisplayName(provider), source, DateTimeOffset.UtcNow, [], Error: error);
+        return new UsageSnapshot(provider, Configuration.ProviderCatalog.DisplayName(provider), source, DateTimeOffset.UtcNow, [], Error: error,
+            ErrorMessage: message ?? new UserMessage("error.provider", Configuration.ProviderCatalog.DisplayName(provider)));
     }
 }
 
@@ -43,7 +65,16 @@ public sealed record UsageHistoryPoint(
     DateTimeOffset Timestamp,
     double PercentUsed);
 
-public sealed record ProviderAccount(string Id, string Label, string? Secret = null, string? HomePath = null, string? WorkspaceId = null);
+public sealed record ProviderAccount(string Id, string Label, string? Secret = null, string? HomePath = null, string? WorkspaceId = null)
+{
+    public UserMessage? LabelMessage => Id switch
+    {
+        "api-key" => new("account.token"),
+        "manual-cookie" => new("account.cookie"),
+        "configured" => new("account.workspace"),
+        _ => null
+    };
+}
 
 public sealed record FetchRequest(
     Configuration.ProviderConfig Config,

@@ -122,7 +122,9 @@ public sealed class UsageRefreshService
 
         try
         {
-            return await provider.FetchAsync(request).ConfigureAwait(false);
+            var snapshot = await provider.FetchAsync(request).ConfigureAwait(false);
+            return selectedAccount?.LabelMessage is { } label && snapshot.Account == selectedAccount.Label
+                ? snapshot with { AccountMessage = label } : snapshot;
         }
         catch (OperationCanceledException)
         {
@@ -130,7 +132,7 @@ public sealed class UsageRefreshService
         }
         catch (Exception ex)
         {
-            return UsageSnapshot.Failure(provider.Id, providerConfig.Source ?? "auto", ex.Message);
+            return UsageSnapshot.Failure(provider.Id, providerConfig.Source ?? "auto", ex.Message, UserMessage.FromException(ex));
         }
     }
 

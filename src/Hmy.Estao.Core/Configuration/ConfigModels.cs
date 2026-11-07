@@ -4,6 +4,9 @@ namespace Hmy.Estao.Core.Configuration;
 
 public sealed class EstaoConfig
 {
+    [JsonPropertyName("language")]
+    public string Language { get; set; } = "system";
+
     [JsonPropertyName("version")]
     public int Version { get; set; } = 1;
 

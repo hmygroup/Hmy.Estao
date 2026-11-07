@@ -16,7 +16,7 @@ internal static class Program
         }
         catch (Exception exception)
         {
-            MessageBox.Show(exception.Message, "Estao could not start", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(DesktopLocalization.Error(exception), DesktopLocalization.Text("native.start_failed"), MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }

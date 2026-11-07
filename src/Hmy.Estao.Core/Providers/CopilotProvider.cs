@@ -45,7 +45,7 @@ internal sealed class CopilotProvider : IUsageProvider
         if (string.IsNullOrWhiteSpace(token))
         {
             return UsageSnapshot.Failure(Id, source,
-                "Copilot is not connected. In Settings, choose Sign in with OAuth and complete the GitHub device flow.");
+                "Copilot is not connected. In Settings, choose Sign in with OAuth and complete the GitHub device flow.", new("error.auth", "GitHub Copilot"));
         }
 
         var host = NormalizeEnterpriseHost(request.Config.EnterpriseHost);
@@ -61,7 +61,7 @@ internal sealed class CopilotProvider : IUsageProvider
         using var response = await _httpClient.SendAsync(httpRequest, request.CancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "api", $"Copilot usage API returned {(int)response.StatusCode}.");
+            return UsageSnapshot.Failure(Id, "api", $"Copilot usage API returned {(int)response.StatusCode}.", new("error.http", "GitHub Copilot", (int)response.StatusCode));
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(request.CancellationToken).ConfigureAwait(false);

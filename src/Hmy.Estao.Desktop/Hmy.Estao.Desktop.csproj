@@ -28,6 +28,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Frontend/public/providers/*.svg" LogicalName="Hmy.Estao.ProviderIcons.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Frontend/src/themes/themes.json" LogicalName="Hmy.Estao.Desktop.Themes.json" />
+    <EmbeddedResource Include="Frontend/src/locales/*.json" LogicalName="Localization.%(Filename).json" />
     <InternalsVisibleTo Include="Hmy.Estao.Desktop.Tests" />
   </ItemGroup>
   <Target Name="RemoveUnusedWebViewWpf" BeforeTargets="ResolveAssemblyReferences">

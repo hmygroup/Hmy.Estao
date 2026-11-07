@@ -43,7 +43,7 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
 
             if (source is ProviderSource.OAuth)
             {
-                return UsageSnapshot.Failure(Id, "oauth", "Claude OAuth credentials were not found.");
+                return UsageSnapshot.Failure(Id, "oauth", "Claude OAuth credentials were not found.", new("error.auth", "Claude"));
             }
         }
 
@@ -57,11 +57,11 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
 
             if (source is ProviderSource.Web)
             {
-                return UsageSnapshot.Failure(Id, "web", "Claude cookie was not saved or configured.");
+                return UsageSnapshot.Failure(Id, "web", "Claude cookie was not saved or configured.", new("error.auth", "Claude"));
             }
         }
 
-        return UsageSnapshot.Failure(Id, source.ToString().ToLowerInvariant(), "Claude MVP supports OAuth credentials and web cookies only.");
+        return UsageSnapshot.Failure(Id, source.ToString().ToLowerInvariant(), "Claude MVP supports OAuth credentials and web cookies only.", new("error.unsupported_source", "Claude"));
     }
 
     private static async Task<string?> TryReadOAuthTokenAsync(CancellationToken cancellationToken)
@@ -111,7 +111,7 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "oauth", $"Claude OAuth usage API returned {(int)response.StatusCode}.");
+            return UsageSnapshot.Failure(Id, "oauth", $"Claude OAuth usage API returned {(int)response.StatusCode}.", new("error.http", "Claude", (int)response.StatusCode));
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -126,7 +126,7 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         using var orgResponse = await httpClient.SendAsync(orgRequest, cancellationToken).ConfigureAwait(false);
         if (!orgResponse.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "web", $"Claude organizations API returned {(int)orgResponse.StatusCode}.");
+            return UsageSnapshot.Failure(Id, "web", $"Claude organizations API returned {(int)orgResponse.StatusCode}.", new("error.http", "Claude", (int)orgResponse.StatusCode));
         }
 
         await using var orgStream = await orgResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -134,7 +134,7 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         var orgId = ProviderHelpers.FirstString(orgDocument.RootElement, "uuid", "id");
         if (string.IsNullOrWhiteSpace(orgId))
         {
-            return UsageSnapshot.Failure(Id, "web", "Claude organization id was not found.");
+            return UsageSnapshot.Failure(Id, "web", "Claude organization id was not found.", new("error.organization_missing"));
         }
 
         var usageRequest = new HttpRequestMessage(HttpMethod.Get, $"https://claude.ai/api/organizations/{orgId}/usage");
@@ -142,7 +142,7 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         using var usageResponse = await httpClient.SendAsync(usageRequest, cancellationToken).ConfigureAwait(false);
         if (!usageResponse.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "web", $"Claude usage API returned {(int)usageResponse.StatusCode}.");
+            return UsageSnapshot.Failure(Id, "web", $"Claude usage API returned {(int)usageResponse.StatusCode}.", new("error.http", "Claude", (int)usageResponse.StatusCode));
         }
 
         await using var usageStream = await usageResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);

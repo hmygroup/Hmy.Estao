@@ -31,7 +31,7 @@ internal sealed class ZaiProvider(HttpClient httpClient) : IUsageProvider
         if (string.IsNullOrWhiteSpace(token))
         {
             return UsageSnapshot.Failure(Id, "api",
-                "Z.ai is not connected. Save your z.ai API key in Settings (API Keys page at z.ai).");
+                "Z.ai is not connected. Save your z.ai API key in Settings (API Keys page at z.ai).", new("error.auth", "Z.ai"));
         }
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Get, "https://api.z.ai/api/monitor/usage/quota/limit");
@@ -42,7 +42,7 @@ internal sealed class ZaiProvider(HttpClient httpClient) : IUsageProvider
         using var response = await httpClient.SendAsync(httpRequest, request.CancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "api", $"Z.ai usage API returned {(int)response.StatusCode}.");
+            return UsageSnapshot.Failure(Id, "api", $"Z.ai usage API returned {(int)response.StatusCode}.", new("error.http", "Z.ai", (int)response.StatusCode));
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(request.CancellationToken).ConfigureAwait(false);
@@ -78,7 +78,7 @@ internal sealed class ZaiProvider(HttpClient httpClient) : IUsageProvider
 
         if (windows.Count == 0)
         {
-            return UsageSnapshot.Failure("zai", "api", "Z.ai quota limits were not found.");
+            return UsageSnapshot.Failure("zai", "api", "Z.ai quota limits were not found.", new("error.usage_missing", "Z.ai"));
         }
 
         return new UsageSnapshot("zai", ProviderCatalog.DisplayName("zai"), "api", DateTimeOffset.UtcNow, windows,
@@ -119,7 +119,7 @@ internal sealed class ZaiProvider(HttpClient httpClient) : IUsageProvider
         {
             ({ } unitValue, { } number) when unitValue == 6 && number == 1 =>
                 new RateWindow("weekly", "Weekly", percentUsed, reset, used, total, unit),
-            _ => new RateWindow("session", "5h", percentUsed, reset, used, total, unit)
+            _ => new RateWindow("session", "5h", percentUsed, reset, used, total, unit) { TitleMessage = new("window.five_hours") }
         };
     }
 

@@ -49,7 +49,7 @@ internal sealed class ProviderOverlay : Form
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
         ClientSize = new Size(180, 38);
-        Text = "Estao taskbar usage";
+        Text = DesktopLocalization.Text("native.overlay_title");
         AccessibleName = Text;
         ApplyPalette();
         SystemEvents.UserPreferenceChanged += WindowsPreferenceChanged;
@@ -71,6 +71,8 @@ internal sealed class ProviderOverlay : Form
 
     public void UpdateUsage(EstaoConfig config, IReadOnlyList<UsageSnapshot> snapshots)
     {
+        Text = DesktopLocalization.Text("native.overlay_title");
+        AccessibleName = Text;
         _config = config;
         _snapshots = snapshots;
         RebuildLayouts();
@@ -90,7 +92,7 @@ internal sealed class ProviderOverlay : Form
                 var snapshot = _snapshots.FirstOrDefault(s => s.Provider == p.Id);
                 var window = snapshot?.Windows.FirstOrDefault();
                 var title = ProviderCatalog.DisplayName(p.Id);
-                var percentage = window?.PercentUsed is double value ? $"{Math.Clamp(value, 0, 1):P0}" : "—";
+                var percentage = window?.PercentUsed is double value ? Math.Clamp(value, 0, 1).ToString("P0", DesktopLocalization.Culture) : "—";
                 var reset = UsagePresentation.Reset(window?.ResetAt);
                 var percentageWidth = Measure(percentage, _regular);
                 var resetWidth = Measure(reset, _regular);
@@ -101,7 +103,7 @@ internal sealed class ProviderOverlay : Form
                     percentageWidth, resetWidth, width);
             }).ToList();
         _lastLayout = Environment.TickCount64;
-        AccessibleDescription = string.Join("; ", _layouts.Select(p => $"{p.Title}: {p.Percentage} used, {p.Reset}"));
+        AccessibleDescription = string.Join("; ", _layouts.Select(p => DesktopLocalization.Text("native.accessible_usage", p.Title, p.Percentage, p.Reset)));
         return;
 
         int Measure(string text, Font font) => Math.Max(1, (int)Math.Ceiling(graphics.MeasureString(text, font, int.MaxValue, format).Width));

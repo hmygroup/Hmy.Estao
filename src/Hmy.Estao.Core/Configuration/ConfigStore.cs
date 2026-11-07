@@ -343,33 +343,31 @@ public sealed class ConfigStore
 
 public static class ConfigValidation
 {
-    public static IReadOnlyList<string> Validate(EstaoConfig config)
+    public static IReadOnlyList<Hmy.Estao.Core.Models.UserMessage> ValidateMessages(EstaoConfig config)
     {
-        var errors = new List<string>();
-        if (config.Version != 1)
-        {
-            errors.Add($"Unsupported config version {config.Version}; only version 1 is supported.");
-        }
-
+        var errors = new List<Hmy.Estao.Core.Models.UserMessage>();
+        if (config.Version != 1) errors.Add(new("config.version", config.Version));
         foreach (var provider in config.Providers)
         {
-            if (!ProviderCatalog.IsSupported(provider.Id))
-            {
-                errors.Add($"Unsupported provider '{provider.Id}'.");
-            }
-
+            if (!ProviderCatalog.IsSupported(provider.Id)) errors.Add(new("config.provider", provider.Id));
             if (!IsValid(provider.Source, new HashSet<string>(StringComparer.Ordinal) { "auto", "web", "cli", "oauth", "api" }))
-            {
-                errors.Add($"Provider '{provider.Id}' has invalid source '{provider.Source}'.");
-            }
-
+                errors.Add(new("config.source", provider.Id, provider.Source));
             if (!IsValid(provider.CookieSource, new HashSet<string>(StringComparer.Ordinal) { "auto", "manual", "off" }))
-            {
-                errors.Add($"Provider '{provider.Id}' has invalid cookieSource '{provider.CookieSource}'.");
-            }
+                errors.Add(new("config.cookie_source", provider.Id, provider.CookieSource));
         }
-
         return errors;
+    }
+
+    public static IReadOnlyList<string> Validate(EstaoConfig config)
+    {
+        // Backwards-compatible diagnostics; presentation layers use ValidateMessages.
+        return ValidateMessages(config).Select(error => error.Code switch
+        {
+            "config.version" => $"Unsupported config version {error.Arguments[0]}; only version 1 is supported.",
+            "config.provider" => $"Unsupported provider '{error.Arguments[0]}'.",
+            "config.source" => $"Provider '{error.Arguments[0]}' has invalid source '{error.Arguments[1]}'.",
+            _ => $"Provider '{error.Arguments[0]}' has invalid cookieSource '{error.Arguments[1]}'."
+        }).ToArray();
     }
 
     private static bool IsValid(string? value, IReadOnlySet<string> allowed)

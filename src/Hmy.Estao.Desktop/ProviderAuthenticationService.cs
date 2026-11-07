@@ -22,14 +22,14 @@ internal sealed class ProviderAuthenticationService(ICookieSecretStore cookies, 
             "zai" => source == "api",
             _ => false
         };
-        if (!supported) throw new ArgumentException("Choose a supported sign-in method for this provider.");
+        if (!supported) throw new ArgumentException("Choose a supported sign-in method for this provider.").WithUserMessage("signin.method_invalid");
     }
 
     public async Task<CodexAccountStatus> CheckAsync(ProviderConfig config, CancellationToken ct)
     {
         if (config.Id == "codex")
             return await CodexLoginService.ReadAccountAsync(CodexLoginService.ActiveProfile(config, factory.Create("codex").GetAccounts(config)), ct);
-        if (!await HasCredentialsAsync(config, ct)) return new(false, "Not signed in");
+        if (!await HasCredentialsAsync(config, ct)) return new(false, "Not signed in", new("connection.signed_out"));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(25));
         try
@@ -42,23 +42,18 @@ internal sealed class ProviderAuthenticationService(ICookieSecretStore cookies, 
             var snapshot = await provider.FetchAsync(new FetchRequest(config, account, source, timeout.Token));
             return FromSnapshot(snapshot);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return new(null, "Could not check sign-in. Try again when the provider is available."); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return new(null, "Could not check sign-in. Try again when the provider is available.", new("connection.unavailable")); }
         catch (OperationCanceledException) { throw; }
-        catch (Exception exception) { return FromSnapshot(UsageSnapshot.Failure(config.Id, config.Source ?? "auto", exception.Message)); }
+        catch (Exception exception) { return FromSnapshot(UsageSnapshot.Failure(config.Id, config.Source ?? "auto", exception.Message, UserMessage.FromException(exception))); }
     }
 
     internal static CodexAccountStatus FromSnapshot(UsageSnapshot snapshot)
     {
-        if (snapshot.Error is null) return new(true, "Signed in");
-        var error = snapshot.Error;
-        if (error.Contains("401", StringComparison.Ordinal) || error.Contains("403", StringComparison.Ordinal)
-            || error.Contains("not connected", StringComparison.OrdinalIgnoreCase)
-            || error.Contains("not signed in", StringComparison.OrdinalIgnoreCase)
-            || error.Contains("credentials were not found", StringComparison.OrdinalIgnoreCase)
-            || error.Contains("cookie was not saved", StringComparison.OrdinalIgnoreCase)
-            || error.Contains("requires a saved", StringComparison.OrdinalIgnoreCase))
-            return new(false, "Not signed in");
-        return new(null, "Could not verify sign-in. Check the provider connection or credentials.");
+        if (snapshot.Error is null) return new(true, "Signed in", new("connection.signed_in"));
+        if (snapshot.ErrorMessage?.Code == "error.auth" ||
+            snapshot.ErrorMessage is { Code: "error.http", Arguments.Length: > 1 } http && http.Arguments[1] is int statusCode && statusCode is 401 or 403)
+            return new(false, "Not signed in", new("connection.signed_out"));
+        return new(null, "Could not verify sign-in. Check the provider connection or credentials.", new("connection.verify"));
     }
 
     private async Task<bool> HasCredentialsAsync(ProviderConfig config, CancellationToken ct)

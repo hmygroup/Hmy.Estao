@@ -4,6 +4,7 @@ using Hmy.Estao.App;
 using Hmy.Estao.App.Services;
 using Hmy.Estao.Core.Harnesses.Installer;
 using Hmy.Estao.Core.Security;
+using Hmy.Estao.Core.Models;
 
 namespace Hmy.Estao.Desktop.HarnessHub;
 
@@ -41,7 +42,8 @@ internal sealed class HarnessHubSession : IDisposable
     public HubState State { get { lock (_gate) return _state; } }
     internal Task CurrentOperation { get { lock (_gate) return _running ?? Task.CompletedTask; } }
     private void Update(Func<HubState, HubState> change) { lock (_gate) { if (!_disposed) _state = change(_state); } }
-    private IProgress<string> Progress() => new InlineProgress(text => Update(s => s with { Progress = text }));
+    private IProgress<string> Progress() => new InlineProgress(text => Update(s => s with { Progress = text, ProgressMessage = new("hub.working") }),
+        message => Update(s => s with { ProgressMessage = message }));
 
     public void Command(HubCommand command)
     {
@@ -50,41 +52,41 @@ internal sealed class HarnessHubSession : IDisposable
         if (command.Action == "website") { Open(HubTools.Website(command.HarnessId ?? "")); return; }
         if (command.Action == "open-auth")
         {
-            if (State.DeviceCode is null) throw new InvalidOperationException("Start GitHub authorization first.");
+            if (State.DeviceCode is null) throw new InvalidOperationException("Start GitHub authorization first.").WithUserMessage("signin.need_code");
             Open("https://github.com/login/device"); return;
         }
         if (command.Action == "copy-code")
         {
-            if (State.DeviceCode is not { } code) throw new InvalidOperationException("No device code is available.");
+            if (State.DeviceCode is not { } code) throw new InvalidOperationException("No device code is available.").WithUserMessage("signin.need_code");
             Clipboard.SetText(code.Code); return;
         }
 
-        if (State.Busy) throw new InvalidOperationException("A Hub operation is already in progress.");
+        if (State.Busy) throw new InvalidOperationException("A Hub operation is already in progress.").WithUserMessage("hub.busy");
 
         switch (command.Action)
         {
             case "check": Start("checking", CheckAsync); break;
             case "connect": Start("connecting", ConnectAsync); break;
             case "review":
-                if (command.HarnessId is not null && !HarnessAdapter.Ids.Contains(command.HarnessId)) throw new ArgumentException("Unknown harness.");
+                if (command.HarnessId is not null && !HarnessAdapter.Ids.Contains(command.HarnessId)) throw new ArgumentException("Unknown harness.").WithUserMessage("hub.unknown_tool");
                 Start("preparing", ct => PrepareAsync(command.HarnessId, ct)); break;
             case "install":
-                var review = State.Review ?? throw new InvalidOperationException("Review the installation first.");
-                if (command.ReviewId != review.Id || command.Selection is null) throw new ArgumentException("The review has changed. Review again.");
-                if (command.Selection.Values.Any(ids => ids is null)) throw new ArgumentException("Invalid skill selection.");
-                if (command.Selection.Keys.Any(id => !review.Tools.Any(t => t.Id == id))) throw new ArgumentException("Unknown installation target.");
+                var review = State.Review ?? throw new InvalidOperationException("Review the installation first.").WithUserMessage("hub.review_first");
+                if (command.ReviewId != review.Id || command.Selection is null) throw new ArgumentException("The review has changed. Review again.").WithUserMessage("hub.review_changed");
+                if (command.Selection.Values.Any(ids => ids is null)) throw new ArgumentException("Invalid skill selection.").WithUserMessage("hub.select_skill");
+                if (command.Selection.Keys.Any(id => !review.Tools.Any(t => t.Id == id))) throw new ArgumentException("Unknown installation target.").WithUserMessage("hub.unknown_tool");
                 var selection = command.Selection.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray());
                 // Validate every selection before starting any writes.
                 foreach (var (id, ids) in selection) HubReviewBuilder.Select(_prepared[id].Snapshot, ids);
-                if (!selection.Values.Any(ids => ids.Length > 0)) throw new ArgumentException("Select at least one skill to install.");
+                if (!selection.Values.Any(ids => ids.Length > 0)) throw new ArgumentException("Select at least one skill to install.").WithUserMessage("hub.select_skill");
                 Start("installing", ct => InstallAsync(selection, ct)); break;
             case "recover":
-                if (!HarnessAdapter.Ids.Contains(command.HarnessId ?? "")) throw new ArgumentException("Unknown harness.");
+                if (!HarnessAdapter.Ids.Contains(command.HarnessId ?? "")) throw new ArgumentException("Unknown harness.").WithUserMessage("hub.unknown_tool");
                 Start("recovering", ct => RecoverAsync(command.HarnessId!, ct)); break;
             case "discard-review":
-                if (State.Busy) throw new InvalidOperationException("Wait for the current operation or cancel it.");
+                if (State.Busy) throw new InvalidOperationException("Wait for the current operation or cancel it.").WithUserMessage("hub.busy");
                 _prepared.Clear(); Update(s => s with { Review = null, Error = null }); break;
-            default: throw new ArgumentException("Unknown Hub command.");
+            default: throw new ArgumentException("Unknown Hub command.").WithUserMessage("settings.command_unknown");
         }
     }
 
@@ -93,8 +95,8 @@ internal sealed class HarnessHubSession : IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_state.Busy) throw new InvalidOperationException("A Hub operation is already in progress.");
-            _state = _state with { Busy = true, Phase = phase, Progress = "Working…", Error = null, DeviceCode = null };
+            if (_state.Busy) throw new InvalidOperationException("A Hub operation is already in progress.").WithUserMessage("hub.busy");
+            _state = _state with { Busy = true, Phase = phase, Progress = "Working…", Error = null, ErrorMessage = null, DeviceCode = null, ProgressMessage = new("hub.working") };
             _cancellation?.Dispose();
             _cancellation = new();
             var token = _cancellation.Token;
@@ -104,12 +106,12 @@ internal sealed class HarnessHubSession : IDisposable
                 catch (OperationCanceledException)
                 {
                     _prepared.Clear();
-                    Update(s => s with { Review = null, Progress = "Cancelled. Any interrupted writes are recovered when safe." });
+                    Update(s => s with { Review = null, Progress = "Cancelled. Any interrupted writes are recovered when safe.", ProgressMessage = new("hub.cancelled") });
                 }
                 catch (Exception exception)
                 {
                     _prepared.Clear();
-                    Update(s => s with { Review = null, Error = SafeError(exception), Progress = "Could not complete the operation." });
+                    Update(s => s with { Review = null, Error = SafeError(exception), ErrorMessage = UserMessage.FromException(exception), Progress = "Could not complete the operation.", ProgressMessage = new("error.operation") });
                 }
                 finally { Update(s => s with { Busy = false, Phase = "idle", DeviceCode = null }); }
             });
@@ -119,10 +121,10 @@ internal sealed class HarnessHubSession : IDisposable
     private async Task CheckAsync(CancellationToken ct)
     {
         _prepared.Clear();
-        Update(s => s with { Review = null, Results = [], Progress = "Checking installed tools…" });
+        Update(s => s with { Review = null, Results = [], Progress = "Checking installed tools…", ProgressMessage = new("hub.check_tools") });
         await UpdateToolsAsync(ct);
         await FindAuthorizationAsync(ct);
-        Update(s => s with { Progress = "Tools checked. Review a tool or install all compatible skills." });
+        Update(s => s with { Progress = "Tools checked. Review a tool or install all compatible skills.", ProgressMessage = new("hub.checked") });
     }
 
     private async Task UpdateToolsAsync(CancellationToken ct)
@@ -138,14 +140,14 @@ internal sealed class HarnessHubSession : IDisposable
                 var status = await _installer.GetInstallationStatusAsync(adapter);
                 tools.Add(new(id, adapter.DisplayName, detected, status.ToString()));
             }
-            catch (Exception exception) { tools.Add(new(id, Name(id), detected, "Error", SafeError(exception))); }
+            catch (Exception exception) { tools.Add(new(id, Name(id), detected, "Error", SafeError(exception), UserMessage.FromException(exception))); }
         }
         Update(s => s with { Tools = tools });
     }
 
     private async Task<bool> FindAuthorizationAsync(CancellationToken ct)
     {
-        Update(s => s with { Progress = "Checking access to the private GitHub repository…" });
+        Update(s => s with { Progress = "Checking access to the private GitHub repository…", ProgressMessage = new("hub.check_access") });
         var candidates = (await _candidates(ct)).ToList();
         if (_token is not null) candidates.Insert(0, _token);
         string? copilotToken = null;
@@ -157,7 +159,7 @@ internal sealed class HarnessHubSession : IDisposable
             {
                 await new GitHubRepositorySource(_client).VerifyAccessAsync(candidate, ct);
                 _token = candidate;
-                Update(s => s with { Connected = true, Connection = candidate == copilotToken ? "Connected using GitHub Copilot authorization" : "Connected to the private repository" });
+                Update(s => s with { Connected = true, Connection = candidate == copilotToken ? "Connected using GitHub Copilot authorization" : "Connected to the private repository", ConnectionMessage = new("hub.connected") });
                 return true;
             }
             catch (GitHubAccessException ex) when (ex.Status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound) { }
@@ -165,7 +167,7 @@ internal sealed class HarnessHubSession : IDisposable
         _token = null;
         Update(s => s with { Connected = false, Connection = copilotToken is not null
             ? "Copilot is signed in, but its token cannot read this repository. Connect GitHub separately."
-            : "Connect GitHub with access to the private repository." });
+            : "Connect GitHub with access to the private repository.", ConnectionMessage = new(copilotToken is not null ? "hub.copilot_no_access" : "hub.connect_required") });
         return false;
     }
 
@@ -174,13 +176,13 @@ internal sealed class HarnessHubSession : IDisposable
         if (await FindAuthorizationAsync(ct)) return;
         var authorization = await OAuthLoginService.StartHarnessDeviceFlowAsync(ct);
         Update(s => s with { DeviceCode = new(authorization.UserCode, authorization.VerificationUri),
-            Progress = "Enter the code in GitHub to authorize access." });
+            Progress = "Enter the code in GitHub to authorize access.", ProgressMessage = new("hub.authorize") });
         Open(authorization.VerificationUri);
         var token = await OAuthLoginService.CompleteHarnessDeviceFlowAsync(authorization, ct);
         await new GitHubRepositorySource(_client).VerifyAccessAsync(token, ct);
         await _authorization.SaveAsync(token, ct);
         _token = token;
-        Update(s => s with { Connected = true, Connection = "Connected to the private repository", Progress = "GitHub connected." });
+        Update(s => s with { Connected = true, Connection = "Connected to the private repository", Progress = "GitHub connected.", ConnectionMessage = new("hub.connected"), ProgressMessage = new("hub.connected") });
     }
 
     private async Task PrepareAsync(string? harnessId, CancellationToken ct)
@@ -189,8 +191,8 @@ internal sealed class HarnessHubSession : IDisposable
         Update(s => s with { Review = null, Results = [] });
         await UpdateToolsAsync(ct);
         var targets = State.Tools.Where(t => t.Detected && (harnessId is null || t.Id == harnessId)).ToArray();
-        if (targets.Length == 0) throw new InvalidOperationException("No selected tool is installed. Use Go to website, then Check again.");
-        if (!await FindAuthorizationAsync(ct)) throw new InvalidOperationException(State.Connection);
+        if (targets.Length == 0) throw new InvalidOperationException("No selected tool is installed. Use Go to website, then Check again.").WithUserMessage("hub.no_tools");
+        if (!await FindAuthorizationAsync(ct)) throw new InvalidOperationException(State.Connection).WithUserMessage(State.ConnectionMessage?.Code ?? "hub.connect_required");
         var reviews = new List<HubToolReview>();
         var results = new List<HubResult>();
         string? commit = null;
@@ -201,7 +203,7 @@ internal sealed class HarnessHubSession : IDisposable
             {
                 var adapter = _adapter(target.Id);
                 if (await _installer.GetInstallationStatusAsync(adapter) == HubOperationState.RecoveryRequired)
-                    throw new InvalidOperationException("Recover the interrupted installation before reviewing this tool.");
+                    throw new InvalidOperationException("Recover the interrupted installation before reviewing this tool.").WithUserMessage("hub.recovery_required");
                 var snapshot = await new GitHubRepositorySource(_client).PrepareAsync(_token!, adapter, Progress(), ct, commit ?? "main");
                 commit ??= snapshot.Commit; // Every subsequent tool reads the same immutable commit.
                 var plan = await _installer.PlanAsync(adapter, snapshot, ct);
@@ -209,12 +211,12 @@ internal sealed class HarnessHubSession : IDisposable
                 reviews.Add(HubReviewBuilder.Build(adapter, snapshot, plan));
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception exception) { results.Add(new(target.Id, target.Name, "failed", 0, 0, 0, 0, SafeError(exception))); }
+            catch (Exception exception) { results.Add(new(target.Id, target.Name, "failed", 0, 0, 0, 0, SafeError(exception), UserMessage.FromException(exception))); }
         }
         if (harnessId is null)
-            results.AddRange(State.Tools.Where(t => !t.Detected).Select(t => new HubResult(t.Id, t.Name, "skipped", 0, 0, 0, 0, "Tool not installed.")));
+            results.AddRange(State.Tools.Where(t => !t.Detected).Select(t => new HubResult(t.Id, t.Name, "skipped", 0, 0, 0, 0, "Tool not installed.", new("hub.not_installed"))));
         Update(s => s with { Review = reviews.Count == 0 ? null : new(Guid.NewGuid().ToString("N"), commit!, reviews),
-            Results = results, Progress = reviews.Count == 0 ? "No installation could be prepared. Review the results below." : "Review the skills before installing. Nothing has been written yet." });
+            Results = results, Progress = reviews.Count == 0 ? "No installation could be prepared. Review the results below." : "Review the skills before installing. Nothing has been written yet.", ProgressMessage = new(reviews.Count == 0 ? "hub.prepare_failed" : "hub.review_ready") });
     }
 
     private async Task InstallAsync(Dictionary<string, string[]> selection, CancellationToken ct)
@@ -228,14 +230,14 @@ internal sealed class HarnessHubSession : IDisposable
             var prepared = _prepared[tool.Id];
             try
             {
-                if (!_detected(tool.Id)) throw new InvalidOperationException("Tool is no longer installed. Check again.");
+                if (!_detected(tool.Id)) throw new InvalidOperationException("Tool is no longer installed. Check again.").WithUserMessage("hub.no_tools");
                 var snapshot = HubReviewBuilder.Select(prepared.Snapshot, ids);
                 // Refresh plans between tools because Codex/Copilot/OpenCode can
                 // observe the same global skills. Only preceding successful writes
                 // may invalidate an approved review; other changes need a new review.
                 foreach (var file in prepared.Plan.Files.Where(f => ids.Contains(f.ArtifactId)))
                     if (!written.Contains(Path.GetFullPath(file.Path)) && InstallerPaths.FileHash(file.Path) != file.BeforeHash)
-                        throw new IOException("Local files changed after review. Review this tool again.");
+                        throw new IOException("Local files changed after review. Review this tool again.").WithUserMessage("hub.review_changed");
                 var plan = await _installer.PlanAsync(prepared.Adapter, snapshot, ct);
                 var result = await _installer.ApplyAsync(prepared.Adapter, plan, preserveConflicts: true, Progress(), ct);
                 foreach (var file in plan.Files.Where(f => f.Action is InstallAction.Create or InstallAction.Update or InstallAction.Merge))
@@ -243,12 +245,12 @@ internal sealed class HarnessHubSession : IDisposable
                 results.Add(new(tool.Id, tool.Name, result.Conflicts > 0 ? "partial" : "installed",
                     result.Created, result.Updated, result.Unchanged, result.Conflicts));
             }
-            catch (OperationCanceledException) { results.Add(new(tool.Id, tool.Name, "cancelled", 0, 0, 0, 0, "Installation cancelled; safe recovery attempted.")); Update(s => s with { Results = results.ToArray() }); throw; }
-            catch (Exception exception) { results.Add(new(tool.Id, tool.Name, "failed", 0, 0, 0, 0, SafeError(exception))); }
+            catch (OperationCanceledException) { results.Add(new(tool.Id, tool.Name, "cancelled", 0, 0, 0, 0, "Installation cancelled; safe recovery attempted.", new("hub.cancelled"))); Update(s => s with { Results = results.ToArray() }); throw; }
+            catch (Exception exception) { results.Add(new(tool.Id, tool.Name, "failed", 0, 0, 0, 0, SafeError(exception), UserMessage.FromException(exception))); }
             Update(s => s with { Results = results.ToArray() });
         }
         _prepared.Clear();
-        Update(s => s with { Review = null, Progress = "Finished. Local conflicts were preserved; downloaded scripts were not executed." });
+        Update(s => s with { Review = null, Progress = "Finished. Local conflicts were preserved; downloaded scripts were not executed.", ProgressMessage = new("hub.finished") });
         await UpdateToolsAsync(ct);
     }
 
@@ -256,9 +258,9 @@ internal sealed class HarnessHubSession : IDisposable
     {
         _prepared.Clear(); Update(s => s with { Review = null });
         var issues = await _installer.RecoverAsync(_adapter(id), ct);
-        Update(s => s with { Progress = issues.Count == 0 ? "Recovery completed. You can review an installation now." : "Later local edits were preserved. Manual recovery is still required.",
+        Update(s => s with { Progress = issues.Count == 0 ? "Recovery completed. You can review an installation now." : "Later local edits were preserved. Manual recovery is still required.", ProgressMessage = new(issues.Count == 0 ? "hub.recovered" : "hub.recovery_required"),
             Results = [new(id, Name(id), issues.Count == 0 ? "recovered" : "failed", 0, 0, 0, issues.Count,
-                issues.Count == 0 ? null : string.Join(Environment.NewLine, issues))] });
+                issues.Count == 0 ? null : string.Join(Environment.NewLine, issues), issues.Count == 0 ? null : new("hub.recovery_required"))] });
         await UpdateToolsAsync(ct);
     }
 
@@ -270,7 +272,11 @@ internal sealed class HarnessHubSession : IDisposable
     }
     private static string Name(string id) => id switch { "codex" => "OpenAI Codex", "claude" => "Claude Code", "copilot" => "GitHub Copilot CLI", _ => "OpenCode" };
     private static void Open(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-    private sealed class InlineProgress(Action<string> report) : IProgress<string> { public void Report(string value) => report(value); }
+    private sealed class InlineProgress(Action<string> report, Action<UserMessage> message) : IUserMessageProgress
+    {
+        public void Report(string value) => report(value);
+        public void Report(UserMessage value) => message(value);
+    }
 
     public void Dispose()
     {

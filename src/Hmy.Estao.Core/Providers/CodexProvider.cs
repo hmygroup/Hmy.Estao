@@ -40,7 +40,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
             oauthSnapshot = oauth;
             if (request.Source is ProviderSource.OAuth)
             {
-                return oauth ?? UsageSnapshot.Failure(Id, "oauth", "Codex auth.json is missing or does not contain an access token.");
+                return oauth ?? UsageSnapshot.Failure(Id, "oauth", "Codex auth.json is missing or does not contain an access token.", new("error.auth", "Codex"));
             }
 
             if (oauth is not null && HasUsableRateLimits(oauth))
@@ -55,7 +55,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
             return cli.Error is null || oauthSnapshot is null ? cli : oauthSnapshot;
         }
 
-        return UsageSnapshot.Failure(Id, request.Source.ToString().ToLowerInvariant(), "Codex MVP supports OAuth auth.json and codex app-server only.");
+        return UsageSnapshot.Failure(Id, request.Source.ToString().ToLowerInvariant(), "Codex MVP supports OAuth auth.json and codex app-server only.", new("error.unsupported_source", "Codex"));
     }
 
     private async Task<UsageSnapshot?> TryFetchOAuthAsync(string home, string? accountLabel, CancellationToken cancellationToken)
@@ -79,7 +79,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
         using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "oauth", $"Codex usage API returned {(int)response.StatusCode}.");
+            return UsageSnapshot.Failure(Id, "oauth", $"Codex usage API returned {(int)response.StatusCode}.", new("error.http", "Codex", (int)response.StatusCode));
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -92,7 +92,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
         if (!Directory.Exists(home)) return SignedOut();
         string executable;
         try { executable = CodexProcess.FindExecutable(); }
-        catch (FileNotFoundException exception) { return UsageSnapshot.Failure(Id, "cli", exception.Message); }
+        catch (FileNotFoundException exception) { return UsageSnapshot.Failure(Id, "cli", exception.Message, UserMessage.FromException(exception)); }
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         try
@@ -101,7 +101,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
                 (output, input, ct) => ReadCliUsageAsync(output, input, accountLabel, ct), timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        { return UsageSnapshot.Failure(Id, "cli", "Codex usage check timed out. Check your Codex sign-in and try again."); }
+        { return UsageSnapshot.Failure(Id, "cli", "Codex usage check timed out. Check your Codex sign-in and try again.", new("error.codex_timeout")); }
     }
 
     internal static async Task<UsageSnapshot> ReadCliUsageAsync(TextReader output, TextWriter input, string? accountLabel, CancellationToken ct)
@@ -111,7 +111,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
         string? accountResponse = null;
         while (await output.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
         {
-            if (line.Length > 1024 * 1024) return UsageSnapshot.Failure("codex", "cli", "Codex returned an oversized usage response.");
+            if (line.Length > 1024 * 1024) return UsageSnapshot.Failure("codex", "cli", "Codex returned an oversized usage response.", new("error.invalid_data"));
             JsonDocument document;
             try { document = JsonDocument.Parse(line); }
             catch (JsonException) { continue; }
@@ -120,7 +120,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
                 var root = document.RootElement;
                 if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("id", out var id)
                     || id.ValueKind != JsonValueKind.Number || !id.TryGetInt32(out var requestId) || requestId != stage) continue;
-                if (root.TryGetProperty("error", out _)) return UsageSnapshot.Failure("codex", "cli", "Codex could not read account usage. Check your sign-in or update Codex CLI.");
+                if (root.TryGetProperty("error", out _)) return UsageSnapshot.Failure("codex", "cli", "Codex could not read account usage. Check your sign-in or update Codex CLI.", new("error.codex_usage"));
                 if (!root.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object) continue;
                 if (stage == 1)
                 {
@@ -138,7 +138,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
                 else return ParseCliOutput(accountResponse + "\n" + line, accountLabel);
             }
         }
-        return UsageSnapshot.Failure("codex", "cli", "Codex closed before returning account usage. Try again or update Codex CLI.");
+        return UsageSnapshot.Failure("codex", "cli", "Codex closed before returning account usage. Try again or update Codex CLI.", new("error.codex_usage"));
 
         async Task SendAsync<T>(T message)
         {
@@ -148,7 +148,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
     }
 
     private static UsageSnapshot SignedOut() => UsageSnapshot.Failure("codex", "cli",
-        "Codex is not signed in. Open Settings > Providers > Codex and sign in.");
+        "Codex is not signed in. Open Settings > Providers > Codex and sign in.", new("error.auth", "Codex"));
 
     internal static UsageSnapshot ParseCliOutput(string output, string? accountLabel)
     {
@@ -196,7 +196,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
 
         if (windows.Count == 0 && credits is null)
         {
-            return UsageSnapshot.Failure("codex", "cli", "codex app-server did not return rate-limit data.");
+            return UsageSnapshot.Failure("codex", "cli", "codex app-server did not return rate-limit data.", new("error.usage_missing", "Codex"));
         }
 
         return new UsageSnapshot("codex", ProviderCatalog.DisplayName("codex"), "cli", DateTimeOffset.UtcNow, windows, email, plan, credits);

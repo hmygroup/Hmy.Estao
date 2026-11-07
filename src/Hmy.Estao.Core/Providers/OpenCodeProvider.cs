@@ -31,7 +31,7 @@ internal sealed class OpenCodeProvider(HttpClient httpClient, ICookieSecretStore
         var cookie = await ResolveCookieAsync(request, account).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(cookie))
         {
-            return UsageSnapshot.Failure(Id, "web", "OpenCode requires a saved or legacy manual cookie.");
+            return UsageSnapshot.Failure(Id, "web", "OpenCode requires a saved or legacy manual cookie.", new("error.auth", "OpenCode"));
         }
 
         var workspaceId = account?.WorkspaceId ?? request.Config.WorkspaceId;
@@ -42,7 +42,7 @@ internal sealed class OpenCodeProvider(HttpClient httpClient, ICookieSecretStore
 
         if (string.IsNullOrWhiteSpace(workspaceId))
         {
-            return UsageSnapshot.Failure(Id, "web", "OpenCode workspace id was not found.");
+            return UsageSnapshot.Failure(Id, "web", "OpenCode workspace id was not found.", new("error.workspace_missing"));
         }
 
         var body = await PostServerFunctionAsync(SubscriptionFunction, cookie, $"[\"{workspaceId}\"]", request.CancellationToken).ConfigureAwait(false);
@@ -98,7 +98,7 @@ internal sealed class OpenCodeProvider(HttpClient httpClient, ICookieSecretStore
         using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            throw new ProviderException($"OpenCode API returned {(int)response.StatusCode}.");
+            throw new ProviderException($"OpenCode API returned {(int)response.StatusCode}.").WithUserMessage("error.http", "OpenCode", (int)response.StatusCode);
         }
 
         return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -118,7 +118,7 @@ internal sealed class OpenCodeProvider(HttpClient httpClient, ICookieSecretStore
 
         if (windows.Count == 0)
         {
-            return UsageSnapshot.Failure("opencode", "web", "OpenCode usage fields were not found.");
+            return UsageSnapshot.Failure("opencode", "web", "OpenCode usage fields were not found.", new("error.usage_missing", "OpenCode"));
         }
 
         return new UsageSnapshot("opencode", ProviderCatalog.DisplayName("opencode"), "web", DateTimeOffset.UtcNow, windows, account);

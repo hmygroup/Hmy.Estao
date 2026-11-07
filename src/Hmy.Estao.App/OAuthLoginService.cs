@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Hmy.Estao.Core.Models;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -21,13 +22,15 @@ internal static class OAuthLoginService
     public static void StartClaudeLogin() => StartInteractiveCli("claude", "claude login", "Claude Code CLI");
 
     public static async Task<CopilotOAuthLogin> SignInToCopilotAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default,
-        Action<string>? userCodeReceived = null)
+        Action<string>? userCodeReceived = null, Action<UserMessage>? messageReceived = null)
     {
         progress?.Report("Requesting a GitHub device code…");
+        messageReceived?.Invoke(new("signin.request_code"));
         var deviceCode = await RequestCopilotDeviceCodeAsync(CopilotOAuthClientId, "read:user", cancellationToken).ConfigureAwait(false);
         var verificationUrl = deviceCode.VerificationUriComplete ?? deviceCode.VerificationUri;
         userCodeReceived?.Invoke(deviceCode.UserCode);
         progress?.Report($"Enter code {deviceCode.UserCode} in GitHub. Waiting for confirmation…");
+        messageReceived?.Invoke(new("signin.wait_code", deviceCode.UserCode));
 
         try
         {
@@ -36,10 +39,12 @@ internal static class OAuthLoginService
         catch (Exception exception)
         {
             progress?.Report($"Open {verificationUrl} and enter code {deviceCode.UserCode}. ({exception.Message})");
+            messageReceived?.Invoke(new("signin.open_browser_manually"));
         }
 
         var token = await PollCopilotTokenAsync(deviceCode, CopilotOAuthClientId, cancellationToken).ConfigureAwait(false);
         progress?.Report("GitHub confirmed the sign-in. Verifying the Copilot account…");
+        messageReceived?.Invoke(new("signin.verifying"));
         var account = await TryGetGitHubLoginAsync(token, cancellationToken).ConfigureAwait(false);
         return new CopilotOAuthLogin(token, account);
     }
@@ -88,7 +93,7 @@ internal static class OAuthLoginService
         using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<CopilotDeviceCode>(cancellationToken: cancellationToken).ConfigureAwait(false);
-        return result ?? throw new InvalidOperationException("GitHub did not return a device code.");
+        return result ?? throw new InvalidOperationException("GitHub did not return a device code.").WithUserMessage("signin.github_failed");
     }
 
     private static async Task<string> PollCopilotTokenAsync(CopilotDeviceCode deviceCode, string clientId, CancellationToken cancellationToken)
@@ -123,13 +128,14 @@ internal static class OAuthLoginService
                     delay += 5;
                     continue;
                 case "expired_token":
-                    throw new TimeoutException("The GitHub device code expired. Start sign-in again.");
+                    throw new TimeoutException("The GitHub device code expired. Start sign-in again.").WithUserMessage("signin.code_expired");
                 default:
-                    throw new InvalidOperationException(result?.ErrorDescription ?? result?.Error ?? "GitHub did not issue an OAuth token.");
+                    throw new InvalidOperationException(result?.ErrorDescription ?? result?.Error ?? "GitHub did not issue an OAuth token.")
+                        .WithUserMessage(result?.Error == "access_denied" ? "signin.authorization_denied" : "signin.github_failed");
             }
         }
 
-        throw new TimeoutException("The GitHub device code expired. Start sign-in again.");
+        throw new TimeoutException("The GitHub device code expired. Start sign-in again.").WithUserMessage("signin.code_expired");
     }
 
     private static async Task<string?> TryGetGitHubLoginAsync(string token, CancellationToken cancellationToken)

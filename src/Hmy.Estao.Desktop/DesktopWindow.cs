@@ -2,6 +2,7 @@ using Shofia.WebHost;
 using Shofia.WebHost.Frontend;
 using System.Text.Json;
 using Hmy.Estao.Desktop.HarnessHub;
+using Hmy.Estao.Core.Models;
 
 namespace Hmy.Estao.Desktop;
 
@@ -11,6 +12,7 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
     private readonly string _initialTheme;
     private bool _initializationStarted;
     private readonly HarnessHubSession? _hub;
+    private readonly string _view;
 
     public DesktopWindow(string view, Func<Task<DesktopState>> state,
         Func<SettingsUpdate, Task> save, Func<DesktopCommand, Task> command, string? theme = null, string? configPath = null,
@@ -26,7 +28,8 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
         _initialTheme = appearance.Id;
         BackColor = ColorTranslator.FromHtml(appearance.Colors["canvas"]);
         WebView.DefaultBackgroundColor = BackColor;
-        Text = view == "settings" ? "Estao · Settings" : "Estao · Usage";
+        _view = view;
+        UpdateLanguage();
         ShowInTaskbar = view == "settings";
         MinimizeBox = view == "settings";
         MaximizeBox = view == "settings";
@@ -40,31 +43,38 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
         {
             if (providerSignIn is not null)
                 _handlers.Add(Messages.Handle(DesktopContracts.ProviderSignIn, async (request, ct) =>
-                    await OnUiAsync(async () => { await providerSignIn(request); return new EmptyRequest(); }, ct)));
+                    await OnUiCommandAsync(() => providerSignIn(request), ct)));
             _hub = new HarnessHubSession(configPath ?? new Hmy.Estao.Core.Configuration.ConfigStore().Path);
             _handlers.Add(Messages.Handle(HubContracts.State, (_, _) => ValueTask.FromResult(_hub.State)));
             _handlers.Add(Messages.Handle(HubContracts.Command, async (request, ct) =>
-                await OnUiAsync(() => { _hub.Command(request); return Task.FromResult(new EmptyRequest()); }, ct)));
+                await OnUiCommandAsync(() => { _hub.Command(request); return Task.CompletedTask; }, ct)));
             _handlers.Add(Messages.Handle(DesktopContracts.Save, async (update, ct) =>
             {
-                await OnUiAsync(async () => { await save(update); return new EmptyRequest(); }, ct);
-                return new EmptyRequest();
+                return await OnUiCommandAsync(() => save(update), ct);
             }));
         }
         _handlers.Add(Messages.Handle(DesktopContracts.Command, async (request, ct) =>
         {
-            await OnUiAsync(async () => { await command(request); return new EmptyRequest(); }, ct);
-            return new EmptyRequest();
+            return await OnUiCommandAsync(() => command(request), ct);
         }));
         BrowserInitializationFailed += (_, _) =>
         {
-            MessageBox.Show(this, "The settings and usage windows require the Microsoft Edge WebView2 Runtime. The native overlay will continue running.",
-                "Estao", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, DesktopLocalization.Text("native.webview_required"),
+                DesktopBranding.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         };
         KeyPreview = true;
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
     }
+
+    public void UpdateLanguage() => Text = $"{DesktopBranding.DisplayName} · {DesktopLocalization.Text(_view == "settings" ? "settings" : "usage")}";
+
+    private Task<EmptyRequest> OnUiCommandAsync(Func<Task> action, CancellationToken ct) => OnUiAsync(async () =>
+    {
+        try { await action(); return new EmptyRequest(); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception exception) { return new EmptyRequest(UserMessage.FromException(exception)); }
+    }, ct);
 
     public void BeginInitialization()
     {

@@ -29,7 +29,7 @@ internal static class CodexLoginService
                 var root = doc.RootElement;
                 if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("id", out var id)
                     || id.ValueKind != JsonValueKind.Number || !id.TryGetInt32(out var requestId) || requestId != stage) continue;
-                if (root.TryGetProperty("error", out _)) throw new InvalidOperationException("Codex could not sign out. Update Codex CLI and try again.");
+                if (root.TryGetProperty("error", out _)) throw new InvalidOperationException("Codex could not sign out. Update Codex CLI and try again.").WithUserMessage("codex.signout_failed");
                 if (!root.TryGetProperty("result", out _)) continue;
                 if (stage == 2) return true;
                 stage = 2;
@@ -37,7 +37,7 @@ internal static class CodexLoginService
                 await Send(new { id = 2, method = "account/logout", @params = new { } });
             }
         }
-        throw new InvalidOperationException("Codex closed before confirming sign-out.");
+        throw new InvalidOperationException("Codex closed before confirming sign-out.").WithUserMessage("codex.signout_failed");
         async Task Send<T>(T message)
         {
             await input.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), ct).ConfigureAwait(false);
@@ -47,7 +47,7 @@ internal static class CodexLoginService
 
     public static Task<CodexAccountStatus> ReadAccountAsync(string profileHome, CancellationToken ct)
     {
-        if (!Directory.Exists(profileHome)) return Task.FromResult(new CodexAccountStatus(false, "Not signed in to this Codex profile."));
+        if (!Directory.Exists(profileHome)) return Task.FromResult(new CodexAccountStatus(false, "Not signed in to this Codex profile.", new("connection.signed_out")));
         return RunServerAsync(CreateStartInfo(FindExecutable(), profileHome), ReadAccountExchangeAsync,
             TimeSpan.FromSeconds(20), "Checking Codex sign-in timed out. Try Check sign-in again.", ct);
     }
@@ -95,7 +95,7 @@ internal static class CodexLoginService
             return await CodexProcess.RunAsync(startInfo, exchange, timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        { throw new TimeoutException(timeoutMessage); }
+        { throw new TimeoutException(timeoutMessage).WithUserMessage("codex.timeout"); }
     }
 
     internal static async Task<CodexAccountStatus> ReadAccountExchangeAsync(TextReader output, TextWriter input, CancellationToken ct)
@@ -114,7 +114,7 @@ internal static class CodexLoginService
                 if (message.ValueKind != JsonValueKind.Object || !message.TryGetProperty("id", out var id)
                     || id.ValueKind != JsonValueKind.Number || !id.TryGetInt32(out var requestId) || requestId is not (1 or 2)) continue;
                 if (message.TryGetProperty("error", out _))
-                    throw new InvalidOperationException("Could not check the Codex account. Update Codex CLI or try Check sign-in again.");
+                    throw new InvalidOperationException("Could not check the Codex account. Update Codex CLI or try Check sign-in again.").WithUserMessage("codex.account_failed");
                 if (!message.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object) continue;
                 if (requestId == 1 && !initialized)
                 {
@@ -125,18 +125,18 @@ internal static class CodexLoginService
                 else if (requestId == 2 && initialized)
                 {
                     if (!result.TryGetProperty("account", out var account)) break;
-                    if (account.ValueKind == JsonValueKind.Null) return new(false, "Not signed in to this Codex profile.");
+                    if (account.ValueKind == JsonValueKind.Null) return new(false, "Not signed in to this Codex profile.", new("connection.signed_out"));
                     if (account.ValueKind != JsonValueKind.Object) break;
                     return String(account, "type") switch
                     {
-                        "chatgpt" => new(true, "Signed in with ChatGPT"),
-                        "apiKey" => new(true, "API key configured; ChatGPT usage requires a ChatGPT sign-in."),
-                        _ => new(null, "Codex uses a different authentication method.")
+                        "chatgpt" => new(true, "Signed in with ChatGPT", new("connection.signed_in")),
+                        "apiKey" => new(true, "API key configured; ChatGPT usage requires a ChatGPT sign-in.", new("connection.api_key")),
+                        _ => new(null, "Codex uses a different authentication method.", new("connection.other_auth"))
                     };
                 }
             }
         }
-        throw new InvalidOperationException("Codex did not return an account status. Try Check sign-in again.");
+        throw new InvalidOperationException("Codex did not return an account status. Try Check sign-in again.").WithUserMessage("codex.account_failed");
 
         async Task SendAsync<T>(T message)
         {
@@ -148,7 +148,7 @@ internal static class CodexLoginService
     internal static async Task ExchangeAsync(TextReader output, TextWriter input, Action<Uri> openBrowser,
         IProgress<string>? progress, CancellationToken ct)
     {
-        await SendAsync(new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "estao", title = "Estao", version = "0.0.9" } } });
+        await SendAsync(new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "estao", title = DesktopBranding.DisplayName, version = "0.0.9" } } });
         string? loginId = null;
         var initialized = false;
         var opened = false;
@@ -168,7 +168,7 @@ internal static class CodexLoginService
                     {
                         if (requestId is not (1 or 2)) continue;
                         if (message.TryGetProperty("error", out _))
-                            throw new InvalidOperationException("Codex could not start browser sign-in. Update the Codex CLI and try again.");
+                            throw new InvalidOperationException("Codex could not start browser sign-in. Update the Codex CLI and try again.").WithUserMessage("codex.browser_unavailable");
                         if (!message.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object) continue;
                         if (requestId == 1 && !initialized)
                         {
@@ -179,14 +179,14 @@ internal static class CodexLoginService
                         else if (requestId == 2 && initialized && !opened)
                         {
                             if (String(result, "type") != "chatgpt" || string.IsNullOrWhiteSpace(String(result, "loginId")))
-                                throw new InvalidOperationException("This Codex version did not provide browser sign-in. Update the Codex CLI.");
+                                throw new InvalidOperationException("This Codex version did not provide browser sign-in. Update the Codex CLI.").WithUserMessage("codex.browser_unavailable");
                             loginId = String(result, "loginId");
                             var uri = AuthorizationUri(String(result, "authUrl"));
                             try { openBrowser(uri); }
                             catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
-                            { throw new InvalidOperationException("Could not open the default browser. Check your browser settings, then start sign-in again."); }
+                            { throw new InvalidOperationException("Could not open the default browser. Check your browser settings, then start sign-in again.").WithUserMessage("codex.browser_open_failed"); }
                             opened = true;
-                            progress?.Report("Complete sign-in in your browser. Estao will detect when you finish.");
+                            progress?.Report(DesktopLocalization.Text("signin.browser"));
                         }
                     }
                     else if (String(message, "method") == "account/login/completed" && loginId is not null
@@ -194,12 +194,12 @@ internal static class CodexLoginService
                         && String(details, "loginId") == loginId)
                     {
                         if (!details.TryGetProperty("success", out var success) || success.ValueKind != JsonValueKind.True)
-                            throw new InvalidOperationException("Codex browser sign-in failed or was cancelled. Start sign-in again.");
+                            throw new InvalidOperationException("Codex browser sign-in failed or was cancelled. Start sign-in again.").WithUserMessage("codex.signin_failed");
                         return;
                     }
                 }
             }
-            throw new InvalidOperationException("Codex closed before sign-in completed. Update the Codex CLI or try again.");
+            throw new InvalidOperationException("Codex closed before sign-in completed. Update the Codex CLI or try again.").WithUserMessage("codex.signin_failed");
         }
         catch (OperationCanceledException)
         {
@@ -228,7 +228,7 @@ internal static class CodexLoginService
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
             || uri.UserInfo.Length != 0 || !uri.IsDefaultPort
             || uri.Host is not ("auth.openai.com" or "chatgpt.com" or "auth.chatgpt.com"))
-            throw new InvalidOperationException("Codex returned an unexpected authorization URL. Update Codex and try again.");
+            throw new InvalidOperationException("Codex returned an unexpected authorization URL. Update Codex and try again.").WithUserMessage("codex.browser_unavailable");
         return uri;
     }
     private static string? String(JsonElement value, string name) => value.TryGetProperty(name, out var property)

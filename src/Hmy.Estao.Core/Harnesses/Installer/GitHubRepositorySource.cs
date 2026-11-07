@@ -1,4 +1,5 @@
 using System.Net;
+using Hmy.Estao.Core.Models;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
@@ -29,7 +30,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         operation.CancelAfter(TimeSpan.FromMinutes(8));
         var ct = operation.Token;
-        progress?.Report("Comprobando acceso a GitHub…");
+        progress.ReportMessage(new("hub.check_access"), "Comprobando acceso a GitHub…");
         using (var access = await GetAsync($"repos/{Repository}", token, ct).ConfigureAwait(false))
             if (access.RootElement.GetProperty("full_name").GetString() != Repository)
                 throw new InvalidDataException("Unexpected source repository identity.");
@@ -66,7 +67,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
             }
             if (artifact.Dependencies.Any(d => selected.All(a => a.Id != d))) throw new InvalidDataException("A required dependency is unavailable for the selected harness.");
             adapter.CheckCapabilities(artifact);
-            progress?.Report($"Descargando {artifact.Id}…");
+            progress.ReportMessage(new("hub.downloading", artifact.Id), $"Descargando {artifact.Id}…");
             var payloads = new List<(SourceEntry Entry, byte[] Bytes)>();
             // Bounded parallelism avoids hundreds of serial requests without exhausting GitHub's concurrency limits.
             foreach (var batch in members.Chunk(6))
@@ -109,7 +110,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
             HttpResponseMessage response;
             try { response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false); }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-            { throw new TimeoutException("GitHub no respondió dentro del tiempo permitido. Reintenta la operación."); }
+            { throw new TimeoutException("GitHub no respondió dentro del tiempo permitido. Reintenta la operación.").WithUserMessage("error.network"); }
             catch (HttpRequestException) when (attempt < 2)
             {
                 await Task.Delay(TimeSpan.FromSeconds(attempt + 1), ct).ConfigureAwait(false);
@@ -125,7 +126,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
                         (response.Headers.RetryAfter?.Date is { } retryAt ? (retryAt - DateTimeOffset.UtcNow).TotalSeconds : attempt + 1);
                     if (rateLimited && response.Headers.RetryAfter is null && response.Headers.TryGetValues("X-RateLimit-Reset", out var reset) &&
                         long.TryParse(reset.FirstOrDefault(), out var epoch)) seconds = Math.Max(seconds, epoch - DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-                    if (seconds > 15) throw new GitHubAccessException("Límite de GitHub alcanzado. Reintenta más tarde.", response.StatusCode);
+                    if (seconds > 15) throw new GitHubAccessException("Límite de GitHub alcanzado. Reintenta más tarde.", response.StatusCode).WithUserMessage("hub.rate_limited");
                     await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, seconds)), ct).ConfigureAwait(false);
                     continue;
                 }
@@ -136,7 +137,13 @@ public sealed class GitHubRepositorySource(HttpClient client)
                         HttpStatusCode.Forbidden => "GitHub deniega el acceso. Revisa permisos, SSO y límites de la organización.",
                         HttpStatusCode.NotFound => "Biblioteca privada no accesible: comprueba cuenta y autorización del repositorio.",
                         _ => $"GitHub no pudo completar la lectura (HTTP {(int)response.StatusCode})."
-                    }, response.StatusCode);
+                    }, response.StatusCode).WithUserMessage(response.StatusCode switch
+                    {
+                        HttpStatusCode.Unauthorized => "hub.auth_expired",
+                        HttpStatusCode.Forbidden => "hub.access_denied",
+                        HttpStatusCode.NotFound => "hub.repo_missing",
+                        _ => "hub.read_failed"
+                    }, (int)response.StatusCode);
                 if (response.Content.Headers.ContentLength > 8 * 1024 * 1024) throw new InvalidDataException("GitHub response exceeds the safe limit.");
                 await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                 using var buffer = new MemoryStream();

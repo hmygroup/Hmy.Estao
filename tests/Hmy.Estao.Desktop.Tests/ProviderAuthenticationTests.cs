@@ -10,6 +10,15 @@ namespace Hmy.Estao.Desktop.Tests;
 public sealed class ProviderAuthenticationTests
 {
     [Fact]
+    public void AuthenticationClassificationUsesCodesRatherThanTranslatedDiagnostics()
+    {
+        var rejected = UsageSnapshot.Failure("claude", "oauth", "Credenciales rechazadas", new("error.http", "Claude", 401));
+        Assert.False(ProviderAuthenticationService.FromSnapshot(rejected).SignedIn);
+        var unavailable = UsageSnapshot.Failure("claude", "oauth", "Not signed in? Network timeout", new("error.network"));
+        Assert.Null(ProviderAuthenticationService.FromSnapshot(unavailable).SignedIn);
+    }
+
+    [Fact]
     public void SignInMethodsAreValidatedForTheSelectedProvider()
     {
         foreach (var (provider, source) in new[] { ("codex", "oauth"), ("claude", "web"), ("copilot", "api"), ("opencode", "web"), ("zai", "api") })

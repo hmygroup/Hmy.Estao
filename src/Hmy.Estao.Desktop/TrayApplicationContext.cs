@@ -26,6 +26,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private DesktopWindow? _popover;
     private string? _selectedProvider;
     private string? _status;
+    private UserMessage? _statusMessage;
     private bool _signingIn;
     private ProviderSignInState? _providerSignIn;
     private CancellationTokenSource? _signInCancellation;
@@ -44,18 +45,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _store = store;
         _config = ConfigStore.Normalize(store.LoadAsync().GetAwaiter().GetResult());
+        DesktopLocalization.SetLanguage(_config.Language);
         _service = new UsageRefreshService(store);
         _pacing = new PacingStateStore(store.Path);
         // The overlay owns the UI dispatcher even when no web window has ever opened.
         _ = _overlay.Handle;
         _icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? (Icon)SystemIcons.Application.Clone();
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Usage", null, (_, _) => ShowPopover(null, Cursor.Position));
-        menu.Items.Add("Refresh now", null, async (_, _) => await RefreshAsync());
-        menu.Items.Add("Settings…", null, (_, _) => ShowSettings());
+        menu.Items.Add(DesktopLocalization.Text("usage"), null, (_, _) => ShowPopover(null, Cursor.Position));
+        menu.Items.Add(DesktopLocalization.Text("tray.refresh"), null, async (_, _) => await RefreshAsync());
+        menu.Items.Add(DesktopLocalization.Text("tray.settings"), null, (_, _) => ShowSettings());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Quit", null, (_, _) => ExitThread());
-        _tray = new NotifyIcon { Icon = _icon, Text = "Estao", ContextMenuStrip = menu, Visible = true };
+        menu.Items.Add(DesktopLocalization.Text("tray.quit"), null, (_, _) => ExitThread());
+        _tray = new NotifyIcon { Icon = _icon, Text = DesktopBranding.DisplayName, ContextMenuStrip = menu, Visible = true };
         _tray.MouseClick += (_, e) =>
         {
             if (e.Button != MouseButtons.Left) return;
@@ -163,7 +165,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             await CheckPacingAsync(snapshots);
         }
         catch (OperationCanceledException) { }
-        catch (Exception exception) { _status = $"Refresh failed: {exception.Message}"; }
+        catch (Exception exception) { _status = $"Refresh failed: {exception.Message}"; _statusMessage = new("settings.refresh_failed", UserMessage.FromException(exception)); }
     }
 
     private async Task<DesktopState> StateAsync(string view)
@@ -178,23 +180,24 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 Authentication: p.Id == "codex" ? _codexAuthentication : _providerAuthentication.GetValueOrDefault(p.Id)));
         var accounts = _config.Providers.Where(p => p.Enabled == true && ProviderCatalog.IsSupported(p.Id))
             .ToDictionary(p => p.Id, p => _factory.Create(p.Id).GetAccounts(p)
-                .Select((a, i) => new AccountChoice(i, a.Label)).ToList());
+                .Select((a, i) => new AccountChoice(i, a.Label, a.LabelMessage)).ToList());
         return new DesktopState(view, _selectedProvider, providers, _config.UsageAlerts!, _config.Refresh,
             _config.TaskbarOverlay.Enabled, _config.TaskbarOverlay.ProviderIds, StartupManager.Enabled,
             _service.LastSnapshots, view == "popover" ? _service.History : [], accounts, _status,
-            DesktopThemeCatalog.Resolve(_config.Theme).Id, view == "settings" ? _providerSignIn : null);
+            DesktopThemeCatalog.Resolve(_config.Theme).Id, view == "settings" ? _providerSignIn : null, DesktopLocalization.Preference(_config.Language), _statusMessage, DesktopLocalization.Language);
     }
 
     private async Task SaveSettingsAsync(SettingsUpdate update)
     {
-        if (!DesktopThemeCatalog.IsSupported(update.Theme)) throw new ArgumentException("Choose a supported desktop theme.");
+        if (!DesktopLocalization.IsSupported(update.Language)) throw new ArgumentException("Choose a supported language.").WithUserMessage("settings.language_invalid");
+        if (!DesktopThemeCatalog.IsSupported(update.Theme)) throw new ArgumentException("Choose a supported desktop theme.").WithUserMessage("settings.theme_invalid");
         if (update.Providers.Select(p => p.Id).Distinct().Count() != update.Providers.Count
             || update.Providers.Any(p => !ProviderCatalog.IsSupported(p.Id)))
-            throw new ArgumentException("Invalid provider list.");
+            throw new ArgumentException("Invalid provider list.").WithUserMessage("settings.providers_invalid");
         if (!double.IsFinite(update.UsageAlerts.WarningPercent) || !double.IsFinite(update.UsageAlerts.CriticalPercent)
             || update.UsageAlerts.WarningPercent < 0 || update.UsageAlerts.WarningPercent >= update.UsageAlerts.CriticalPercent
             || update.UsageAlerts.CriticalPercent > 100)
-            throw new ArgumentException("Warning must be below critical, between 0 and 100%.");
+            throw new ArgumentException("Warning must be below critical, between 0 and 100%.").WithUserMessage("settings.threshold_invalid");
         await _saveGate.WaitAsync();
         try
         {
@@ -216,11 +219,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             config.UsageAlerts = update.UsageAlerts;
             config.Theme = DesktopThemeCatalog.Resolve(update.Theme).Id;
+            config.Language = update.Language;
             config.Refresh = update.Refresh;
             config.TaskbarOverlay.Enabled = update.OverlayEnabled;
             config.TaskbarOverlay.ProviderIds = update.OverlayProviderIds;
             var errors = ConfigValidation.Validate(config);
-            if (errors.Count > 0) throw new ArgumentException(string.Join("\n", errors));
+            if (errors.Count > 0)
+            {
+                throw new ArgumentException(string.Join("\n", errors)).WithUserMessage("message.list", ConfigValidation.ValidateMessages(config).Cast<object?>().ToArray());
+            }
             foreach (var change in update.Providers)
             {
                 var p = config.Providers.First(p => p.Id == change.Id);
@@ -234,8 +241,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (StartupManager.Enabled != update.LaunchAtSignIn) StartupManager.Set(update.LaunchAtSignIn);
             await _store.SaveAsync(config);
             _config = config;
+            ApplyLanguage();
             _overlay.UpdateUsage(_config, _service.LastSnapshots);
             _status = "Settings saved";
+            _statusMessage = new("saved");
         }
         finally { _saveGate.Release(); }
         await RefreshAsync();
@@ -253,7 +262,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             await _store.SaveAsync(config);
             _config = config;
         }
-        catch (Exception exception) { _status = $"Could not save overlay position: {exception.Message}"; }
+        catch (Exception exception) { _status = $"Could not save overlay position: {exception.Message}"; _statusMessage = new("settings.position_failed", UserMessage.FromException(exception)); }
         finally { _saveGate.Release(); }
     }
 
@@ -271,7 +280,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     var config = await _store.LoadAsync();
                     var p = config.Providers.First(p => p.Id == command.Provider);
                     var count = _factory.Create(p.Id).GetAccounts(p).Count;
-                    if (command.AccountIndex is not int index || index < 0 || index >= count) throw new ArgumentException("Invalid account.");
+                    if (command.AccountIndex is not int index || index < 0 || index >= count) throw new ArgumentException("Invalid account.").WithUserMessage("settings.account_invalid");
                     p.ActiveAccountIndex = index;
                     await _store.SaveAsync(config);
                     _config = config;
@@ -280,12 +289,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 await RefreshAsync();
                 break;
             case "signin":
-                if (_signingIn) throw new InvalidOperationException("A sign-in is already in progress.");
+                if (_signingIn) throw new InvalidOperationException("A sign-in is already in progress.").WithUserMessage("signin.already_pending");
                 _ = SignInAsync(command.Provider);
                 break;
             case "copy-signin-code":
                 if (_providerSignIn is not { Pending: true, UserCode: not null } active)
-                    throw new InvalidOperationException("Start GitHub sign-in to get a new code.");
+                    throw new InvalidOperationException("Start GitHub sign-in to get a new code.").WithUserMessage("signin.need_code");
                 Clipboard.SetText(active.UserCode);
                 break;
             case "open-signin-page":
@@ -294,11 +303,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             case "cancel-signin": _signInCancellation?.Cancel(); break;
             case "check-codex-signin": _codexCheckedProfile = null; CheckCodexAccount(); break;
             case "signout":
-                if (_signingIn) throw new InvalidOperationException("A sign-in or sign-out is already in progress.");
-                if (!ProviderCatalog.IsSupported(command.Provider ?? "")) throw new ArgumentException("Unknown provider.");
+                if (_signingIn) throw new InvalidOperationException("A sign-in or sign-out is already in progress.").WithUserMessage("signin.already_pending");
+                if (!ProviderCatalog.IsSupported(command.Provider ?? "")) throw new ArgumentException("Unknown provider.").WithUserMessage("settings.provider_unknown");
                 _ = SignOutAsync(command.Provider!);
                 break;
-            default: throw new ArgumentException("Unknown command.");
+            default: throw new ArgumentException("Unknown command.").WithUserMessage("settings.command_unknown");
         }
     }
 
@@ -307,7 +316,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _signingIn = true;
         if (provider == "codex") { _codexCheckCancellation?.Cancel(); _codexCheckedProfile = null; }
         var failed = false;
-        _providerSignIn = new(provider ?? "", true, null, "Starting sign-in…");
+        _providerSignIn = new(provider ?? "", true, null, "Starting sign-in…", MessageInfo: new("signin.start"));
         _signInCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         try
         {
@@ -322,13 +331,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
                         new Progress<string>(message =>
                         {
                             if (_providerSignIn is { Provider: "codex", Pending: true } current)
-                                _providerSignIn = current with { Message = message };
+                                _providerSignIn = current with { Message = message, MessageInfo = new("signin.browser") };
                         }), _signInCancellation.Token);
                     _status = "Codex sign-in complete.";
+                    _statusMessage = new("signin.complete", "Codex");
                     _codexAuthentication = await CodexLoginService.ReadAccountAsync(profile, _signInCancellation.Token);
-                    if (_codexAuthentication.SignedIn != true) throw new InvalidOperationException("Codex did not confirm the sign-in. Please try again.");
+                    if (_codexAuthentication.SignedIn != true) throw new InvalidOperationException("Codex did not confirm the sign-in. Please try again.").WithUserMessage("signin.rejected");
                     _codexCheckedProfile = profile;
-                    _providerSignIn = new("codex", false, null, _status);
+                    _providerSignIn = new("codex", false, null, _status, MessageInfo: _statusMessage);
                     await RefreshAsync("codex");
                     break;
                 case "claude":
@@ -338,7 +348,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     else
                     {
                         OAuthLoginService.StartClaudeLogin();
-                        _providerSignIn = new("claude", true, null, "Complete Claude sign-in in the terminal. Estao will detect when you finish.");
+                        _providerSignIn = new("claude", true, null, "Complete Claude sign-in in the terminal.", MessageInfo: new("signin.terminal"));
                         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_signInCancellation.Token);
                         timeout.CancelAfter(TimeSpan.FromMinutes(5));
                         var service = AuthenticationService();
@@ -350,6 +360,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                         }
                     }
                     _status = "Claude sign-in complete.";
+                    _statusMessage = new("signin.complete", "Claude");
                     await RefreshAsync("claude");
                     break;
                 case "copilot":
@@ -358,36 +369,39 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     {
                         await VerifyProviderSignInAsync(copilotConfig, _signInCancellation.Token);
                         _status = "GitHub Copilot sign-in complete.";
+                        _statusMessage = new("signin.complete", "GitHub Copilot");
                         await RefreshAsync("copilot");
                         break;
                     }
-                    var login = await OAuthLoginService.SignInToCopilotAsync(new Progress<string>(s =>
+                    var login = await OAuthLoginService.SignInToCopilotAsync(null, _signInCancellation.Token, code =>
                     {
-                        if (_providerSignIn is { Pending: true } current) _providerSignIn = current with { Message = s };
-                    }), _signInCancellation.Token, code =>
+                        _providerSignIn = new("copilot", true, code, "Enter this code on GitHub to finish signing in.", MessageInfo: new("signin.enter_code"));
+                    }, info =>
                     {
-                        _providerSignIn = new("copilot", true, code, "Enter this code on GitHub to finish signing in. This is not an API key.");
+                        if (_providerSignIn is { Pending: true } current) _providerSignIn = current with { MessageInfo = info };
                     });
                     await new SecureOAuthTokenStore().SaveAsync("copilot", new OAuthToken(login.AccessToken, login.AccountLabel));
                     await VerifyProviderSignInAsync(copilotConfig, _signInCancellation.Token);
                     _status = "GitHub Copilot sign-in complete.";
+                    _statusMessage = new("signin.complete", "GitHub Copilot");
                     await RefreshAsync("copilot");
                     break;
                 case "opencode":
                 case "zai":
                     await VerifyProviderSignInAsync(_config.Providers.First(p => p.Id == provider), _signInCancellation.Token);
                     _status = $"{ProviderCatalog.DisplayName(provider)} sign-in complete.";
+                    _statusMessage = new("signin.complete", ProviderCatalog.DisplayName(provider));
                     await RefreshAsync(provider);
                     break;
-                default: throw new ArgumentException("This provider does not support sign-in.");
+                default: throw new ArgumentException("This provider does not support sign-in.").WithUserMessage("signin.unsupported");
             }
         }
-        catch (OperationCanceledException) { failed = !_signInCancellation.IsCancellationRequested; _status = failed ? "Sign-in timed out. Start sign-in again." : "Sign-in cancelled."; }
-        catch (Exception exception) { failed = true; _status = $"Sign-in failed: {exception.Message}"; }
+        catch (OperationCanceledException) { failed = !_signInCancellation.IsCancellationRequested; _status = failed ? "Sign-in timed out. Start sign-in again." : "Sign-in cancelled."; _statusMessage = new(failed ? "signin.timeout" : "signin.cancelled"); }
+        catch (Exception exception) { failed = true; _status = $"Sign-in failed: {exception.Message}"; _statusMessage = new("signin.failed", UserMessage.FromException(exception)); }
         finally
         {
             _signingIn = false;
-            _providerSignIn = new(provider ?? "", false, null, _status ?? "Sign-in finished.", failed);
+            _providerSignIn = new(provider ?? "", false, null, _status ?? "Sign-in finished.", failed, _statusMessage ?? new("signin.finished"));
             _signInCancellation.Dispose();
             _signInCancellation = null;
             CheckOtherProviderAccounts();
@@ -401,16 +415,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var status = await AuthenticationService().CheckAsync(provider, ct);
         _providerAuthentication[provider.Id] = status;
         if (status.SignedIn != true) throw new InvalidOperationException(status.SignedIn == false
-            ? "Sign-in was not accepted. Check your credentials and try again." : status.Message);
+            ? "Sign-in was not accepted. Check your credentials and try again." : status.Message)
+            .WithUserMessage(status.SignedIn == false ? "signin.rejected" : status.MessageInfo?.Code ?? "connection.verify");
     }
 
     private async Task BeginProviderSignInAsync(ProviderSettings change)
     {
-        if (_signingIn) throw new InvalidOperationException("A sign-in or sign-out is already in progress.");
-        if (!ProviderCatalog.IsSupported(change.Id)) throw new ArgumentException("Unknown provider.");
+        if (_signingIn) throw new InvalidOperationException("A sign-in or sign-out is already in progress.").WithUserMessage("signin.already_pending");
+        if (!ProviderCatalog.IsSupported(change.Id)) throw new ArgumentException("Unknown provider.").WithUserMessage("settings.provider_unknown");
         ProviderAuthenticationService.ValidateSource(change.Id, change.Source);
         _signingIn = true;
-        _providerSignIn = new(change.Id, true, null, "Starting sign-in…");
+        _providerSignIn = new(change.Id, true, null, "Starting sign-in…", MessageInfo: new("signin.start"));
         try
         {
             await _saveGate.WaitAsync();
@@ -430,12 +445,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 }
                 if (!string.IsNullOrWhiteSpace(change.ApiKey)) provider.ApiKey = change.ApiKey.Trim();
                 var errors = ConfigValidation.Validate(config);
-                if (errors.Count != 0) throw new ArgumentException(string.Join("\n", errors));
-                if (change.Id == "zai" && string.IsNullOrWhiteSpace(provider.ApiKey)) throw new ArgumentException("Enter your Z.ai API key.");
-                if (change.Id == "copilot" && change.Source == "api" && string.IsNullOrWhiteSpace(provider.ApiKey)) throw new ArgumentException("Enter your GitHub Copilot API token.");
+                if (errors.Count != 0)
+                {
+                    throw new ArgumentException(string.Join("\n", errors)).WithUserMessage("message.list", ConfigValidation.ValidateMessages(config).Cast<object?>().ToArray());
+                }
+                if (change.Id == "zai" && string.IsNullOrWhiteSpace(provider.ApiKey)) throw new ArgumentException("Enter your Z.ai API key.").WithUserMessage("signin.enter_key", "Z.ai");
+                if (change.Id == "copilot" && change.Source == "api" && string.IsNullOrWhiteSpace(provider.ApiKey)) throw new ArgumentException("Enter your GitHub Copilot API token.").WithUserMessage("signin.enter_key", "GitHub Copilot");
                 if ((change.Id == "opencode" || change.Source == "web") && string.IsNullOrWhiteSpace(change.NewCookie)
                     && string.IsNullOrWhiteSpace(provider.CookieHeader)
-                    && string.IsNullOrWhiteSpace(await _cookies.ReadCookieHeaderAsync(change.Id))) throw new ArgumentException("Enter your provider cookie header.");
+                    && string.IsNullOrWhiteSpace(await _cookies.ReadCookieHeaderAsync(change.Id))) throw new ArgumentException("Enter your provider cookie header.").WithUserMessage("signin.enter_cookie_header");
                 if (!string.IsNullOrWhiteSpace(change.NewCookie))
                 {
                     await _cookies.SaveCookieHeaderAsync(change.Id, change.NewCookie);
@@ -451,7 +469,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         catch (Exception exception)
         {
             _signingIn = false;
-            _providerSignIn = new(change.Id, false, null, exception.Message, true);
+            _providerSignIn = new(change.Id, false, null, exception.Message, true, UserMessage.FromException(exception));
             throw;
         }
     }
@@ -459,7 +477,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task SignOutAsync(string providerId)
     {
         _signingIn = true;
-        _providerSignIn = new(providerId, true, null, "Signing out…");
+        _providerSignIn = new(providerId, true, null, "Signing out…", MessageInfo: new("signout.pending"), Operation: "signout");
         InvalidateAuthentication(providerId);
         var failed = false;
         try
@@ -480,17 +498,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 _config = config;
             }
             finally { _saveGate.Release(); }
-            if (providerId == "codex") _codexAuthentication = new(false, "Not signed in");
-            else _providerAuthentication[providerId] = new(false, "Not signed in");
+            if (providerId == "codex") _codexAuthentication = new(false, "Not signed in", new("connection.signed_out"));
+            else _providerAuthentication[providerId] = new(false, "Not signed in", new("connection.signed_out"));
             _status = $"Signed out of {ProviderCatalog.DisplayName(providerId)}.";
+            _statusMessage = new("signout.complete", ProviderCatalog.DisplayName(providerId));
             await RefreshAsync(providerId);
         }
-        catch (OperationCanceledException) { _status = "Sign-out cancelled."; }
-        catch (Exception exception) { failed = true; _status = $"Sign-out failed: {exception.Message}"; }
+        catch (OperationCanceledException) { _status = "Sign-out cancelled."; _statusMessage = new("signout.cancelled"); }
+        catch (Exception exception) { failed = true; _status = $"Sign-out failed: {exception.Message}"; _statusMessage = new("signout.failed", UserMessage.FromException(exception)); }
         finally
         {
             _signingIn = false;
-            _providerSignIn = new(providerId, false, null, _status ?? "Sign-out finished.", failed);
+            _providerSignIn = new(providerId, false, null, _status ?? "Sign-out finished.", failed, _statusMessage ?? new("signout.finished"), "signout");
             if (providerId == "codex") _codexCheckedProfile = null;
         }
     }
@@ -525,7 +544,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         foreach (var provider in _config.Providers.Where(p => p.Id != "codex" && ProviderCatalog.IsSupported(p.Id)))
         {
             if (_providerAuthentication.ContainsKey(provider.Id) || !_checkingProviders.Add(provider.Id)) continue;
-            _providerAuthentication[provider.Id] = new(null, "Checking sign-in…");
+            _providerAuthentication[provider.Id] = new(null, "Checking sign-in…", new("connection.checking"), true);
             _ = ReadAsync(provider, _providerCheckVersions.GetValueOrDefault(provider.Id));
         }
         async Task ReadAsync(ProviderConfig provider, int version)
@@ -537,7 +556,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 if (Current()) _providerAuthentication[provider.Id] = status;
             }
             catch (OperationCanceledException) { }
-            catch (Exception) { if (Current()) _providerAuthentication[provider.Id] = new(null, "Could not check sign-in."); }
+            catch (Exception) { if (Current()) _providerAuthentication[provider.Id] = new(null, "Could not check sign-in.", new("connection.unknown")); }
             finally { if (Current()) _checkingProviders.Remove(provider.Id); }
         }
     }
@@ -551,13 +570,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var profile = CodexLoginService.ActiveProfile(configured, _factory.Create("codex").GetAccounts(configured));
             if (profile == _codexCheckedProfile) return;
             _codexCheckedProfile = profile;
-            _codexAuthentication = new(null, "Checking Codex sign-in…");
+            _codexAuthentication = new(null, "Checking Codex sign-in…", new("connection.checking"), true);
             _codexCheckCancellation?.Dispose();
             _codexCheckCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             _checkingCodex = true;
             _ = ReadAsync(profile, _codexCheckCancellation.Token);
         }
-        catch (Exception) { _codexAuthentication = new(null, "Could not check the saved Codex profile. Check its path and try again."); }
+        catch (Exception) { _codexAuthentication = new(null, "Could not check the saved Codex profile. Check its path and try again.", new("connection.verify")); }
 
         async Task ReadAsync(string profile, CancellationToken ct)
         {
@@ -570,7 +589,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             catch (Exception exception)
             {
                 if (!ct.IsCancellationRequested) _codexAuthentication = new(null,
-                    exception is InvalidOperationException or TimeoutException ? exception.Message : "Could not check Codex sign-in. Try Check sign-in again.");
+                    exception is InvalidOperationException or TimeoutException ? exception.Message : "Could not check Codex sign-in. Try Check sign-in again.", UserMessage.FromException(exception));
             }
             finally { _checkingCodex = false; }
         }
@@ -590,10 +609,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 var result = PacingCalculator.Compute(points, pacing.DailyTargetPercent,
                     now - UsageWindowCatalog.DisplayRange(snapshot.Provider, w.Id, w.Title), now);
                 if (result is not { IsOverPace: true } || !await _pacing.TryMarkNotifiedAsync(snapshot.Provider, w.Id, DateOnly.FromDateTime(now.LocalDateTime))) continue;
-                _tray.ShowBalloonTip(8000, $"{snapshot.DisplayName}: {w.Title} ahead of pace",
-                    $"You've used {result.ActualPercentNow:P0}, above your {result.ExpectedPercentNow:P0} daily target.", ToolTipIcon.Warning);
+                _tray.ShowBalloonTip(8000, DesktopLocalization.Text("native.pacing_title", snapshot.DisplayName, DesktopLocalization.Format(w.TitleMessage)),
+                    DesktopLocalization.Text("native.pacing_body", result.ActualPercentNow.ToString("P0", DesktopLocalization.Culture), result.ExpectedPercentNow.ToString("P0", DesktopLocalization.Culture)), ToolTipIcon.Warning);
             }
         }
+    }
+
+    private void ApplyLanguage()
+    {
+        DesktopLocalization.SetLanguage(_config.Language);
+        var items = _tray.ContextMenuStrip!.Items;
+        items[0].Text = DesktopLocalization.Text("usage");
+        items[1].Text = DesktopLocalization.Text("tray.refresh");
+        items[2].Text = DesktopLocalization.Text("tray.settings");
+        items[4].Text = DesktopLocalization.Text("tray.quit");
+        _settings?.UpdateLanguage();
+        _popover?.UpdateLanguage();
     }
 
     protected override void Dispose(bool disposing)

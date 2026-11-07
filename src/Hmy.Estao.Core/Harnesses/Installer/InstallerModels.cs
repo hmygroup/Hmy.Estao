@@ -55,7 +55,11 @@ public sealed record PreparedArtifact(string Id, string Category, string Source,
 
 public enum InstallAction { Create, Update, Merge, AlreadyPresent, Conflict }
 public sealed record PlannedFile(string ArtifactId, string Path, byte[] Content, string? BeforeHash,
-    string AfterHash, InstallAction Action, string Reason, IReadOnlyDictionary<string, string>? StructuredNodes = null);
+    string AfterHash, InstallAction Action, string Reason, IReadOnlyDictionary<string, string>? StructuredNodes = null,
+    Hmy.Estao.Core.Models.UserMessage? ReasonInfo = null)
+{
+    public Hmy.Estao.Core.Models.UserMessage ReasonMessage => ReasonInfo ?? new($"installer.reason.{Action}");
+}
 public sealed record InstallPlan(string HarnessId, string Profile, string Commit, string ManifestVersion,
     IReadOnlyList<PlannedFile> Files, IReadOnlyList<CoverageItem> Coverage, string? StateBeforeHash = null);
 public sealed record InstallResult(int Created, int Updated, int Unchanged, int Conflicts, string Commit);

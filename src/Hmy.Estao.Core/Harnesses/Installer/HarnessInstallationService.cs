@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Hmy.Estao.Core.Models;
 
 namespace Hmy.Estao.Core.Harnesses.Installer;
 
@@ -33,6 +34,7 @@ public sealed class HarnessInstallationService
             var action = InstallAction.Create;
             var content = file.Content;
             var reason = "Archivo nuevo.";
+            UserMessage? reasonInfo = null;
             var destination = group.Key;
             try
             {
@@ -58,10 +60,10 @@ public sealed class HarnessInstallationService
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
-            { action = InstallAction.Conflict; reason = "Destino o configuración no integrable de forma segura: " + ex.Message; }
-            if (duplicateConflict) { action = InstallAction.Conflict; reason = "Varios orígenes diferentes ocupan el mismo destino."; }
+            { action = InstallAction.Conflict; reason = "Destino o configuración no integrable de forma segura: " + ex.Message; reasonInfo = new("installer.reason.unsafe"); }
+            if (duplicateConflict) { action = InstallAction.Conflict; reason = "Varios orígenes diferentes ocupan el mismo destino."; reasonInfo = new("installer.reason.duplicate"); }
             planned.Add(new PlannedFile(file.ArtifactId, destination, content.ToArray(), before, hash, action, reason,
-                file.Format == "jsonc" && action != InstallAction.Conflict ? StructuredConfiguration.NodeHashes(file.Content) : null));
+                file.Format == "jsonc" && action != InstallAction.Conflict ? StructuredConfiguration.NodeHashes(file.Content) : null, reasonInfo));
         }
         // A skill/resource directory is one coherent group. No partial skills on a resource collision.
         var blocked = planned.Where(p => p.Action == InstallAction.Conflict).Select(p => p.ArtifactId).ToHashSet(StringComparer.Ordinal);
@@ -76,7 +78,7 @@ public sealed class HarnessInstallationService
             } while (added);
         }
         planned = planned.Select(p => blocked.Contains(p.ArtifactId) && p.Action != InstallAction.Conflict
-            ? p with { Action = InstallAction.Conflict, Reason = "Se conserva el grupo completo por un conflicto en sus recursos." } : p).ToList();
+            ? p with { Action = InstallAction.Conflict, Reason = "Se conserva el grupo completo por un conflicto en sus recursos.", ReasonInfo = new("installer.reason.group_conflict") } : p).ToList();
         return Task.FromResult(new InstallPlan(adapter.Id, adapter.Profile, snapshot.Commit, snapshot.ManifestVersion,
             planned, snapshot.Coverage, stateBefore));
     }
@@ -144,7 +146,8 @@ public sealed class HarnessInstallationService
             {
                 ct.ThrowIfCancellationRequested();
                 var output = outputs[index];
-                progress?.Report(index == outputs.Count - 1 ? "Guardando estado de instalación…" : $"Instalando {index + 1}/{outputs.Count - 1}…");
+                progress.ReportMessage(index == outputs.Count - 1 ? new("hub.saving_state") : new("hub.installing", index + 1, outputs.Count - 1),
+                    index == outputs.Count - 1 ? "Guardando estado de instalación…" : $"Instalando {index + 1}/{outputs.Count - 1}…");
                 _faultPoint?.Invoke(index == outputs.Count - 1 ? "before-state" : "before-file");
                 if (InstallerPaths.FileHash(output.Path) != output.BeforeHash) throw new IOException("A destination changed before writing.");
                 Replace(output.Path, output.Content, output.BeforeHash);

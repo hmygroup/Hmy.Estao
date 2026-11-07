@@ -4,11 +4,11 @@ internal static class UsagePresentation
 {
     public static string Reset(DateTimeOffset? reset)
     {
-        if (reset is null) return "Reset —";
+        if (reset is null) return DesktopLocalization.Text("reset.short_unknown");
         var remaining = reset.Value - DateTimeOffset.UtcNow;
-        if (remaining <= TimeSpan.Zero) return "Reset due";
-        return remaining.TotalDays >= 1 ? $"{(int)remaining.TotalDays}d {remaining.Hours}h"
-            : remaining.TotalHours >= 1 ? $"{(int)remaining.TotalHours}h {remaining.Minutes}m"
-            : $"{Math.Max(1, (int)remaining.TotalMinutes)}m";
+        if (remaining <= TimeSpan.Zero) return DesktopLocalization.Text("reset.due");
+        return remaining.TotalDays >= 1 ? DesktopLocalization.Text("duration.days", (int)remaining.TotalDays, remaining.Hours)
+            : remaining.TotalHours >= 1 ? DesktopLocalization.Text("duration.hours", (int)remaining.TotalHours, remaining.Minutes)
+            : DesktopLocalization.Text("duration.minutes", Math.Max(1, (int)remaining.TotalMinutes));
     }
 }
