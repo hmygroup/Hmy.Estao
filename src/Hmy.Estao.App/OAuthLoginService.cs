@@ -12,9 +12,9 @@ internal static class OAuthLoginService
     // GitHub's public OAuth client used by VS Code. This is the same device flow
     // used by CodexBar for Copilot; it never asks the user for an API key.
     private const string CopilotOAuthClientId = "Iv1.b507a08c87ecfe98";
-    // Public OAuth App client ID used by the Check My Prompt extension for the
-    // same hmygroup/hmy-prompt-engineer Device Flow.
-    internal const string HarnessOAuthClientId = "Iv23lizzTqoPi455iW5N";
+    // Public GitHub App client ID for Harness Hub user authorization via Device Flow.
+    // App permissions and repository access are configured in GitHub, not as OAuth scopes.
+    internal const string HarnessOAuthClientId = "Iv23lilqu6xECmxSGO99";
     private static readonly HttpClient HttpClient = new();
 
     public static void StartCodexLogin() => StartInteractiveCli("codex", "codex login", "Codex CLI");
@@ -59,9 +59,9 @@ internal static class OAuthLoginService
         return new CopilotOAuthLogin(token, await TryGetGitHubLoginAsync(token, cancellationToken).ConfigureAwait(false));
     }
 
-    internal static async Task<GitHubDeviceAuthorization> StartHarnessDeviceFlowAsync(CancellationToken cancellationToken)
+    internal static async Task<GitHubDeviceAuthorization> StartHarnessDeviceFlowAsync(CancellationToken cancellationToken, HttpClient? client = null)
     {
-        var code = await RequestCopilotDeviceCodeAsync(HarnessOAuthClientId, null, cancellationToken).ConfigureAwait(false);
+        var code = await RequestCopilotDeviceCodeAsync(HarnessOAuthClientId, null, cancellationToken, client).ConfigureAwait(false);
         if (code.VerificationUri != "https://github.com/login/device" || string.IsNullOrWhiteSpace(code.DeviceCode) ||
             string.IsNullOrWhiteSpace(code.UserCode) || code.ExpiresIn <= 0)
             throw new InvalidOperationException("GitHub devolvió datos de autorización no válidos.");
@@ -69,7 +69,7 @@ internal static class OAuthLoginService
             code.Interval, DateTimeOffset.UtcNow.AddSeconds(code.ExpiresIn));
     }
 
-    internal static Task<string> CompleteHarnessDeviceFlowAsync(GitHubDeviceAuthorization authorization, CancellationToken cancellationToken) =>
+    internal static Task<string> CompleteHarnessDeviceFlowAsync(GitHubDeviceAuthorization authorization, CancellationToken cancellationToken, HttpClient? client = null) =>
         PollCopilotTokenAsync(new CopilotDeviceCode
         {
             DeviceCode = authorization.DeviceCode,
@@ -77,9 +77,9 @@ internal static class OAuthLoginService
             VerificationUri = authorization.VerificationUri,
             Interval = authorization.Interval,
             ExpiresIn = Math.Max(1, (int)(authorization.ExpiresAt - DateTimeOffset.UtcNow).TotalSeconds)
-        }, HarnessOAuthClientId, cancellationToken);
+        }, HarnessOAuthClientId, cancellationToken, client);
 
-    private static async Task<CopilotDeviceCode> RequestCopilotDeviceCodeAsync(string clientId, string? scope, CancellationToken cancellationToken)
+    private static async Task<CopilotDeviceCode> RequestCopilotDeviceCodeAsync(string clientId, string? scope, CancellationToken cancellationToken, HttpClient? client = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://github.com/login/device/code")
         {
@@ -90,13 +90,13 @@ internal static class OAuthLoginService
             })
         };
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await (client ?? HttpClient).SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<CopilotDeviceCode>(cancellationToken: cancellationToken).ConfigureAwait(false);
         return result ?? throw new InvalidOperationException("GitHub did not return a device code.").WithUserMessage("signin.github_failed");
     }
 
-    private static async Task<string> PollCopilotTokenAsync(CopilotDeviceCode deviceCode, string clientId, CancellationToken cancellationToken)
+    private static async Task<string> PollCopilotTokenAsync(CopilotDeviceCode deviceCode, string clientId, CancellationToken cancellationToken, HttpClient? client = null)
     {
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(deviceCode.ExpiresIn);
         var delay = Math.Max(1, deviceCode.Interval);
@@ -113,7 +113,7 @@ internal static class OAuthLoginService
                 })
             };
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            using var response = await (client ?? HttpClient).SendAsync(request, cancellationToken).ConfigureAwait(false);
             var result = await response.Content.ReadFromJsonAsync<CopilotTokenResponse>(cancellationToken: cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(result?.AccessToken))
             {
