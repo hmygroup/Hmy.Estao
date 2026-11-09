@@ -25,4 +25,5 @@ internal sealed record HubResult(string Id, string Name, string Outcome, int Cre
 internal sealed record HubDeviceCode(string Code, string VerificationUrl);
 internal sealed record HubState(bool Busy, string Phase, string Progress, bool Connected, string Connection,
     IReadOnlyList<HubTool> Tools, HubReview? Review, IReadOnlyList<HubResult> Results, HubDeviceCode? DeviceCode,
-    string? Error, UserMessage? ProgressMessage = null, UserMessage? ConnectionMessage = null, UserMessage? ErrorMessage = null);
+    string? Error, UserMessage? ProgressMessage = null, UserMessage? ConnectionMessage = null, UserMessage? ErrorMessage = null,
+    bool AuthorizationChecked = false, bool CheckingAuthorization = false);

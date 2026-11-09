@@ -132,7 +132,6 @@
   "theme.midnight.description": "Verre saphir profond aux accents bleus de clair de lune.",
   "host.required": "Ouvrez cette fenêtre depuis l’application de bureau {appName}.",
   "hub.title": "Compétences partagées HMY",
-  "hub.intro": "Installez les compétences vérifiées de {0} dans vos outils personnels.",
   "hub.check_access": "Vérification de l’accès à GitHub…",
   "hub.open_repo": "Ouvrir le dépôt GitHub ↗",
   "hub.connect": "Connecter GitHub",

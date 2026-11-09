@@ -12,12 +12,17 @@ export interface HubToolReview {
 export interface HubReview { id: string; commit: string; tools: HubToolReview[] }
 export interface HubResult { id: string; name: string; outcome: string; created: number; updated: number; unchanged: number; conflicts: number; error: string | null; errorMessage?: UserMessage }
 export interface HubState {
+  authorizationChecked?: boolean; checkingAuthorization?: boolean;
   progressMessage?: UserMessage; connectionMessage?: UserMessage; errorMessage?: UserMessage;
   busy: boolean; phase: string; progress: string; connected: boolean; connection: string;
   tools: HubTool[]; review: HubReview | null; results: HubResult[];
   deviceCode: { code: string; verificationUrl: string } | null; error: string | null;
 }
 export interface HubCommand { action: string; harnessId?: string; reviewId?: string; selection?: Record<string, string[]> }
+
+export function showHubConnect(state?: Pick<HubState, "connected" | "authorizationChecked" | "checkingAuthorization">): boolean {
+  return state?.authorizationChecked === true && !state.checkingAuthorization && !state.connected;
+}
 
 export function defaultSelection(review: HubReview): Record<string, string[]> {
   return Object.fromEntries(review.tools.map(tool => {

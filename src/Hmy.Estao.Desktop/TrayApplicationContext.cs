@@ -38,12 +38,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly HashSet<string> _checkingProviders = [];
     private readonly Dictionary<string, int> _providerCheckVersions = [];
     private CancellationTokenSource? _providerCheckCancellation;
+    private readonly Func<ProviderConfig, CancellationToken, Task<CodexAccountStatus>> _checkAuthentication;
     private DateTimeOffset _nextRefresh;
     private long _hoverLeftAt;
 
-    public TrayApplicationContext(ConfigStore store)
+    public TrayApplicationContext(ConfigStore store,
+        Func<ProviderConfig, CancellationToken, Task<CodexAccountStatus>>? checkAuthentication = null)
     {
         _store = store;
+        _checkAuthentication = checkAuthentication ?? ((provider, ct) => AuthenticationService().CheckAsync(provider, ct));
         _config = ConfigStore.Normalize(store.LoadAsync().GetAwaiter().GetResult());
         DesktopLocalization.SetLanguage(_config.Language);
         _service = new UsageRefreshService(store);
@@ -552,7 +555,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             bool Current() => !ct.IsCancellationRequested && _providerCheckVersions.GetValueOrDefault(provider.Id) == version;
             try
             {
-                var status = await AuthenticationService().CheckAsync(provider, ct);
+                // Credential decryption, CLI discovery and process startup can block
+                // before the first await. Only apply the result back on the UI thread.
+                var status = await Task.Run(() => _checkAuthentication(provider, ct), ct);
                 if (Current()) _providerAuthentication[provider.Id] = status;
             }
             catch (OperationCanceledException) { }
@@ -574,15 +579,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _codexCheckCancellation?.Dispose();
             _codexCheckCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             _checkingCodex = true;
-            _ = ReadAsync(profile, _codexCheckCancellation.Token);
+            _ = ReadAsync(configured, _codexCheckCancellation.Token);
         }
         catch (Exception) { _codexAuthentication = new(null, "Could not check the saved Codex profile. Check its path and try again.", new("connection.verify")); }
 
-        async Task ReadAsync(string profile, CancellationToken ct)
+        async Task ReadAsync(ProviderConfig provider, CancellationToken ct)
         {
             try
             {
-                var status = await CodexLoginService.ReadAccountAsync(profile, ct);
+                var status = await Task.Run(() => _checkAuthentication(provider, ct), ct);
                 if (!ct.IsCancellationRequested) _codexAuthentication = status;
             }
             catch (OperationCanceledException) { }

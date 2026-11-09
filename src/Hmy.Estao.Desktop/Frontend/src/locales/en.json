@@ -132,7 +132,6 @@
   "theme.midnight.description": "Deep sapphire glass with moonlit blue accents.",
   "host.required": "Open this window from the {appName} desktop application.",
   "hub.title": "HMY shared skills",
-  "hub.intro": "Install reviewed skills from {0} into your personal tools.",
   "hub.check_access": "Checking GitHub access…",
   "hub.open_repo": "Open GitHub repository ↗",
   "hub.connect": "Connect GitHub",

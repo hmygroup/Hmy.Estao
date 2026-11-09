@@ -9,6 +9,69 @@ namespace Hmy.Estao.Desktop.Tests;
 
 public sealed class HarnessHubSessionTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AuthorizationRemainsUnknownUntilTheInitialCheckCompletes(bool connected)
+    {
+        using var fixture = new Fixture { DenyAccess = !connected };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var session = fixture.Session(candidates: ct =>
+        {
+            entered.TrySetResult();
+            return release.Task.WaitAsync(ct);
+        });
+        Assert.False(session.State.AuthorizationChecked);
+        session.Command(new("check"));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(session.State.CheckingAuthorization);
+        Assert.False(session.State.AuthorizationChecked);
+        release.SetResult(["fixture-token"]);
+        await session.CurrentOperation.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(session.State.AuthorizationChecked);
+        Assert.False(session.State.CheckingAuthorization);
+        Assert.Equal(connected, session.State.Connected);
+    }
+
+    [Fact]
+    public async Task FailedAccessChecksDoNotPretendTheUserIsSignedOut()
+    {
+        using var fixture = new Fixture();
+        using var session = fixture.Session(candidates: _ => throw new HttpRequestException("Fixture network failure"));
+        session.Command(new("check"));
+        await session.CurrentOperation.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(session.State.AuthorizationChecked);
+        Assert.False(session.State.CheckingAuthorization);
+        Assert.NotNull(session.State.Error);
+        Assert.Equal("error.network", session.State.ErrorMessage!.Code);
+    }
+
+    [Fact]
+    public async Task CancellingAnInitialAccessCheckClearsCheckingAndAllowsRetry()
+    {
+        using var fixture = new Fixture();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var session = fixture.Session(candidates: ct =>
+        {
+            entered.TrySetResult();
+            return release.Task.WaitAsync(ct);
+        });
+        session.Command(new("check"));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        session.Command(new("cancel"));
+        await session.CurrentOperation.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(session.State.CheckingAuthorization);
+        Assert.False(session.State.AuthorizationChecked);
+        Assert.False(session.State.Busy);
+        release.SetResult(["fixture-token"]);
+        session.Command(new("check"));
+        await session.CurrentOperation.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(session.State.AuthorizationChecked);
+        Assert.True(session.State.Connected);
+    }
+
     [Fact]
     public async Task InstallAllUsesOneCommitSkipsMissingToolsAndPreservesLocalConflicts()
     {
@@ -116,9 +179,9 @@ public sealed class HarnessHubSessionTests
         public bool DenyAccess { get; set; }
         public bool BlockReads { get; set; }
         public HarnessAdapter Adapter(string id) => new(id, Path.Combine(Directory, "home"), _ => null);
-        public HarnessHubSession Session(string token = "fake-test-token") => new(Path.Combine(Directory, "config.json"),
+        public HarnessHubSession Session(string token = "fake-test-token", Func<CancellationToken, Task<IReadOnlyList<string>>>? candidates = null) => new(Path.Combine(Directory, "config.json"),
             new HttpClient(new Handler(this)), id => id != "opencode", Adapter,
-            _ => Task.FromResult<IReadOnlyList<string>>([token]));
+            candidates ?? (_ => Task.FromResult<IReadOnlyList<string>>([token])));
 
         private HttpResponseMessage Respond(HttpRequestMessage request)
         {

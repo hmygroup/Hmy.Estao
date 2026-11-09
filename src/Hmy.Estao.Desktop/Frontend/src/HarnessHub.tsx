@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getHubState, hubCommand } from "./nativeHost";
-import { defaultSelection, updateSelection, type HubCommand, type HubState, type HubToolReview } from "./hubTypes";
+import { defaultSelection, updateSelection, showHubConnect, type HubCommand, type HubState, type HubToolReview } from "./hubTypes";
 import { t, plural, message, errorText } from "./i18n";
 
 export default function HarnessHub() {
@@ -9,6 +9,7 @@ export default function HarnessHub() {
   const [sending, setSending] = useState(false);
   const [selection, setSelection] = useState<Record<string, string[]>>({});
   const pending = useRef(false);
+  const initialCheckRequested = useRef(false);
 
   useEffect(() => {
     setSelection(state?.review ? defaultSelection(state.review) : {});
@@ -20,11 +21,14 @@ export default function HarnessHub() {
       if (pending.current) return;
       pending.current = true;
       try {
-        const next = await getHubState();
+        let next = await getHubState();
         if (!alive) return;
-        setState(next);
-        if (next.phase === "idle" && next.tools.length === 0)
+        if (next.phase === "idle" && next.tools.length === 0 && !next.error && !initialCheckRequested.current) {
+          initialCheckRequested.current = true;
           await hubCommand({ action: "check" });
+          next = await getHubState();
+        }
+        if (alive) setState(next);
       } catch (e) { if (alive) setError(errorText(e)); }
       finally { pending.current = false; }
     };
@@ -39,20 +43,19 @@ export default function HarnessHub() {
     catch (e) { setError(errorText(e)); }
     finally { setSending(false); }
   };
-  const busy = sending || state?.busy;
+  const checkingAuthorization = !state || state.checkingAuthorization === true;
+  const busy = sending || !state || state.busy || checkingAuthorization;
   const chosen = Object.values(selection).reduce((sum, ids) => sum + ids.length, 0);
   const review = state?.review;
-  const intro = t("hub.intro").split("{0}");
 
   return <div className="harness-hub">
     <section className="section hub-connection">
       <div className="hub-connection-copy"><h2>{t("hub.title")}</h2>
-        <p>{intro[0]}<strong>hmygroup/hmy-prompt-engineer</strong>{intro[1]}</p>
-        {!state?.connected && <span className="hub-connection-status" role="status">{message(state?.connectionMessage) || t("hub.check_access")}</span>}
+        {!state?.connected && <span className="hub-connection-status" role="status">{checkingAuthorization ? t("hub.check_access") : message(state?.connectionMessage) || t("connection.unknown")}</span>}
       </div>
       <div className="hub-actions">
         <button type="button" className="secondary" onClick={() => void run({ action: "open-repo" })}>{t("hub.open_repo")}</button>
-        {!state?.connected && <button type="button" className="primary" disabled={busy} onClick={() => void run({ action: "connect" })}>{t("hub.connect")}</button>}
+        {showHubConnect(state) && <button type="button" className="primary" disabled={busy} onClick={() => void run({ action: "connect" })}>{t("hub.connect")}</button>}
       </div>
     </section>
 

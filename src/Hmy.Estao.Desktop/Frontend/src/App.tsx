@@ -40,7 +40,7 @@ export default function App() {
   useLayoutEffect(() => { document.title = `${appName} · ${t(view === "popover" ? "usage" : "settings")}`; }, [view, state?.language, currentLanguage()]);
   return <div className={`desktop-shell${view === "popover" ? " popover-shell" : ""}`}>
     {view !== "popover" && <header className="window-header"><span>{appName} · {t("settings")}</span><WindowControls /></header>}
-    {!state ? <main className="loading"><h1>{appName}</h1><p role="status">{error || t("loading")}</p></main>
+    {!state ? <main className="loading" aria-busy={!error}>{error && <p role="alert">{error}</p>}</main>
       : state.view === "settings" ? <Settings state={state} reload={load} previewTheme={setPreviewTheme} /> : <Popover state={state} reload={load} />}
   </div>;
 }

@@ -96,7 +96,8 @@ internal sealed class HarnessHubSession : IDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_state.Busy) throw new InvalidOperationException("A Hub operation is already in progress.").WithUserMessage("hub.busy");
-            _state = _state with { Busy = true, Phase = phase, Progress = "Working…", Error = null, ErrorMessage = null, DeviceCode = null, ProgressMessage = new("hub.working") };
+            _state = _state with { Busy = true, Phase = phase, CheckingAuthorization = phase is "checking" or "connecting" or "preparing",
+                Progress = "Working…", Error = null, ErrorMessage = null, DeviceCode = null, ProgressMessage = new("hub.working") };
             _cancellation?.Dispose();
             _cancellation = new();
             var token = _cancellation.Token;
@@ -113,7 +114,7 @@ internal sealed class HarnessHubSession : IDisposable
                     _prepared.Clear();
                     Update(s => s with { Review = null, Error = SafeError(exception), ErrorMessage = UserMessage.FromException(exception), Progress = "Could not complete the operation.", ProgressMessage = new("error.operation") });
                 }
-                finally { Update(s => s with { Busy = false, Phase = "idle", DeviceCode = null }); }
+                finally { Update(s => s with { Busy = false, CheckingAuthorization = false, Phase = "idle", DeviceCode = null }); }
             });
         }
     }
@@ -147,7 +148,7 @@ internal sealed class HarnessHubSession : IDisposable
 
     private async Task<bool> FindAuthorizationAsync(CancellationToken ct)
     {
-        Update(s => s with { Progress = "Checking access to the private GitHub repository…", ProgressMessage = new("hub.check_access") });
+        Update(s => s with { CheckingAuthorization = true, Progress = "Checking access to the private GitHub repository…", ProgressMessage = new("hub.check_access") });
         var candidates = (await _candidates(ct)).ToList();
         if (_token is not null) candidates.Insert(0, _token);
         string? copilotToken = null;
@@ -159,13 +160,14 @@ internal sealed class HarnessHubSession : IDisposable
             {
                 await new GitHubRepositorySource(_client).VerifyAccessAsync(candidate, ct);
                 _token = candidate;
-                Update(s => s with { Connected = true, Connection = candidate == copilotToken ? "Connected using GitHub Copilot authorization" : "Connected to the private repository", ConnectionMessage = new("hub.connected") });
+                Update(s => s with { Connected = true, AuthorizationChecked = true, CheckingAuthorization = false,
+                    Connection = candidate == copilotToken ? "Connected using GitHub Copilot authorization" : "Connected to the private repository", ConnectionMessage = new("hub.connected") });
                 return true;
             }
             catch (GitHubAccessException ex) when (ex.Status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound) { }
         }
         _token = null;
-        Update(s => s with { Connected = false, Connection = copilotToken is not null
+        Update(s => s with { Connected = false, AuthorizationChecked = true, CheckingAuthorization = false, Connection = copilotToken is not null
             ? "Copilot is signed in, but its token cannot read this repository. Connect GitHub separately."
             : "Connect GitHub with access to the private repository.", ConnectionMessage = new(copilotToken is not null ? "hub.copilot_no_access" : "hub.connect_required") });
         return false;

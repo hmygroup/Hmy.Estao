@@ -132,7 +132,6 @@
   "theme.midnight.description": "Cristal de zafiro profundo con acentos azules de luz de luna.",
   "host.required": "Abre esta ventana desde la aplicación de escritorio {appName}.",
   "hub.title": "Habilidades compartidas de HMY",
-  "hub.intro": "Instala habilidades revisadas de {0} en tus herramientas personales.",
   "hub.check_access": "Comprobando el acceso a GitHub…",
   "hub.open_repo": "Abrir repositorio en GitHub ↗",
   "hub.connect": "Conectar GitHub",
