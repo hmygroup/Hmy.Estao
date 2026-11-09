@@ -38,6 +38,11 @@ export function message(value?: UserMessage | null): string {
 export const number = (value: number) => new Intl.NumberFormat(language).format(value);
 export const percent = (value: number) => new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 0 }).format(value);
 export const dateTime = (value: string) => new Date(value).toLocaleString(language);
+export function retryCountdown(value: string, now = Date.now()): string {
+  const remaining = Date.parse(value) - now;
+  if (!Number.isFinite(remaining)) return t("usage.retry_later");
+  return t("usage.retry_in", remaining < 60_000 ? t("usage.less_than_minute") : plural("minutes", Math.ceil(remaining / 60_000)));
+}
 export const time = (value: string) => new Date(value).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" });
 export function windowTitle(id: string) { return t(`window.${id}` in en ? `window.${id}` : "window.other"); }
 export function sourceName(id: string) { return `source.${id}` in en ? t(`source.${id}`) : id; }

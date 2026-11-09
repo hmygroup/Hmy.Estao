@@ -88,6 +88,21 @@ test('French plurals handle zero, singular, plural and the million category', ()
   assert.equal(i18n.plural('files_count', 2), '2 fichiers');
   assert.equal(i18n.plural('files_count', 1_000_000), `${new Intl.NumberFormat('fr').format(1_000_000)} fichiers`);
 });
+test('retry countdown always uses minutes and switches below one minute', () => {
+  i18n.setLanguage('en');
+  const now = Date.parse('2026-11-09T12:00:00Z');
+  const after = milliseconds => i18n.retryCountdown(new Date(now + milliseconds).toISOString(), now);
+  assert.equal(after(90 * 60_000), 'Next retry in: 90 minutes.');
+  assert.equal(after(61_000), 'Next retry in: 2 minutes.');
+  assert.equal(after(60_000), 'Next retry in: 1 minute.');
+  assert.equal(after(59_999), 'Next retry in: Less than a minute.');
+  assert.equal(after(0), 'Next retry in: Less than a minute.');
+  assert.equal(i18n.retryCountdown('invalid', now), en['usage.retry_later']);
+  i18n.setLanguage('es');
+  assert.equal(after(120_000), 'Próximo intento en: 2 minutos.');
+  i18n.setLanguage('fr');
+  assert.equal(after(59_999), 'Prochain essai dans : Moins d’une minute.');
+});
 test('structured messages translate data and nested errors without parsing English diagnostics', () => {
   i18n.setLanguage('es');
   assert.equal(i18n.message({ code: 'error.http', arguments: ['Claude', 401] }), 'Claude devolvió el código HTTP 401.');

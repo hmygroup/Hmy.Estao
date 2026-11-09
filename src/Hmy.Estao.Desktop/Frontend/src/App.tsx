@@ -6,7 +6,7 @@ import ThemePicker from "./themes/ThemePicker";
 import HarnessHub from "./HarnessHub";
 import { connectionPresentation } from "./providerConnection";
 import { appName } from "./branding";
-import { t, plural, message as formatMessage, setLanguage, currentLanguage, dateTime, time, percent, number, windowTitle, sourceName, errorText } from "./i18n";
+import { t, plural, message as formatMessage, setLanguage, currentLanguage, dateTime, time, percent, number, windowTitle, sourceName, errorText, retryCountdown } from "./i18n";
 
 function Icon({ id }: { id: string }) {
   return <img className="provider-icon" src={`/providers/${id}.svg`} alt="" />;
@@ -286,10 +286,10 @@ function Popover({ state, reload }: { state: DesktopState; reload: () => Promise
         <p>{[formatMessage(snapshot.accountMessage) || snapshot.account, snapshot.plan].filter(Boolean).join(" · ") || sourceName(snapshot.source)}</p></div>
       {accounts.length > 1 && <Field label={t("account")}><select onChange={e => void run("account", snapshot.provider, Number(e.target.value))} defaultValue="" disabled={busy}>
         <option value="" disabled>{t("account.switch")}</option>{accounts.map(a => <option key={a.index} value={a.index}>{formatMessage(a.labelMessage) || a.label}</option>)}</select></Field>}
-      {snapshot.error ? <div className="inline-warning">{formatMessage(snapshot.errorMessage) || t("error.provider", snapshot.displayName)}<p>{snapshot.retryAt ? t("usage.retry_at", dateTime(snapshot.retryAt))
+      {snapshot.error ? <div className="inline-warning">{formatMessage(snapshot.errorMessage) || t("error.provider", snapshot.displayName)}<p>{snapshot.retryAt ? retryCountdown(snapshot.retryAt)
         : snapshot.errorMessage?.code === "error.claude_rate_limited" ? t("usage.retry_later") : t("provider.check")}</p></div> : null}
       {(!snapshot.error || snapshot.isStale) && <>
-        {snapshot.isStale && <p className="inline-warning">{t("usage.stale")}</p>}
+        {snapshot.isStale && !snapshot.error && <p className="inline-warning">{t("usage.stale")}</p>}
         {snapshot.windows.map(w => <WindowUsage key={w.id} window={w} alerts={state.usageAlerts}
           points={state.history.filter(p => p.provider === snapshot.provider && p.window === w.id)} />)}
         {!snapshot.windows.length && <p>{t("usage.no_windows")}</p>}
