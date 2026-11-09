@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <AssemblyName>Hmy.Estao</AssemblyName>
+    <AssemblyName>Hmy.Estao.Desktop</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>ai-setting.ico</ApplicationIcon>
     <Version>0.0.9-alpha</Version>

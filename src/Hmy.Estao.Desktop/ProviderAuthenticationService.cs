@@ -61,7 +61,10 @@ internal sealed class ProviderAuthenticationService(ICookieSecretStore cookies, 
         if (!string.IsNullOrWhiteSpace(config.ApiKey) || !string.IsNullOrWhiteSpace(config.CookieHeader)
             || config.TokenAccounts?.Accounts.Any(a => !string.IsNullOrWhiteSpace(a.Token)) == true) return true;
         if (config.Id == "copilot") return await oauth.ReadAsync("copilot", ct) is not null;
+        if (config.Id == "claude" && config.Source != "web" && await oauth.ReadAsync("claude", ct) is not null) return true;
+        if (config.Id == "claude" && config.Source == "oauth") return false;
         if (config.Id is "claude" or "opencode" && !string.IsNullOrWhiteSpace(await cookies.ReadCookieHeaderAsync(config.Id, ct))) return true;
+        if (config.Id == "claude" && config.Source == "web") return false;
         var path = claudeCredentialPath ?? ClaudeCredentialPath;
         if (config.Id == "claude" && File.Exists(path))
         {

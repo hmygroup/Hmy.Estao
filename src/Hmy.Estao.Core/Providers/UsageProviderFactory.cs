@@ -7,20 +7,29 @@ public sealed class UsageProviderFactory
     private readonly HttpClient _httpClient;
     private readonly ICookieSecretStore _cookieStore;
     private readonly IOAuthTokenStore _oauthStore;
+    private readonly ClaudeUsageRetryGate _claudeRetry;
 
-    public UsageProviderFactory(HttpClient? httpClient = null, ICookieSecretStore? cookieStore = null, IOAuthTokenStore? oauthStore = null)
+    public UsageProviderFactory(HttpClient? httpClient = null, ICookieSecretStore? cookieStore = null, IOAuthTokenStore? oauthStore = null,
+        TimeProvider? timeProvider = null)
     {
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         _cookieStore = cookieStore ?? new SecureCookieStore();
         _oauthStore = oauthStore ?? new SecureOAuthTokenStore();
+        _claudeRetry = new(timeProvider ?? TimeProvider.System);
     }
+
+    public DateTimeOffset? ClaudeRetryAt => _claudeRetry.RetryAt;
+    internal string? ClaudeUsageIdentity => _claudeRetry.CredentialIdentity;
+    public bool TakeDueClaudeRetry() => _claudeRetry.TakeDueRetry();
+    public void ClearClaudeRetry() => _claudeRetry.Clear();
+    public event EventHandler? ClaudeRetryChanged { add => _claudeRetry.Changed += value; remove => _claudeRetry.Changed -= value; }
 
     public IUsageProvider Create(string id)
     {
         return Configuration.ProviderCatalog.NormalizeId(id) switch
         {
             "codex" => new CodexProvider(_httpClient),
-            "claude" => new ClaudeProvider(_httpClient, _cookieStore),
+            "claude" => new ClaudeProvider(_httpClient, _cookieStore, _oauthStore, _claudeRetry),
             "copilot" => new CopilotProvider(_httpClient, _oauthStore),
             "opencode" => new OpenCodeProvider(_httpClient, _cookieStore),
             "zai" => new ZaiProvider(_httpClient),

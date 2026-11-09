@@ -15,6 +15,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _tray;
     private readonly Icon _icon;
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 60_000 };
+    private readonly ProviderRetryTimer _claudeRetryTimer;
     private readonly System.Windows.Forms.Timer _hoverMonitor = new() { Interval = 100 };
     private readonly CancellationTokenSource _lifetime = new();
     private readonly SecureCookieStore _cookies = new();
@@ -49,7 +50,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _checkAuthentication = checkAuthentication ?? ((provider, ct) => AuthenticationService().CheckAsync(provider, ct));
         _config = ConfigStore.Normalize(store.LoadAsync().GetAwaiter().GetResult());
         DesktopLocalization.SetLanguage(_config.Language);
-        _service = new UsageRefreshService(store);
+        _service = new UsageRefreshService(store, _factory);
+        _claudeRetryTimer = new(() =>
+        {
+            if (_config.Refresh.Enabled && _config.Providers.Any(p => p.Id == "claude" && p.Enabled == true)
+                && _factory.TakeDueClaudeRetry()) _ = RefreshAsync("claude");
+        });
+        _factory.ClaudeRetryChanged += OnClaudeRetryChanged;
         _pacing = new PacingStateStore(store.Path);
         // The overlay owns the UI dispatcher even when no web window has ever opened.
         _ = _overlay.Handle;
@@ -165,11 +172,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 : await _service.RefreshProviderAsync(provider, _lifetime.Token);
             if (_lifetime.IsCancellationRequested) return;
             _overlay.UpdateUsage(_config, snapshots);
+            ArmClaudeRetry();
             await CheckPacingAsync(snapshots);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) { _status = $"Refresh failed: {exception.Message}"; _statusMessage = new("settings.refresh_failed", UserMessage.FromException(exception)); }
     }
+
+    private void OnClaudeRetryChanged(object? sender, EventArgs e)
+    {
+        if (_lifetime.IsCancellationRequested || _overlay.IsDisposed) return;
+        try { _overlay.BeginInvoke(ArmClaudeRetry); }
+        catch (InvalidOperationException) when (_lifetime.IsCancellationRequested || _overlay.IsDisposed) { }
+    }
+
+    private void ArmClaudeRetry() => _claudeRetryTimer.Schedule(
+        !_lifetime.IsCancellationRequested && _config.Refresh.Enabled && _config.Providers.Any(p => p.Id == "claude" && p.Enabled == true)
+            ? _factory.ClaudeRetryAt : null);
 
     private async Task<DesktopState> StateAsync(string view)
     {
@@ -345,22 +364,31 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     await RefreshAsync("codex");
                     break;
                 case "claude":
-                    var claudeConfig = _config.Providers.First(p => p.Id == "claude");
-                    if (claudeConfig.Source == "web" || !string.IsNullOrWhiteSpace(claudeConfig.ApiKey))
-                        await VerifyProviderSignInAsync(claudeConfig, _signInCancellation.Token);
-                    else
+                    _providerSignIn = new("claude", true, null, "Complete Claude OAuth sign-in in your browser.", MessageInfo: new("signin.browser"));
+                    using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(_signInCancellation.Token))
                     {
-                        OAuthLoginService.StartClaudeLogin();
-                        _providerSignIn = new("claude", true, null, "Complete Claude sign-in in the terminal.", MessageInfo: new("signin.terminal"));
-                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_signInCancellation.Token);
                         timeout.CancelAfter(TimeSpan.FromMinutes(5));
-                        var service = AuthenticationService();
-                        while (true)
+                        var token = await ClaudeOAuthLoginService.SignInAsync(
+                            uri => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }),
+                            timeout.Token);
+                        await _saveGate.WaitAsync(timeout.Token);
+                        try
                         {
-                            await Task.Delay(TimeSpan.FromSeconds(2), timeout.Token);
-                            var status = await service.CheckAsync(claudeConfig, timeout.Token);
-                            if (status.SignedIn == true) { _providerAuthentication["claude"] = status; break; }
+                            var webConfig = await _store.LoadAsync(timeout.Token);
+                            var claude = webConfig.Providers.First(p => p.Id == "claude");
+                            claude.Source = "oauth";
+                            claude.CookieSource = "off";
+                            claude.ApiKey = null;
+                            claude.TokenAccounts = null;
+                            claude.CookieHeader = null;
+                            await new SecureOAuthTokenStore().SaveAsync("claude", token, timeout.Token);
+                            await _cookies.ClearCookieHeaderAsync("claude", timeout.Token);
+                            await _store.SaveAsync(webConfig, timeout.Token);
+                            _config = webConfig;
+                            _factory.ClearClaudeRetry();
+                            _providerAuthentication["claude"] = new(true, "Signed in", new("connection.signed_in"));
                         }
+                        finally { _saveGate.Release(); }
                     }
                     _status = "Claude sign-in complete.";
                     _statusMessage = new("signin.complete", "Claude");
@@ -426,6 +454,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (_signingIn) throw new InvalidOperationException("A sign-in or sign-out is already in progress.").WithUserMessage("signin.already_pending");
         if (!ProviderCatalog.IsSupported(change.Id)) throw new ArgumentException("Unknown provider.").WithUserMessage("settings.provider_unknown");
+        // The Providers screen owns a browser login, not the user's CLI account.
+        if (change.Id == "claude") change = change with { Source = "oauth", CookieSource = "off", ApiKey = null, NewCookie = null };
         ProviderAuthenticationService.ValidateSource(change.Id, change.Source);
         _signingIn = true;
         _providerSignIn = new(change.Id, true, null, "Starting sign-in…", MessageInfo: new("signin.start"));
@@ -441,7 +471,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 provider.CodexProfileHomePaths = change.CodexProfileHomePaths;
                 provider.EnterpriseHost = change.EnterpriseHost;
                 provider.WorkspaceId = change.WorkspaceId;
-                if ((change.Id is "copilot" or "claude") && change.Source == "oauth")
+                if (change.Id == "claude" || (change.Id == "copilot" && change.Source == "oauth"))
                 {
                     provider.ApiKey = null;
                     provider.TokenAccounts = null;
@@ -454,7 +484,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 }
                 if (change.Id == "zai" && string.IsNullOrWhiteSpace(provider.ApiKey)) throw new ArgumentException("Enter your Z.ai API key.").WithUserMessage("signin.enter_key", "Z.ai");
                 if (change.Id == "copilot" && change.Source == "api" && string.IsNullOrWhiteSpace(provider.ApiKey)) throw new ArgumentException("Enter your GitHub Copilot API token.").WithUserMessage("signin.enter_key", "GitHub Copilot");
-                if ((change.Id == "opencode" || change.Source == "web") && string.IsNullOrWhiteSpace(change.NewCookie)
+                if (change.Id != "claude" && (change.Id == "opencode" || change.Source == "web") && string.IsNullOrWhiteSpace(change.NewCookie)
                     && string.IsNullOrWhiteSpace(provider.CookieHeader)
                     && string.IsNullOrWhiteSpace(await _cookies.ReadCookieHeaderAsync(change.Id))) throw new ArgumentException("Enter your provider cookie header.").WithUserMessage("signin.enter_cookie_header");
                 if (!string.IsNullOrWhiteSpace(change.NewCookie))
@@ -492,10 +522,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 var provider = config.Providers.First(p => p.Id == providerId);
                 if (providerId == "codex")
                     await CodexLoginService.SignOutAsync(CodexLoginService.ActiveProfile(provider, _factory.Create(providerId).GetAccounts(provider)), _lifetime.Token);
-                if (providerId == "claude" && File.Exists(ProviderAuthenticationService.ClaudeCredentialPath))
-                    File.Delete(ProviderAuthenticationService.ClaudeCredentialPath);
                 await _cookies.ClearCookieHeaderAsync(providerId, _lifetime.Token);
                 await new SecureOAuthTokenStore().ClearAsync(providerId, _lifetime.Token);
+                if (providerId == "claude") _factory.ClearClaudeRetry();
                 ProviderAuthenticationService.ClearConfiguredCredentials(provider);
                 await _store.SaveAsync(config, _lifetime.Token);
                 _config = config;
@@ -637,6 +666,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (disposing)
         {
             _lifetime.Cancel();
+            _factory.ClaudeRetryChanged -= OnClaudeRetryChanged;
+            _claudeRetryTimer.Dispose();
             _timer.Dispose();
             _hoverMonitor.Dispose();
             _settings?.Dispose();

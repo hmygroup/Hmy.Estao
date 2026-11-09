@@ -163,7 +163,7 @@ internal static partial class ProviderHelpers
         // WHAM names these fields with an explicit "_percent" suffix and
         // returns 1 for one percent. Do not treat that value as the normalized
         // fraction 1.0 (which would incorrectly display 100%).
-        var explicitPercent = FirstNumber(element, "usage_percent", "used_percent", "percent_used");
+        var explicitPercent = FirstNumber(element, "usage_percent", "used_percent", "percent_used", "utilization");
         if (explicitPercent is not null)
         {
             return NormalizeWholePercent(explicitPercent.Value);

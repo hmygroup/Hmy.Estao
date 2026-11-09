@@ -14,6 +14,7 @@ public sealed class UsageRefreshService
     private IReadOnlyList<UsageSnapshot> _lastSnapshots = [];
     private IReadOnlyList<UsageHistoryPoint> _history = [];
     private bool _historyLoaded;
+    private string? _claudeSnapshotIdentity;
 
     public UsageRefreshService(ConfigStore configStore, UsageProviderFactory? providerFactory = null)
     {
@@ -80,6 +81,23 @@ public sealed class UsageRefreshService
             var fetched = (await Task.WhenAll(enabledProviders.Select(providerConfig =>
                     FetchProviderAsync(providerConfig, cancellationToken)))
                 .ConfigureAwait(false)).ToList();
+
+            var claudeIndex = fetched.FindIndex(s => s.Provider == "claude");
+            if (claudeIndex >= 0)
+            {
+                var current = fetched[claudeIndex];
+                var previous = _lastSnapshots.FirstOrDefault(s => s.Provider == "claude");
+                var identity = _providerFactory.ClaudeUsageIdentity;
+                if (current.ErrorMessage?.Code == "error.claude_rate_limited" && identity is not null
+                    && identity == _claudeSnapshotIdentity && previous is not null && (previous.Error is null || previous.IsStale))
+                    fetched[claudeIndex] = previous with
+                    {
+                        IsStale = true, Error = current.Error, ErrorMessage = current.ErrorMessage, RetryAt = current.RetryAt
+                    };
+                // The identity is a credential fingerprint, never a token. Do not
+                // reuse another account's reading after credentials change.
+                _claudeSnapshotIdentity = identity;
+            }
 
             var snapshots = providerId is null ? fetched : _lastSnapshots.Where(snapshot => snapshot.Provider != providerId
                     && config.Providers.Any(p => p.Id == snapshot.Provider && p.Enabled == true))

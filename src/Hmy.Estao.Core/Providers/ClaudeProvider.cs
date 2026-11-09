@@ -6,8 +6,12 @@ using Hmy.Estao.Core.Security;
 
 namespace Hmy.Estao.Core.Providers;
 
-internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore cookieStore) : IUsageProvider
+internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore cookieStore, IOAuthTokenStore? oauthStore = null,
+    ClaudeUsageRetryGate? retryGate = null) : IUsageProvider
 {
+    private readonly IOAuthTokenStore _oauth = oauthStore ?? new SecureOAuthTokenStore();
+    private static readonly SemaphoreSlim RefreshGate = new(1, 1);
+    private readonly ClaudeUsageRetryGate _retry = retryGate ?? new(TimeProvider.System);
     public string Id => "claude";
 
     public IReadOnlyList<ProviderAccount> GetAccounts(ProviderConfig config)
@@ -33,9 +37,28 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
 
         if (source is ProviderSource.Auto or ProviderSource.OAuth)
         {
+            var owned = await _oauth.ReadAsync(Id, request.CancellationToken).ConfigureAwait(false);
+            if (owned is not null)
+            {
+                if (_retry.GetDeferred("oauth:" + owned.AccessToken) is { } deferred) return deferred;
+                try
+                {
+                    owned = await CurrentTokenAsync(owned, false, request.CancellationToken).ConfigureAwait(false);
+                    var snapshot = await FetchOAuthAsync(owned.AccessToken, owned.AccountLabel, request.CancellationToken).ConfigureAwait(false);
+                    if (snapshot.ErrorMessage is { Code: "error.http", Arguments.Length: > 1 } failure
+                        && failure.Arguments[1] is 401 && !string.IsNullOrWhiteSpace(owned.RefreshToken))
+                    {
+                        owned = await CurrentTokenAsync(owned, true, request.CancellationToken).ConfigureAwait(false);
+                        snapshot = await FetchOAuthAsync(owned.AccessToken, owned.AccountLabel, request.CancellationToken).ConfigureAwait(false);
+                    }
+                    return snapshot;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception exception) { return UsageSnapshot.Failure(Id, "oauth", exception.Message, UserMessage.FromException(exception)); }
+            }
             var token = account?.Secret?.StartsWith("sk-ant-oat", StringComparison.Ordinal) == true
                 ? account.Secret
-                : await TryReadOAuthTokenAsync(request.CancellationToken).ConfigureAwait(false);
+                : source == ProviderSource.Auto ? await TryReadOAuthTokenAsync(request.CancellationToken).ConfigureAwait(false) : null;
             if (!string.IsNullOrWhiteSpace(token))
             {
                 return await FetchOAuthAsync(token, account?.Label, request.CancellationToken).ConfigureAwait(false);
@@ -62,6 +85,23 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         }
 
         return UsageSnapshot.Failure(Id, source.ToString().ToLowerInvariant(), "Claude MVP supports OAuth credentials and web cookies only.", new("error.unsupported_source", "Claude"));
+    }
+
+    private async Task<OAuthToken> CurrentTokenAsync(OAuthToken observed, bool force, CancellationToken ct)
+    {
+        await RefreshGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var current = await _oauth.ReadAsync(Id, ct).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Claude was signed out.").WithUserMessage("signin.oauth_expired");
+            if (current.AccessToken != observed.AccessToken) return current;
+            if (!force && (current.ExpiresAt is null || current.ExpiresAt > DateTimeOffset.UtcNow.AddMinutes(1))) return current;
+            var refreshed = await ClaudeOAuthClient.RefreshAsync(httpClient, current, ct).ConfigureAwait(false);
+            if (!await _oauth.TryReplaceAsync(Id, current, refreshed, ct).ConfigureAwait(false))
+                throw new InvalidOperationException("Claude authorization changed during refresh.").WithUserMessage("signin.oauth_expired");
+            return refreshed;
+        }
+        finally { RefreshGate.Release(); }
     }
 
     private static async Task<string?> TryReadOAuthTokenAsync(CancellationToken cancellationToken)
@@ -103,7 +143,10 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         return null;
     }
 
-    private async Task<UsageSnapshot> FetchOAuthAsync(string token, string? accountLabel, CancellationToken cancellationToken)
+    private Task<UsageSnapshot> FetchOAuthAsync(string token, string? accountLabel, CancellationToken cancellationToken)
+        => _retry.ExecuteAsync("oauth:" + token, () => FetchOAuthCoreAsync(token, accountLabel, cancellationToken), cancellationToken);
+
+    private async Task<UsageSnapshot> FetchOAuthCoreAsync(string token, string? accountLabel, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.anthropic.com/api/oauth/usage");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -111,7 +154,7 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "oauth", $"Claude OAuth usage API returned {(int)response.StatusCode}.", new("error.http", "Claude", (int)response.StatusCode));
+            return _retry.Failure(response, "oauth");
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -119,14 +162,19 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         return SnapshotFromUsage(document.RootElement, "oauth", accountLabel);
     }
 
-    private async Task<UsageSnapshot> FetchWebAsync(string cookie, string? accountLabel, CancellationToken cancellationToken)
+    private Task<UsageSnapshot> FetchWebAsync(string cookie, string? accountLabel, CancellationToken cancellationToken)
+        => _retry.ExecuteAsync("web:" + cookie, () => FetchWebCoreAsync(cookie, accountLabel, cancellationToken), cancellationToken);
+
+    private async Task<UsageSnapshot> FetchWebCoreAsync(string cookie, string? accountLabel, CancellationToken cancellationToken)
     {
         var orgRequest = new HttpRequestMessage(HttpMethod.Get, "https://claude.ai/api/organizations");
         orgRequest.Headers.TryAddWithoutValidation("Cookie", cookie);
         using var orgResponse = await httpClient.SendAsync(orgRequest, cancellationToken).ConfigureAwait(false);
         if (!orgResponse.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "web", $"Claude organizations API returned {(int)orgResponse.StatusCode}.", new("error.http", "Claude", (int)orgResponse.StatusCode));
+            if ((int)orgResponse.StatusCode == 429) return _retry.Failure(orgResponse, "web");
+            return UsageSnapshot.Failure(Id, "web", $"Claude organizations API returned {(int)orgResponse.StatusCode}.",
+                WebFailureMessage((int)orgResponse.StatusCode));
         }
 
         await using var orgStream = await orgResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -142,13 +190,18 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
         using var usageResponse = await httpClient.SendAsync(usageRequest, cancellationToken).ConfigureAwait(false);
         if (!usageResponse.IsSuccessStatusCode)
         {
-            return UsageSnapshot.Failure(Id, "web", $"Claude usage API returned {(int)usageResponse.StatusCode}.", new("error.http", "Claude", (int)usageResponse.StatusCode));
+            if ((int)usageResponse.StatusCode == 429) return _retry.Failure(usageResponse, "web");
+            return UsageSnapshot.Failure(Id, "web", $"Claude usage API returned {(int)usageResponse.StatusCode}.",
+                WebFailureMessage((int)usageResponse.StatusCode));
         }
 
         await using var usageStream = await usageResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var usageDocument = await JsonDocument.ParseAsync(usageStream, cancellationToken: cancellationToken).ConfigureAwait(false);
         return SnapshotFromUsage(usageDocument.RootElement, "web", accountLabel);
     }
+
+    private static UserMessage WebFailureMessage(int status) => status == 403
+        ? new("error.claude_web_forbidden") : new("error.http", "Claude", status);
 
     private static UsageSnapshot SnapshotFromUsage(JsonElement root, string source, string? accountLabel)
     {

@@ -80,7 +80,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
     try {
       const source = provider.id === "zai" ? "api" : provider.id === "opencode" ? "web"
         : provider.id === "copilot" ? (provider.source === "api" ? "api" : "oauth")
-        : provider.id === "claude" ? (provider.source === "web" ? "web" : "oauth")
+        : provider.id === "claude" ? "oauth"
         : ["auto", "cli", "oauth"].includes(provider.source) ? provider.source : "auto";
       await signInProvider({ ...provider, source, cookieSource: source === "web" ? "manual" : provider.cookieSource });
       const fresh = await getState();
@@ -193,22 +193,21 @@ function ProviderCard({ provider: p, update, signIn, signOut, signInState, signI
     {expanded && <div className="provider-details">
       {activeSignIn ? null : signedIn ? <div className="provider-auth-row provider-signed-in"><div><p>{t("provider.signed_in", p.name)}</p>
         {p.id === "codex" && <p className="footnote">{t("provider.codex_signout")}</p>}
-        {p.id === "claude" && <p className="footnote">{t("provider.claude_signout")}</p>}
+        {p.id === "claude" && p.source !== "web" && <p className="footnote">{t("provider.claude_signout")}</p>}
         </div>
         <button type="button" className="secondary" disabled={pending} onClick={signOut}>{t("signout")}</button>
       </div> : checking ? <p role="status">{t("connection.checking")}</p> : <>
       {authentication?.signedIn == null && <p className="inline-warning">{formatMessage(authentication?.messageInfo) || t("connection.verify")}</p>}
       <div className="provider-auth-row">
       <div className="fields-grid">
+        {p.id === "claude" && authentication?.signedIn === false && <p className="provider-auth-hint">{t("provider.claude_signed_out")}</p>}
         {p.id === "copilot" && <Field label={t("signin.method")}><select value={p.source === "api" ? "api" : "oauth"} onChange={e => update({ source: e.target.value })}>
           <option value="oauth">{t("signin.github")}</option><option value="api">{t("signin.token")}</option></select></Field>}
-        {p.id === "claude" && <Field label={t("signin.method")}><select value={p.source === "web" ? "web" : "oauth"} onChange={e => update({ source: e.target.value })}>
-          <option value="oauth">{t("signin.claude")}</option><option value="web">{t("signin.cookie")}</option></select></Field>}
         {p.id === "codex" && <Field label={t("signin.profiles")}><input value={p.codexProfileHomePaths?.join("; ") || ""}
           onChange={e => update({ codexProfileHomePaths: e.target.value.split(";").map(s => s.trim()).filter(Boolean) })} /></Field>}
         {p.id === "copilot" && <Field label={t("signin.host")}><input value={p.enterpriseHost || ""} onChange={e => update({ enterpriseHost: e.target.value })} placeholder="github.example.com" /></Field>}
         {p.id === "opencode" && <Field label={t("signin.workspace")}><input value={p.workspaceId || ""} onChange={e => update({ workspaceId: e.target.value })} /></Field>}
-        {(p.id === "opencode" || (p.id === "claude" && p.source === "web")) && <Field label={t("signin.cookie_header")}><input type="password" autoComplete="new-password" value={p.newCookie || ""}
+        {p.id === "opencode" && <Field label={t("signin.cookie_header")}><input type="password" autoComplete="new-password" value={p.newCookie || ""}
           placeholder={t("signin.enter_cookie")} onChange={e => update({ newCookie: e.target.value })} /></Field>}
         {(p.id === "zai" || (p.id === "copilot" && p.source === "api")) && <Field label={t(p.id === "zai" ? "signin.key" : "signin.token")}><input type="password" autoComplete="new-password" value={p.apiKey || ""}
           placeholder={t("signin.enter_credential")} onChange={e => update({ apiKey: e.target.value })} /></Field>}
@@ -287,7 +286,9 @@ function Popover({ state, reload }: { state: DesktopState; reload: () => Promise
         <p>{[formatMessage(snapshot.accountMessage) || snapshot.account, snapshot.plan].filter(Boolean).join(" · ") || sourceName(snapshot.source)}</p></div>
       {accounts.length > 1 && <Field label={t("account")}><select onChange={e => void run("account", snapshot.provider, Number(e.target.value))} defaultValue="" disabled={busy}>
         <option value="" disabled>{t("account.switch")}</option>{accounts.map(a => <option key={a.index} value={a.index}>{formatMessage(a.labelMessage) || a.label}</option>)}</select></Field>}
-      {snapshot.error ? <div className="inline-warning">{formatMessage(snapshot.errorMessage) || t("error.provider", snapshot.displayName)}<p>{t("provider.check")}</p></div> : <>
+      {snapshot.error ? <div className="inline-warning">{formatMessage(snapshot.errorMessage) || t("error.provider", snapshot.displayName)}<p>{snapshot.retryAt ? t("usage.retry_at", dateTime(snapshot.retryAt))
+        : snapshot.errorMessage?.code === "error.claude_rate_limited" ? t("usage.retry_later") : t("provider.check")}</p></div> : null}
+      {(!snapshot.error || snapshot.isStale) && <>
         {snapshot.isStale && <p className="inline-warning">{t("usage.stale")}</p>}
         {snapshot.windows.map(w => <WindowUsage key={w.id} window={w} alerts={state.usageAlerts}
           points={state.history.filter(p => p.provider === snapshot.provider && p.window === w.id)} />)}

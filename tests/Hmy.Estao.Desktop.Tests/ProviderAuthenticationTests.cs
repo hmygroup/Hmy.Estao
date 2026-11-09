@@ -9,6 +9,80 @@ namespace Hmy.Estao.Desktop.Tests;
 
 public sealed class ProviderAuthenticationTests
 {
+    [Theory]
+    [InlineData(401, "error.http")]
+    [InlineData(403, "error.http")]
+    [InlineData(500, "error.http")]
+    public async Task ClaudeOAuthVerificationPreservesUsageFailures(int status, string code)
+    {
+        using var client = new HttpClient(new Handler(request =>
+        {
+            Assert.Equal("owned-oauth-token", request.Headers.Authorization?.Parameter);
+            return new((HttpStatusCode)status);
+        }));
+        // A saved session must never override the new session being verified.
+        var cookies = new Cookies { Value = "sessionKey=old-saved-session" };
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ClaudeOAuthClient.ValidateUsageAsync(client,
+            new("owned-oauth-token", null), CancellationToken.None));
+        Assert.Equal("signin.oauth_usage_failed", UserMessage.FromException(error).Code);
+        Assert.Equal(status, UserMessage.FromException(error).Arguments[0]);
+        Assert.Equal("error.http", code);
+        Assert.Equal("sessionKey=old-saved-session", cookies.Value);
+        Assert.Null(ProviderAuthenticationService.FromSnapshot(UsageSnapshot.Failure("claude", "web", "Blocked", new("error.claude_web_forbidden"))).SignedIn);
+    }
+
+    [Fact]
+    public async Task ClaudeOAuthVerificationChecksUsageWithoutBrowserCookies()
+    {
+        var calls = 0;
+        using var client = new HttpClient(new Handler(request =>
+        {
+            calls++;
+            Assert.Equal("owned-oauth-token", request.Headers.Authorization?.Parameter);
+            Assert.False(request.Headers.Contains("Cookie"));
+            return new(HttpStatusCode.OK) { Content = new StringContent("{\"five_hour\":{\"utilization\":20}}") };
+        }));
+        await ClaudeOAuthClient.ValidateUsageAsync(client, new("owned-oauth-token", null), CancellationToken.None);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task ClaudeBrowserSessionVerifiesUsageWithoutAnyCliCredentials()
+    {
+        var paths = new List<string>();
+        using var client = new HttpClient(new Handler(request =>
+        {
+            Assert.Equal("claude.ai", request.RequestUri!.Host);
+            Assert.Equal("sessionKey=browser-fixture", Assert.Single(request.Headers.GetValues("Cookie")));
+            Assert.Null(request.Headers.Authorization);
+            paths.Add(request.RequestUri.AbsolutePath);
+            return new(HttpStatusCode.OK) { Content = new StringContent(paths.Count == 1
+                ? "[{\"uuid\":\"fixture-org\"}]" : "{\"five_hour\":{\"utilization\":20},\"seven_day\":{\"utilization\":30}}") };
+        }));
+        var cookies = new Cookies { Value = "sessionKey=browser-fixture" };
+        var oauth = new OAuth();
+        var service = new ProviderAuthenticationService(cookies, oauth, new UsageProviderFactory(client, cookies, oauth),
+            Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing-cli-credentials.json"));
+        Assert.True((await service.CheckAsync(new ProviderConfig { Id = "claude", Source = "web", CookieSource = "manual" }, CancellationToken.None)).SignedIn);
+        Assert.Equal(new[] { "/api/organizations", "/api/organizations/fixture-org/usage" }, paths);
+    }
+
+    [Fact]
+    public async Task ClaudeWebModeDoesNotReadOrFallBackToCliCredentials()
+    {
+        using var client = new HttpClient(new Handler(_ => throw new Exception("No request without a browser session")));
+        var cookies = new Cookies();
+        var oauth = new OAuth();
+        var path = Path.Combine(Path.GetTempPath(), "estao-unread-claude-" + Guid.NewGuid().ToString("N") + ".json");
+        await File.WriteAllTextAsync(path, "not valid CLI credential JSON");
+        try
+        {
+            var service = new ProviderAuthenticationService(cookies, oauth, new UsageProviderFactory(client, cookies, oauth), path);
+            Assert.False((await service.CheckAsync(new ProviderConfig { Id = "claude", Source = "web" }, CancellationToken.None)).SignedIn);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Fact]
     public void AuthenticationClassificationUsesCodesRatherThanTranslatedDiagnostics()
     {

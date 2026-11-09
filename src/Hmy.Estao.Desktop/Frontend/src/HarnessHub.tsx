@@ -7,6 +7,7 @@ export default function HarnessHub() {
   const [state, setState] = useState<HubState>();
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const [showCheckingAuthorization, setShowCheckingAuthorization] = useState(false);
   const [selection, setSelection] = useState<Record<string, string[]>>({});
   const pending = useRef(false);
   const initialCheckRequested = useRef(false);
@@ -44,6 +45,22 @@ export default function HarnessHub() {
     finally { setSending(false); }
   };
   const checkingAuthorization = !state || state.checkingAuthorization === true;
+  useEffect(() => {
+    setShowCheckingAuthorization(false);
+    if (!checkingAuthorization) return;
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        // Polling may still contain an already-completed check. Confirm it is
+        // actually running before revealing the delayed progress message.
+        const next = await getHubState();
+        if (!alive) return;
+        setState(next);
+        setShowCheckingAuthorization(next.checkingAuthorization === true);
+      } catch (e) { if (alive) setError(errorText(e)); }
+    }, 500);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [checkingAuthorization]);
   const busy = sending || !state || state.busy || checkingAuthorization;
   const chosen = Object.values(selection).reduce((sum, ids) => sum + ids.length, 0);
   const review = state?.review;
@@ -51,7 +68,7 @@ export default function HarnessHub() {
   return <div className="harness-hub">
     <section className="section hub-connection">
       <div className="hub-connection-copy"><h2>{t("hub.title")}</h2>
-        {!state?.connected && <span className="hub-connection-status" role="status">{checkingAuthorization ? t("hub.check_access") : message(state?.connectionMessage) || t("connection.unknown")}</span>}
+        {!state?.connected && (!checkingAuthorization || showCheckingAuthorization) && <span className="hub-connection-status" role="status">{checkingAuthorization ? t("hub.check_access") : message(state?.connectionMessage) || t("connection.unknown")}</span>}
       </div>
       <div className="hub-actions">
         <button type="button" className="secondary" onClick={() => void run({ action: "open-repo" })}>{t("hub.open_repo")}</button>
@@ -82,7 +99,7 @@ export default function HarnessHub() {
           {t(tool.status === "Installed" || tool.status === "Conflict" || tool.status === "PartiallyInstalled" ? "hub.review_update" : "hub.review_install")}</button>}
     </article>)}</div>
 
-    <div className="hub-progress" role="status"><span>{message(state?.progressMessage) || t("hub.check_tools")}</span>
+    <div className="hub-progress" role="status">{(!checkingAuthorization || showCheckingAuthorization) && <span>{message(state?.progressMessage) || t("hub.check_tools")}</span>}
       {state?.busy && <button type="button" className="secondary" disabled={sending} onClick={() => void run({ action: "cancel" })}>{t("cancel")}</button>}
     </div>
     {(error || state?.error) && <p className="inline-warning" role="alert">{error || message(state?.errorMessage) || t("error.operation")}</p>}

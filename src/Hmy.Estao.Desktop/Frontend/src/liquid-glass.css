@@ -100,6 +100,7 @@ h2, h3, .brand { color: var(--text); }
 .provider-expand small.connection-status.warning{color:var(--warning-text)}
 .provider-auth-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:20px}
 .provider-auth-row>.fields-grid{margin-bottom:0}
+.provider-auth-hint{grid-column:1/-1}
 .provider-auth-row>button{margin:0;white-space:nowrap}
 .provider-auth-row.provider-signed-in{align-items:center}
 .provider-details { border-top: 1px solid var(--divider); padding: 24px; }

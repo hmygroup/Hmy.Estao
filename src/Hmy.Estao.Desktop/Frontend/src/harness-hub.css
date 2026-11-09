@@ -1,8 +1,8 @@
 /* Reuse the existing glass surfaces and theme tokens. No additional effects. */
 .harness-hub{max-width:940px}
 .hub-connection{display:flex;align-items:center;justify-content:space-between;gap:20px}
-.hub-connection-copy{min-width:0}
-.hub-connection-status{display:block;color:var(--muted);font-size:12px;line-height:1.6;margin-top:12px}
+.hub-connection-copy{min-width:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hub-connection-status{color:var(--muted);font-size:12px;line-height:1.6}
 .hub-connection-status.connected{color:var(--accent)}
 .hub-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
 .hub-connection>.hub-actions{flex-direction:row;justify-content:flex-end}

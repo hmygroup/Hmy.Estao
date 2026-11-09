@@ -45,7 +45,8 @@ public sealed record UsageSnapshot(
     string? Error = null,
     bool IsStale = false,
     UserMessage? ErrorMessage = null,
-    UserMessage? AccountMessage = null)
+    UserMessage? AccountMessage = null,
+    DateTimeOffset? RetryAt = null)
 {
     public static UsageSnapshot Failure(string provider, string source, string error, UserMessage? message = null)
     {

@@ -17,6 +17,7 @@ export interface RateWindow {
   used: number | null; limit: number | null; unit: string | null;
 }
 export interface Snapshot {
+  retryAt?: string | null;
   provider: string; displayName: string; source: string; updatedAt: string; windows: RateWindow[];
   account: string | null; plan: string | null; error: string | null; isStale: boolean;
   credits: { balance: number | null; unit: string | null; unlimited: boolean | null } | null;
