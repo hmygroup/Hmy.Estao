@@ -44,12 +44,17 @@ internal static class ClaudeOAuthLoginService
 
     internal sealed class CallbackListener : IDisposable
     {
-        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+        private readonly TcpListener _listener;
+        private readonly string _path;
+        private readonly string _deniedMessage;
         public string RedirectUri { get; }
-        public CallbackListener()
+        public CallbackListener(int port = 0, string path = "/callback", string deniedMessage = "signin.oauth_denied")
         {
+            _listener = new(IPAddress.Loopback, port);
+            _path = path;
+            _deniedMessage = deniedMessage;
             _listener.Start();
-            RedirectUri = $"http://localhost:{((IPEndPoint)_listener.LocalEndpoint).Port}/callback";
+            RedirectUri = $"http://localhost:{((IPEndPoint)_listener.LocalEndpoint).Port}{path}";
         }
 
         public async Task<string> WaitForCodeAsync(string state, CancellationToken ct)
@@ -75,7 +80,7 @@ internal static class ClaudeOAuthLoginService
                     } while (length < bytes.Length);
                     headers = Encoding.ASCII.GetString(bytes, 0, length);
                     var line = headers.Split("\r\n", 2)[0].Split(' ');
-                    var validRoute = line.Length == 3 && line[0] == "GET" && line[1].StartsWith("/callback?", StringComparison.Ordinal)
+                    var validRoute = line.Length == 3 && line[0] == "GET" && line[1].StartsWith(_path + "?", StringComparison.Ordinal)
                         && headers.Contains("\r\n\r\n", StringComparison.Ordinal)
                         && headers.Split("\r\n").Any(h => h.Equals($"Host: localhost:{new Uri(RedirectUri).Port}", StringComparison.OrdinalIgnoreCase));
                     var query = validRoute ? System.Web.HttpUtility.ParseQueryString(new Uri(new Uri(RedirectUri), line[1]).Query) : null;
@@ -91,7 +96,7 @@ internal static class ClaudeOAuthLoginService
                     await stream.WriteAsync(head, requestTimeout.Token).ConfigureAwait(false);
                     await stream.WriteAsync(body, requestTimeout.Token).ConfigureAwait(false);
                     if (!accepted) continue;
-                    if (error is not null) throw new InvalidOperationException("Claude authorization was declined.").WithUserMessage("signin.oauth_denied");
+                    if (error is not null) throw new InvalidOperationException("Authorization was declined.").WithUserMessage(_deniedMessage);
                     return code!;
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }

@@ -8,7 +8,7 @@ using Hmy.Estao.Core.Platform;
 namespace Hmy.Estao.Core.Security;
 
 public sealed record OAuthToken(string AccessToken, string? AccountLabel, string? RefreshToken = null,
-    DateTimeOffset? ExpiresAt = null, string? Scope = null);
+    DateTimeOffset? ExpiresAt = null, string? Scope = null, string? AccountId = null);
 
 public interface IOAuthTokenStore
 {
@@ -112,7 +112,7 @@ public sealed class SecureOAuthTokenStore : IOAuthTokenStore
         var token = Encoding.UTF8.GetString(_protector.Unprotect(Convert.FromBase64String(entry.ProtectedToken)));
         var refresh = string.IsNullOrWhiteSpace(entry.ProtectedRefreshToken) ? null
             : Encoding.UTF8.GetString(_protector.Unprotect(Convert.FromBase64String(entry.ProtectedRefreshToken)));
-        return string.IsNullOrWhiteSpace(token) ? null : new(token, entry.AccountLabel, refresh, entry.ExpiresAt, entry.Scope);
+        return string.IsNullOrWhiteSpace(token) ? null : new(token, entry.AccountLabel, refresh, entry.ExpiresAt, entry.Scope, entry.AccountId);
     }
 
     private OAuthTokenEntry ProtectEntry(OAuthToken token) => new()
@@ -120,7 +120,7 @@ public sealed class SecureOAuthTokenStore : IOAuthTokenStore
         ProtectedToken = Convert.ToBase64String(_protector.Protect(Encoding.UTF8.GetBytes(token.AccessToken.Trim()))),
         ProtectedRefreshToken = string.IsNullOrWhiteSpace(token.RefreshToken) ? null
             : Convert.ToBase64String(_protector.Protect(Encoding.UTF8.GetBytes(token.RefreshToken))),
-        ExpiresAt = token.ExpiresAt, Scope = token.Scope,
+        ExpiresAt = token.ExpiresAt, Scope = token.Scope, AccountId = token.AccountId,
         AccountLabel = string.IsNullOrWhiteSpace(token.AccountLabel) ? null : token.AccountLabel.Trim()
     };
 
@@ -179,5 +179,6 @@ public sealed class SecureOAuthTokenStore : IOAuthTokenStore
         public string? ProtectedRefreshToken { get; set; }
         public DateTimeOffset? ExpiresAt { get; set; }
         public string? Scope { get; set; }
+        public string? AccountId { get; set; }
     }
 }

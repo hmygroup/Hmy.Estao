@@ -41,8 +41,9 @@ new login. Desktop does not write or delete Claude Code's credential files.
 Sign-in has a five-minute deadline and is canceled when Settings closes or the
 user chooses Cancel. The listener then closes. The browser tab can be closed after
 the callback; it has no tokens or code embedded in its response page. Explicit
-OAuth mode reads Estao-owned tokens only. Legacy Auto mode can still read an
-existing Claude credential file without running the CLI.
+OAuth usage mode reads Estao-owned tokens. CLI-first discovery on startup,
+enabling, and manual sign-in can automatically select an existing CLI session,
+regardless of the previously saved mode. See [provider authentication](ProviderAuthentication.md).
 
 ## Server-directed usage retries
 

@@ -31,7 +31,7 @@ public static class CodexProcess
             Path.Combine(local, "Microsoft", "WinGet", "Links"), Path.Combine(local, "Programs", "OpenAI", "Codex", "bin") });
     }
 
-    public static ProcessStartInfo CreateStartInfo(string executable, string profileHome, IReadOnlyList<string> arguments)
+    public static ProcessStartInfo CreateStartInfo(string executable, string profileHome, IReadOnlyList<string> arguments, bool setCodexHome = true)
     {
         var extension = Path.GetExtension(executable);
         var wrapper = extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase) || extension.Equals(".bat", StringComparison.OrdinalIgnoreCase);
@@ -52,7 +52,7 @@ public static class CodexProcess
             info.Arguments = $"/d /s /c \"\"{executable}\" {string.Join(' ', arguments)}\"";
         }
         else foreach (var argument in arguments) info.ArgumentList.Add(argument);
-        info.Environment["CODEX_HOME"] = Path.GetFullPath(profileHome);
+        if (setCodexHome) info.Environment["CODEX_HOME"] = Path.GetFullPath(profileHome);
         return info;
     }
 

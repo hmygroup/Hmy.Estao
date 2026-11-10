@@ -192,7 +192,7 @@ function ProviderCard({ provider: p, update, signIn, signOut, signInState, signI
       <Toggle label={t("provider.enable", p.name)} checked={p.enabled} onChange={enabled => update({ enabled })} /></div>
     {expanded && <div className="provider-details">
       {activeSignIn ? null : signedIn ? <div className="provider-auth-row provider-signed-in"><div><p>{t("provider.signed_in", p.name)}</p>
-        {p.id === "codex" && <p className="footnote">{t("provider.codex_signout")}</p>}
+        {p.id === "codex" && p.source === "cli" && <p className="footnote">{t("provider.codex_signout")}</p>}
         {p.id === "claude" && p.source !== "web" && <p className="footnote">{t("provider.claude_signout")}</p>}
         </div>
         <button type="button" className="secondary" disabled={pending} onClick={signOut}>{t("signout")}</button>

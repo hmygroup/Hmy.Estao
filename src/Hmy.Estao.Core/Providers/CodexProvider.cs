@@ -4,11 +4,14 @@ using System.Text.Json;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Models;
 using Hmy.Estao.Core.Platform;
+using Hmy.Estao.Core.Security;
 
 namespace Hmy.Estao.Core.Providers;
 
-internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
+internal sealed class CodexProvider(HttpClient httpClient, IOAuthTokenStore? oauthStore = null) : IUsageProvider
 {
+    private readonly IOAuthTokenStore _oauth = oauthStore ?? new SecureOAuthTokenStore();
+    private static readonly SemaphoreSlim RefreshGate = new(1, 1);
     public string Id => "codex";
 
     public IReadOnlyList<ProviderAccount> GetAccounts(ProviderConfig config)
@@ -33,6 +36,16 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
         var account = request.Account ?? GetAccounts(request.Config).FirstOrDefault();
         var home = account?.HomePath ?? Path.Combine(ProviderHelpers.UserHome(), ".codex");
         UsageSnapshot? oauthSnapshot = null;
+
+        if (request.Source == ProviderSource.Cli && !request.Config.CliAutoSignInDisabled)
+        {
+            var cli = await FetchCliAsync(home, account?.Label, request.CancellationToken).ConfigureAwait(false);
+            if (cli.Error is null) return cli;
+            if (await FetchOwnedOAuthAsync(request.CancellationToken).ConfigureAwait(false) is { } saved) return saved;
+            return cli;
+        }
+        if (await FetchOwnedOAuthAsync(request.CancellationToken).ConfigureAwait(false) is { } owned) return owned;
+        if (request.Config.CliAutoSignInDisabled) return SignedOut();
 
         if (request.Source is ProviderSource.Auto or ProviderSource.OAuth)
         {
@@ -73,8 +86,39 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
             return null;
         }
 
+        return await FetchOAuthTokenAsync(new(token, accountLabel), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<UsageSnapshot?> FetchOwnedOAuthAsync(CancellationToken ct)
+    {
+        var token = await _oauth.ReadAsync(Id, ct).ConfigureAwait(false);
+        if (token is null) return null;
+        try
+        {
+            await RefreshGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                token = await _oauth.ReadAsync(Id, ct).ConfigureAwait(false);
+                if (token is null) return SignedOut();
+                if (token.ExpiresAt <= DateTimeOffset.UtcNow.AddMinutes(1))
+                {
+                    var refreshed = await CodexOAuthClient.RefreshAsync(httpClient, token, ct).ConfigureAwait(false);
+                    if (!await _oauth.TryReplaceAsync(Id, token, refreshed, ct).ConfigureAwait(false)) return SignedOut();
+                    token = refreshed;
+                }
+            }
+            finally { RefreshGate.Release(); }
+            return await FetchOAuthTokenAsync(token, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception) { return UsageSnapshot.Failure(Id, "oauth", exception.Message, UserMessage.FromException(exception)); }
+    }
+
+    private async Task<UsageSnapshot> FetchOAuthTokenAsync(OAuthToken token, CancellationToken cancellationToken)
+    {
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://chatgpt.com/backend-api/wham/usage");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
+        if (!string.IsNullOrWhiteSpace(token.AccountId)) request.Headers.TryAddWithoutValidation("ChatGPT-Account-Id", token.AccountId);
         request.Headers.UserAgent.ParseAdd("Estao/0.1");
         using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
@@ -84,7 +128,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-        return SnapshotFromWham(document.RootElement, "oauth", accountLabel);
+        return SnapshotFromWham(document.RootElement, "oauth", token.AccountLabel);
     }
 
     private async Task<UsageSnapshot> FetchCliAsync(string home, string? accountLabel, CancellationToken cancellationToken)
@@ -92,7 +136,7 @@ internal sealed class CodexProvider(HttpClient httpClient) : IUsageProvider
         if (!Directory.Exists(home)) return SignedOut();
         string executable;
         try { executable = CodexProcess.FindExecutable(); }
-        catch (FileNotFoundException exception) { return UsageSnapshot.Failure(Id, "cli", exception.Message, UserMessage.FromException(exception)); }
+        catch (FileNotFoundException) { return SignedOut(); }
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         try

@@ -310,6 +310,10 @@ public sealed class ProviderConfig
     [JsonPropertyName("source")]
     public string? Source { get; set; }
 
+    [JsonPropertyName("cliAutoSignInDisabled")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool CliAutoSignInDisabled { get; set; }
+
     [JsonPropertyName("cookieSource")]
     public string? CookieSource { get; set; }
 

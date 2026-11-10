@@ -40,6 +40,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly Dictionary<string, int> _providerCheckVersions = [];
     private CancellationTokenSource? _providerCheckCancellation;
     private readonly Func<ProviderConfig, CancellationToken, Task<CodexAccountStatus>> _checkAuthentication;
+    private readonly ProviderCliSessionService _cliSessions;
+    private readonly Action<Uri> _openBrowser = uri => System.Diagnostics.Process.Start(
+        new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+    private readonly Dictionary<(string Provider, int Version), Task<ProviderCliSession?>> _cliProbes = [];
     private DateTimeOffset _nextRefresh;
     private long _hoverLeftAt;
 
@@ -51,6 +55,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _config = ConfigStore.Normalize(store.LoadAsync().GetAwaiter().GetResult());
         DesktopLocalization.SetLanguage(_config.Language);
         _service = new UsageRefreshService(store, _factory);
+        _cliSessions = new(_factory);
         _claudeRetryTimer = new(() =>
         {
             if (_config.Refresh.Enabled && _config.Providers.Any(p => p.Id == "claude" && p.Enabled == true)
@@ -106,7 +111,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (_config.Refresh.Enabled && DateTimeOffset.UtcNow >= _nextRefresh) await RefreshAsync();
         };
         _timer.Start();
-        _overlay.BeginInvoke(async () => await RefreshAsync());
+        _overlay.BeginInvoke(async () =>
+        {
+            await ProbeEnabledCliSessionsAsync();
+            await RefreshAsync();
+        });
     }
 
     public void ShowSettings()
@@ -171,6 +180,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var snapshots = provider is null ? await _service.RefreshAsync(_lifetime.Token)
                 : await _service.RefreshProviderAsync(provider, _lifetime.Token);
             if (_lifetime.IsCancellationRequested) return;
+            foreach (var snapshot in snapshots.Where(s => s.Error is not null))
+            {
+                var authentication = ProviderAuthenticationService.FromSnapshot(snapshot);
+                if (authentication.SignedIn != false) continue;
+                if (snapshot.Provider == "codex") _codexAuthentication = authentication;
+                else _providerAuthentication[snapshot.Provider] = authentication;
+            }
             _overlay.UpdateUsage(_config, snapshots);
             ArmClaudeRetry();
             await CheckPacingAsync(snapshots);
@@ -211,6 +227,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task SaveSettingsAsync(SettingsUpdate update)
     {
+        var newlyEnabled = new List<string>();
         if (!DesktopLocalization.IsSupported(update.Language)) throw new ArgumentException("Choose a supported language.").WithUserMessage("settings.language_invalid");
         if (!DesktopThemeCatalog.IsSupported(update.Theme)) throw new ArgumentException("Choose a supported desktop theme.").WithUserMessage("settings.theme_invalid");
         if (update.Providers.Select(p => p.Id).Distinct().Count() != update.Providers.Count
@@ -228,6 +245,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             foreach (var change in update.Providers)
             {
                 var p = config.Providers.First(p => p.Id == change.Id);
+                if (change.Enabled && p.Enabled != true)
+                {
+                    newlyEnabled.Add(p.Id);
+                    p.CliAutoSignInDisabled = false;
+                }
                 p.Enabled = change.Enabled;
                 p.Source = change.Source;
                 p.CookieSource = change.CookieSource;
@@ -269,8 +291,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _statusMessage = new("saved");
         }
         finally { _saveGate.Release(); }
-        await RefreshAsync();
         InvalidateAuthentication();
+        await ProbeEnabledCliSessionsAsync(newlyEnabled);
+        await RefreshAsync();
     }
 
     private async Task SavePositionAsync(Point point)
@@ -342,24 +365,61 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _signInCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         try
         {
+            if (provider is not null)
+            {
+                InvalidateAuthentication(provider);
+                await _saveGate.WaitAsync(_signInCancellation.Token);
+                try
+                {
+                    var config = await _store.LoadAsync(_signInCancellation.Token);
+                    var configured = config.Providers.First(p => p.Id == provider);
+                    if (configured.CliAutoSignInDisabled)
+                    {
+                        configured.CliAutoSignInDisabled = false;
+                        await _store.SaveAsync(config, _signInCancellation.Token);
+                    }
+                    _config = config;
+                }
+                finally { _saveGate.Release(); }
+            }
+            if (provider is not null && await TryUseCliSessionAsync(provider, true, _signInCancellation.Token))
+            {
+                await RefreshAsync(provider);
+                var reading = _service.LastSnapshots.FirstOrDefault(s => s.Provider == provider);
+                var rejected = reading?.ErrorMessage is { Code: "error.auth" }
+                    || reading?.ErrorMessage is { Code: "error.http", Arguments.Length: > 1 } http && http.Arguments[1] is 401 or 403;
+                if (!rejected)
+                {
+                    _status = $"{ProviderCatalog.DisplayName(provider)} connected using the existing CLI session.";
+                    _statusMessage = new("signin.complete", ProviderCatalog.DisplayName(provider));
+                    return;
+                }
+            }
             switch (provider)
             {
                 case "codex":
-                    var config = await _store.LoadAsync(_signInCancellation.Token);
-                    var configured = config.Providers.First(p => p.Id == "codex");
-                    var profile = CodexLoginService.ActiveProfile(configured, _factory.Create("codex").GetAccounts(configured));
-                    await CodexLoginService.SignInAsync(profile,
-                        uri => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }),
-                        new Progress<string>(message =>
+                    _providerSignIn = new("codex", true, null, "Complete sign-in in your browser.", MessageInfo: new("signin.browser"));
+                    using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(_signInCancellation.Token))
+                    {
+                        timeout.CancelAfter(TimeSpan.FromMinutes(5));
+                        var token = await CodexOAuthLoginService.SignInAsync(_openBrowser, timeout.Token);
+                        await _saveGate.WaitAsync(timeout.Token);
+                        try
                         {
-                            if (_providerSignIn is { Provider: "codex", Pending: true } current)
-                                _providerSignIn = current with { Message = message, MessageInfo = new("signin.browser") };
-                        }), _signInCancellation.Token);
+                            var config = await _store.LoadAsync(timeout.Token);
+                            var codex = config.Providers.First(p => p.Id == "codex");
+                            codex.Source = "oauth";
+                            codex.CliAutoSignInDisabled = false;
+                            await new SecureOAuthTokenStore().SaveAsync("codex", token, timeout.Token);
+                            await _store.SaveAsync(config, timeout.Token);
+                            _config = config;
+                            _codexAuthentication = new(true, "Signed in", new("connection.signed_in"));
+                            _codexCheckedProfile = CodexLoginService.ActiveProfile(codex, _factory.Create("codex").GetAccounts(codex));
+                        }
+                        finally { _saveGate.Release(); }
+                    }
                     _status = "Codex sign-in complete.";
                     _statusMessage = new("signin.complete", "Codex");
-                    _codexAuthentication = await CodexLoginService.ReadAccountAsync(profile, _signInCancellation.Token);
-                    if (_codexAuthentication.SignedIn != true) throw new InvalidOperationException("Codex did not confirm the sign-in. Please try again.").WithUserMessage("signin.rejected");
-                    _codexCheckedProfile = profile;
                     _providerSignIn = new("codex", false, null, _status, MessageInfo: _statusMessage);
                     await RefreshAsync("codex");
                     break;
@@ -368,15 +428,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(_signInCancellation.Token))
                     {
                         timeout.CancelAfter(TimeSpan.FromMinutes(5));
-                        var token = await ClaudeOAuthLoginService.SignInAsync(
-                            uri => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }),
-                            timeout.Token);
+                        var token = await ClaudeOAuthLoginService.SignInAsync(_openBrowser, timeout.Token);
                         await _saveGate.WaitAsync(timeout.Token);
                         try
                         {
                             var webConfig = await _store.LoadAsync(timeout.Token);
                             var claude = webConfig.Providers.First(p => p.Id == "claude");
                             claude.Source = "oauth";
+                            claude.CliAutoSignInDisabled = false;
                             claude.CookieSource = "off";
                             claude.ApiKey = null;
                             claude.TokenAccounts = null;
@@ -439,6 +498,64 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    private async Task ProbeEnabledCliSessionsAsync(IEnumerable<string>? ids = null)
+    {
+        try
+        {
+            var enabled = _config.Providers.Where(p => p.Enabled == true && (ids is null || ids.Contains(p.Id))).Select(p => p.Id).ToArray();
+            await Task.WhenAll(enabled.Select(id => TryUseCliSessionAsync(id, false, _lifetime.Token)));
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            _status = "Could not save CLI sign-in preferences.";
+            _statusMessage = new("connection.unknown");
+        }
+    }
+
+    private async Task<bool> TryUseCliSessionAsync(string id, bool manual, CancellationToken ct)
+    {
+        var provider = _config.Providers.First(p => p.Id == id);
+        if (provider.CliAutoSignInDisabled || (!manual && (_signingIn || provider.Enabled != true))) return false;
+        var version = _providerCheckVersions.GetValueOrDefault(id);
+        var key = (id, version);
+        if (!_cliProbes.TryGetValue(key, out var probe))
+            _cliProbes[key] = probe = Task.Run(() => _cliSessions.TryReadAsync(provider, ct), ct);
+        ProviderCliSession? session;
+        try { session = await probe; }
+        finally { if (_cliProbes.TryGetValue(key, out var current) && ReferenceEquals(current, probe)) _cliProbes.Remove(key); }
+        if (session is null || ct.IsCancellationRequested || version != _providerCheckVersions.GetValueOrDefault(id)) return false;
+        await _saveGate.WaitAsync(ct);
+        try
+        {
+            var config = await _store.LoadAsync(ct);
+            var saved = config.Providers.First(p => p.Id == id);
+            if (saved.CliAutoSignInDisabled || (!manual && (_signingIn || saved.Enabled != true))
+                || version != _providerCheckVersions.GetValueOrDefault(id)) return false;
+            var changed = saved.Source != session.Source;
+            saved.Source = session.Source;
+            if (session.Token is not null)
+            {
+                saved.ApiKey = null;
+                saved.TokenAccounts = null;
+                changed = true;
+                var tokens = new SecureOAuthTokenStore();
+                if (await tokens.ReadAsync(id, ct) != session.Token) await tokens.SaveAsync(id, session.Token, ct);
+            }
+            if (changed) await _store.SaveAsync(config, ct);
+            _config = config;
+            var signedIn = new CodexAccountStatus(true, "Signed in", new("connection.signed_in"));
+            if (id == "codex")
+            {
+                _codexAuthentication = signedIn;
+                _codexCheckedProfile = CodexLoginService.ActiveProfile(saved, _factory.Create(id).GetAccounts(saved));
+            }
+            else _providerAuthentication[id] = signedIn;
+            return true;
+        }
+        finally { _saveGate.Release(); }
+    }
+
     private ProviderAuthenticationService AuthenticationService() => new(_cookies, new SecureOAuthTokenStore(), _factory);
 
     private async Task VerifyProviderSignInAsync(ProviderConfig provider, CancellationToken ct)
@@ -454,7 +571,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (_signingIn) throw new InvalidOperationException("A sign-in or sign-out is already in progress.").WithUserMessage("signin.already_pending");
         if (!ProviderCatalog.IsSupported(change.Id)) throw new ArgumentException("Unknown provider.").WithUserMessage("settings.provider_unknown");
-        // The Providers screen owns a browser login, not the user's CLI account.
+        // CLI reuse is attempted first; these sources are the browser fallback.
         if (change.Id == "claude") change = change with { Source = "oauth", CookieSource = "off", ApiKey = null, NewCookie = null };
         ProviderAuthenticationService.ValidateSource(change.Id, change.Source);
         _signingIn = true;
@@ -466,6 +583,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 var config = await _store.LoadAsync();
                 var provider = config.Providers.First(p => p.Id == change.Id);
+                provider.CliAutoSignInDisabled = false;
                 provider.Source = change.Source;
                 provider.CookieSource = change.CookieSource;
                 provider.CodexProfileHomePaths = change.CodexProfileHomePaths;
@@ -520,12 +638,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 var config = await _store.LoadAsync(_lifetime.Token);
                 var provider = config.Providers.First(p => p.Id == providerId);
-                if (providerId == "codex")
+                if (providerId == "codex" && provider.Source == "cli")
                     await CodexLoginService.SignOutAsync(CodexLoginService.ActiveProfile(provider, _factory.Create(providerId).GetAccounts(provider)), _lifetime.Token);
                 await _cookies.ClearCookieHeaderAsync(providerId, _lifetime.Token);
                 await new SecureOAuthTokenStore().ClearAsync(providerId, _lifetime.Token);
                 if (providerId == "claude") _factory.ClearClaudeRetry();
                 ProviderAuthenticationService.ClearConfiguredCredentials(provider);
+                provider.CliAutoSignInDisabled = true;
+                if (providerId is "codex" or "claude") provider.Source = "oauth";
                 await _store.SaveAsync(config, _lifetime.Token);
                 _config = config;
             }
@@ -563,6 +683,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _providerCheckCancellation?.Cancel();
         _providerCheckCancellation?.Dispose();
         _providerCheckCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        foreach (var p in _config.Providers) _providerCheckVersions[p.Id] = _providerCheckVersions.GetValueOrDefault(p.Id) + 1;
         _providerAuthentication.Clear();
         _checkingProviders.Clear();
     }
@@ -586,6 +707,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 // Credential decryption, CLI discovery and process startup can block
                 // before the first await. Only apply the result back on the UI thread.
+                if (provider.Enabled == true && await TryUseCliSessionAsync(provider.Id, false, ct)) return;
                 var status = await Task.Run(() => _checkAuthentication(provider, ct), ct);
                 if (Current()) _providerAuthentication[provider.Id] = status;
             }
@@ -616,6 +738,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             try
             {
+                if (provider.Enabled == true && await TryUseCliSessionAsync(provider.Id, false, ct)) return;
                 var status = await Task.Run(() => _checkAuthentication(provider, ct), ct);
                 if (!ct.IsCancellationRequested) _codexAuthentication = status;
             }

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Hmy.Estao.Core.Configuration;
 using Hmy.Estao.Core.Models;
 using Hmy.Estao.Core.Providers;
@@ -9,14 +8,14 @@ namespace Hmy.Estao.Desktop;
 internal sealed class ProviderAuthenticationService(ICookieSecretStore cookies, IOAuthTokenStore oauth, UsageProviderFactory factory,
     string? claudeCredentialPath = null)
 {
-    internal static string ClaudeCredentialPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", ".credentials.json");
+    internal static string ClaudeCredentialPath => ClaudeCliCredentials.PathName;
 
     internal static void ValidateSource(string id, string source)
     {
         var supported = id switch
         {
             "codex" => source is "auto" or "cli" or "oauth",
-            "claude" => source is "oauth" or "web",
+            "claude" => source is "auto" or "oauth" or "web",
             "copilot" => source is "oauth" or "api",
             "opencode" => source == "web",
             "zai" => source == "api",
@@ -28,7 +27,22 @@ internal sealed class ProviderAuthenticationService(ICookieSecretStore cookies, 
     public async Task<CodexAccountStatus> CheckAsync(ProviderConfig config, CancellationToken ct)
     {
         if (config.Id == "codex")
-            return await CodexLoginService.ReadAccountAsync(CodexLoginService.ActiveProfile(config, factory.Create("codex").GetAccounts(config)), ct);
+        {
+            if (!config.CliAutoSignInDisabled)
+            {
+                try
+                {
+                    var cli = await CodexLoginService.ReadAccountAsync(CodexLoginService.ActiveProfile(config, factory.Create("codex").GetAccounts(config)), ct);
+                    if (cli.SignedIn == true) return cli;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception) { }
+            }
+            return await oauth.ReadAsync("codex", ct) is not null ? new(true, "Signed in", new("connection.signed_in"))
+                : new(false, "Not signed in", new("connection.signed_out"));
+        }
+        if (config.Id == "claude" && config.Source != "web" && await oauth.ReadAsync("claude", ct) is not null)
+            return new(true, "Signed in", new("connection.signed_in"));
         if (!await HasCredentialsAsync(config, ct)) return new(false, "Not signed in", new("connection.signed_out"));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(25));
@@ -65,20 +79,10 @@ internal sealed class ProviderAuthenticationService(ICookieSecretStore cookies, 
         if (config.Id == "claude" && config.Source == "oauth") return false;
         if (config.Id is "claude" or "opencode" && !string.IsNullOrWhiteSpace(await cookies.ReadCookieHeaderAsync(config.Id, ct))) return true;
         if (config.Id == "claude" && config.Source == "web") return false;
-        var path = claudeCredentialPath ?? ClaudeCredentialPath;
-        if (config.Id == "claude" && File.Exists(path))
-        {
-            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path, ct));
-            return ContainsAccessToken(document.RootElement);
-        }
+        if (config.Id == "claude" && !config.CliAutoSignInDisabled)
+            return await ClaudeCliCredentials.ReadAsync(ct, claudeCredentialPath,
+                claudeCredentialPath is null ? null : () => true) is not null;
         return false;
-    }
-
-    private static bool ContainsAccessToken(JsonElement value)
-    {
-        if (value.ValueKind != JsonValueKind.Object) return false;
-        return value.EnumerateObject().Any(p => p.Name is "access_token" or "accessToken"
-            ? p.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p.Value.GetString()) : ContainsAccessToken(p.Value));
     }
 
     internal static void ClearConfiguredCredentials(ProviderConfig provider)

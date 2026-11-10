@@ -7,7 +7,7 @@ using Hmy.Estao.Core.Security;
 namespace Hmy.Estao.Core.Providers;
 
 internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore cookieStore, IOAuthTokenStore? oauthStore = null,
-    ClaudeUsageRetryGate? retryGate = null) : IUsageProvider
+    ClaudeUsageRetryGate? retryGate = null, Func<CancellationToken, Task<OAuthToken?>>? readCli = null) : IUsageProvider
 {
     private readonly IOAuthTokenStore _oauth = oauthStore ?? new SecureOAuthTokenStore();
     private static readonly SemaphoreSlim RefreshGate = new(1, 1);
@@ -37,6 +37,14 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
 
         if (source is ProviderSource.Auto or ProviderSource.OAuth)
         {
+            if (source == ProviderSource.Auto && !request.Config.CliAutoSignInDisabled
+                && await (readCli ?? (ct => ClaudeCliCredentials.ReadAsync(ct)))(request.CancellationToken).ConfigureAwait(false) is { } cli)
+            {
+                var cliUsage = await FetchOAuthAsync(cli.AccessToken, cli.AccountLabel, request.CancellationToken).ConfigureAwait(false);
+                if (cliUsage.ErrorMessage is not { Code: "error.http", Arguments.Length: > 1 } failure || failure.Arguments[1] is not (401 or 403))
+                    return cliUsage;
+                // A revoked CLI credential must not mask Estao's own valid OAuth login.
+            }
             var owned = await _oauth.ReadAsync(Id, request.CancellationToken).ConfigureAwait(false);
             if (owned is not null)
             {
@@ -58,7 +66,7 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
             }
             var token = account?.Secret?.StartsWith("sk-ant-oat", StringComparison.Ordinal) == true
                 ? account.Secret
-                : source == ProviderSource.Auto ? await TryReadOAuthTokenAsync(request.CancellationToken).ConfigureAwait(false) : null;
+                : null;
             if (!string.IsNullOrWhiteSpace(token))
             {
                 return await FetchOAuthAsync(token, account?.Label, request.CancellationToken).ConfigureAwait(false);
@@ -84,7 +92,8 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
             }
         }
 
-        return UsageSnapshot.Failure(Id, source.ToString().ToLowerInvariant(), "Claude MVP supports OAuth credentials and web cookies only.", new("error.unsupported_source", "Claude"));
+        return source == ProviderSource.Auto ? UsageSnapshot.Failure(Id, "auto", "Claude is not signed in.", new("error.auth", "Claude"))
+            : UsageSnapshot.Failure(Id, source.ToString().ToLowerInvariant(), "Claude MVP supports OAuth credentials and web cookies only.", new("error.unsupported_source", "Claude"));
     }
 
     private async Task<OAuthToken> CurrentTokenAsync(OAuthToken observed, bool force, CancellationToken ct)
@@ -102,18 +111,6 @@ internal sealed class ClaudeProvider(HttpClient httpClient, ICookieSecretStore c
             return refreshed;
         }
         finally { RefreshGate.Release(); }
-    }
-
-    private static async Task<string?> TryReadOAuthTokenAsync(CancellationToken cancellationToken)
-    {
-        var path = Path.Combine(ProviderHelpers.UserHome(), ".claude", ".credentials.json");
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false));
-        return ProviderHelpers.FirstString(document.RootElement, "access_token", "accessToken");
     }
 
     private async Task<string?> ResolveCookieAsync(FetchRequest request, ProviderAccount? account)
