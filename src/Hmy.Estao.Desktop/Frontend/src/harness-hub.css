@@ -5,8 +5,6 @@
 .hub-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
 .hub-section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:24px 0 9px}
 .hub-helper{font-size:12px;line-height:1.7;margin-bottom:16px}
-.hub-progress{display:flex;align-items:center;justify-content:space-between;gap:15px;margin:18px 0;padding:14px 0;font-size:12px;color:var(--muted)}
-.hub-progress span{overflow-wrap:anywhere}
 .hub-review-summary{font-size:12px;margin:8px 0}
 .hub-destination{display:block;overflow-wrap:anywhere;margin-bottom:16px}
 .hub-artifact{border-top:1px solid var(--divider);padding:15px 0}
@@ -42,6 +40,16 @@
 .hub-view-switch>button:hover{background:var(--glass-low)}
 .hub-view-switch>button[aria-pressed=true]{border-bottom-color:var(--accent);background:var(--glass-high);color:var(--text);font-weight:600}
 .hub-browser-actions{display:flex;align-items:center;gap:12px;margin-left:auto}
+.hub-activity-slot{display:flex;align-items:center;justify-content:flex-end;gap:8px;width:64px;min-height:32px}
+.hub-activity{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px}
+.hub-spinner{display:block;width:20px;height:20px;border:2px solid var(--glass-edge);border-top-color:var(--accent);border-right-color:var(--accent);border-radius:50%;animation:hub-spin .9s linear infinite}
+.hub-cancel{display:grid;place-items:center;width:32px;height:32px;padding:6px;border-radius:50%;flex-shrink:0}
+.hub-cancel svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
+.hub-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.hub-operation-result{font-size:12px;line-height:1.7;margin:0 0 12px;overflow-wrap:anywhere}
+@keyframes hub-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.hub-spinner{animation:none}}
+@media(forced-colors:active){.hub-spinner{border-color:CanvasText;border-top-color:Highlight}}
 .hub-category-filter{display:flex;align-items:flex-end;gap:12px;min-width:140px;flex:1}
 .hub-category-filter.with-repository{flex:2 1 380px;flex-wrap:wrap}
 .hub-repository-button{min-height:40px;max-width:100%;flex:0 1 auto}
@@ -58,8 +66,9 @@
 .hub-skill-row.selected{background:var(--glass-high);box-shadow:inset 3px 0 var(--accent)}
 .hub-skill-row:hover:not(:disabled){background:var(--glass-high)}
 .hub-skill-row:focus-visible{outline-offset:-3px}
-.hub-skill-title{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0}
-.hub-skill-title strong{font-size:13px;overflow-wrap:anywhere}
+.hub-skill-title{display:flex;gap:8px;align-items:center;min-width:0;min-height:20px;line-height:20px}
+.hub-skill-title strong{font-size:13px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hub-skill-origin{font-size:12px;font-weight:400;color:var(--muted);white-space:nowrap;flex-shrink:0}
 .hub-item-type{margin-top:4px}
 .hub-item-categories{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .hub-skill-description{font-size:12px;color:var(--muted);line-height:1.65;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}

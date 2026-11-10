@@ -8,7 +8,6 @@ export default function HarnessHub() {
   const [state, setState] = useState<HubState>();
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
-  const [showCheckingAuthorization, setShowCheckingAuthorization] = useState(false);
   const [selection, setSelection] = useState<Record<string, string[]>>({});
   const pending = useRef(false);
   const initialCheckRequested = useRef(false);
@@ -51,28 +50,11 @@ export default function HarnessHub() {
     finally { setSending(false); }
   };
   const checkingAuthorization = !state || state.checkingAuthorization === true;
-  useEffect(() => {
-    setShowCheckingAuthorization(false);
-    if (!checkingAuthorization) return;
-    let alive = true;
-    const timer = window.setTimeout(async () => {
-      try {
-        // Polling may still contain an already-completed check. Confirm it is
-        // actually running before revealing the delayed progress message.
-        const next = await getHubState();
-        if (!alive) return;
-        setState(next);
-        setShowCheckingAuthorization(next.checkingAuthorization === true);
-      } catch (e) { if (alive) setError(errorText(e)); }
-    }, 500);
-    return () => { alive = false; window.clearTimeout(timer); };
-  }, [checkingAuthorization]);
   const busy = sending || !state || state.busy || checkingAuthorization;
   const chosen = Object.values(selection).reduce((sum, ids) => sum + ids.length, 0);
   const review = state?.review;
   const visibleResults = state?.results.filter(result => state.tools.some(tool => tool.id === result.id && tool.detected)) ?? [];
-  const showProgress = (state?.busy && (!checkingAuthorization || showCheckingAuthorization))
-    || state?.progressMessage?.code === "hub.export_complete" || state?.progressMessage?.code === "hub.cancelled";
+  const installedIn = visibleResults.filter(result => result.outcome === "installed").map(result => result.name).join(", ");
 
   return <div className="harness-hub">
     {state?.deviceCode && <section className="section hub-device" aria-label={t("hub.authorization")}>
@@ -87,9 +69,6 @@ export default function HarnessHub() {
         {tool.status === "RecoveryRequired" && <button type="button" className="secondary" disabled={busy} onClick={() => void run({ action: "recover", harnessId: tool.id })}>{t("hub.recover")}</button>}
       </div>)}
 
-    {showProgress && <div className="hub-progress" role="status"><span>{message(state?.progressMessage) || t("hub.check_tools")}</span>
-      {state?.busy && <button type="button" className="secondary" disabled={sending} onClick={() => void run({ action: "cancel" })}>{t("cancel")}</button>}
-    </div>}
     {(error || state?.error) && <p className="inline-warning" role="alert">{error || message(state?.errorMessage) || t("error.operation")}</p>}
 
     <HubSkillBrowser state={state} busy={busy} run={run} />
@@ -105,13 +84,20 @@ export default function HarnessHub() {
       </div>
     </section>}
 
-    {visibleResults.length > 0 && <section className="section hub-results" aria-label={t("hub.results")}><h2>{t("hub.results")}</h2>
-      {visibleResults.map((result, index) => <div className="hub-result" key={`${result.id}-${index}`}>
-        <div><strong>{result.name}</strong><span className={`hub-badge ${result.outcome === "failed" ? "conflict" : "present"}`}>{t(`hub.status.${result.outcome}`)}</span></div>
-        {result.error ? <p>{message(result.errorMessage) || t("error.operation")}</p> : <p>{t("hub.result_counts", plural("hub.new_files", result.created), result.updated, result.unchanged, result.conflicts)}</p>}
-      </div>)}
-    </section>}
+    {!busy && installedIn && <InstallNotice installedIn={installedIn} />}
+    {!busy && visibleResults.filter(result => result.outcome === "failed" || result.outcome === "partial" || result.outcome === "cancelled").map(result =>
+      <p className="inline-warning" role="alert" key={result.id}>{result.name}: {result.error ? message(result.errorMessage) || t("error.operation") : t("hub.install_conflicts", result.conflicts)}</p>)}
   </div>;
+}
+
+function InstallNotice({ installedIn }: { installedIn: string }) {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    setVisible(true);
+    const timer = window.setTimeout(() => setVisible(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [installedIn]);
+  return visible ? <p className="hub-operation-result" role="status">{t("hub.installed_in", installedIn)}</p> : null;
 }
 
 function ToolReview({ tool, selected, onSelect }: { tool: HubToolReview; selected: string[]; onSelect: (id: string, include: boolean) => void }) {

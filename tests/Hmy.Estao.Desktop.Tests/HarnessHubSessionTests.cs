@@ -10,6 +10,65 @@ namespace Hmy.Estao.Desktop.Tests;
 public sealed class HarnessHubSessionTests
 {
     [Theory]
+    [InlineData(null)]
+    [InlineData("codex")]
+    public async Task DirectSkillInstallationUsesTheChosenTargetsAndIncludesDependencies(string? target)
+    {
+        using var fixture = new Fixture { IncludeExtraSkills = true };
+        using var session = fixture.Session();
+        session.Command(new("install-skill", target, SkillId: "sample"));
+        await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Null(session.State.Review);
+        Assert.False(session.State.Busy);
+        Assert.Equal(target is null ? new[] { "codex", "claude", "copilot" } : [target],
+            session.State.Results.Where(result => result.Outcome == "installed").Select(result => result.Id));
+        foreach (var id in new[] { "codex", "claude" })
+        {
+            Assert.Equal(target is null || target == id, File.Exists(Path.Combine(fixture.Adapter(id).SkillsRoot, "sample", "SKILL.md")));
+            Assert.Equal(target is null || target == id, File.Exists(Path.Combine(fixture.Adapter(id).SkillsRoot, "base", "SKILL.md")));
+            Assert.False(File.Exists(Path.Combine(fixture.Adapter(id).SkillsRoot, "unrelated", "SKILL.md")));
+        }
+    }
+
+    [Fact]
+    public async Task DirectSkillInstallationPreservesLocalConflicts()
+    {
+        using var fixture = new Fixture();
+        var file = Path.Combine(fixture.Adapter("claude").SkillsRoot, "sample", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllTextAsync(file, "Personal skill");
+        using var session = fixture.Session();
+        session.Command(new("install-skill", "claude", SkillId: "sample"));
+        await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Null(session.State.Review);
+        Assert.Equal("Personal skill", await File.ReadAllTextAsync(file));
+        Assert.Contains(session.State.Results, result => result.Id == "claude" && result.Outcome == "partial" && result.Conflicts == 1);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("unknown")]
+    public async Task DirectInstallationRequiresAValidSkill(string? skillId)
+    {
+        using var fixture = new Fixture();
+        using var session = fixture.Session();
+        if (skillId is null)
+            Assert.Throws<ArgumentException>(() => session.Command(new("install-skill", SkillId: skillId)));
+        else
+        {
+            session.Command(new("install-skill", SkillId: skillId));
+            await session.CurrentOperation;
+            Assert.NotNull(session.State.Error);
+        }
+        Assert.Null(session.State.Review);
+        Assert.False(File.Exists(Path.Combine(fixture.Adapter("codex").SkillsRoot, "sample", "SKILL.md")));
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task AuthorizationRemainsUnknownUntilTheInitialCheckCompletes(bool connected)

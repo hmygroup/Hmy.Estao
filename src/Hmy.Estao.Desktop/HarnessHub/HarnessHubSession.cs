@@ -82,6 +82,10 @@ internal sealed class HarnessHubSession : IDisposable
                 if (destination is null) return;
                 var beforeHash = InstallerPaths.FileHash(destination);
                 Start("exporting", ct => ExportAsync(item, exportCommit, destination, beforeHash, ct)); break;
+            case "install-skill":
+                if (string.IsNullOrWhiteSpace(command.SkillId)) throw new ArgumentException("Select a skill to install.").WithUserMessage("hub.select_skill");
+                if (command.HarnessId is not null && !HarnessAdapter.Ids.Contains(command.HarnessId)) throw new ArgumentException("Unknown harness.").WithUserMessage("hub.unknown_tool");
+                Start("preparing", ct => PrepareAsync(command.HarnessId, ct, command.SkillId, installDirectly: true)); break;
             case "review":
                 if (command.HarnessId is not null && !HarnessAdapter.Ids.Contains(command.HarnessId)) throw new ArgumentException("Unknown harness.").WithUserMessage("hub.unknown_tool");
                 Start("preparing", ct => PrepareAsync(command.HarnessId, ct, command.SkillId)); break;
@@ -231,7 +235,7 @@ internal sealed class HarnessHubSession : IDisposable
             ProgressMessage = new("hub.export_complete", Path.GetFileName(destination)) });
     }
 
-    private async Task PrepareAsync(string? harnessId, CancellationToken ct, string? skillId = null)
+    private async Task PrepareAsync(string? harnessId, CancellationToken ct, string? skillId = null, bool installDirectly = false)
     {
         _prepared.Clear();
         Update(s => s with { Review = null, Results = [] });
@@ -293,15 +297,23 @@ internal sealed class HarnessHubSession : IDisposable
         }
         if (harnessId is null)
             results.AddRange(State.Tools.Where(t => !t.Detected).Select(t => new HubResult(t.Id, t.Name, "skipped", 0, 0, 0, 0, "Tool not installed.", new("hub.not_installed"))));
-        Update(s => s with { Review = reviews.Count == 0 ? null : new(Guid.NewGuid().ToString("N"), commit!, reviews),
+        var review = reviews.Count == 0 ? null : new HubReview(Guid.NewGuid().ToString("N"), commit!, reviews);
+        Update(s => s with { Review = installDirectly ? null : review,
             Results = results, Progress = reviews.Count == 0 ? "No installation could be prepared. Review the results below." : "Review the skills before installing. Nothing has been written yet.", ProgressMessage = new(reviews.Count == 0 ? "hub.prepare_failed" : "hub.review_ready") });
+        if (installDirectly && review is not null)
+        {
+            ct.ThrowIfCancellationRequested();
+            Update(s => s with { Phase = "installing", CheckingAuthorization = false, ProgressMessage = new("hub.working") });
+            await InstallAsync(review.Tools.ToDictionary(tool => tool.Id, tool => _prepared[tool.Id].Snapshot.Files
+                .Select(file => file.ArtifactId).Distinct(StringComparer.Ordinal).ToArray()), ct, review);
+        }
     }
 
-    private async Task InstallAsync(Dictionary<string, string[]> selection, CancellationToken ct)
+    private async Task InstallAsync(Dictionary<string, string[]> selection, CancellationToken ct, HubReview? review = null)
     {
         var results = State.Results.ToList();
         var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var tool in State.Review!.Tools)
+        foreach (var tool in (review ?? State.Review!).Tools)
         {
             ct.ThrowIfCancellationRequested();
             if (!selection.TryGetValue(tool.Id, out var ids) || ids.Length == 0) continue;
