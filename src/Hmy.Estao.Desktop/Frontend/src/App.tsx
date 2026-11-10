@@ -274,15 +274,19 @@ function Popover({ state, reload }: { state: DesktopState; reload: () => Promise
     <nav className="provider-tabs" aria-label={t("providers")}>{state.snapshots.map(s => <button key={s.provider} title={s.displayName}
       aria-label={s.displayName} aria-current={snapshot?.provider === s.provider ? "page" : undefined}
        className={snapshot?.provider === s.provider ? "active" : ""} onClick={() => setSelected(s.provider)}><Icon id={s.provider} /></button>)}</nav>
-     <button className="icon-button popover-settings" aria-label={t("open_settings")} title={t("open_settings")} onClick={() => void run("settings")}>
+      <button className="icon-button popover-settings" aria-label={t("open_settings")} title={t("open_settings")} onClick={() => void run("settings")}>
        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
          <path d="m9 3-.5 2.1-1.8 1L4.6 6 3 9l1.5 1.5v3L3 15l1.6 3 2.1-.1 1.8 1L9 21h6l.5-2.1 1.8-1 2.1.1 1.6-3-1.5-1.5v-3L21 9l-1.6-3-2.1.1-1.8-1L15 3Z" />
-         <circle cx="12" cy="12" r="3" /></svg></button>
+          <circle cx="12" cy="12" r="3" /></svg></button>
+      <button className="icon-button popover-refresh" aria-label={t(busy ? "refreshing" : "refresh.action")} title={t(busy ? "refreshing" : "refresh.action")} disabled={busy} onClick={() => void run("refresh")}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6.5L20 12M4 12l2 5.5A7 7 0 0 0 18.4 15"/>
+        </svg>
+      </button>
     </header>
     <main className="popover-content">{snapshot ? <>
       <div className="snapshot-heading"><h1>{snapshot.displayName}</h1>
-        <p>{[formatMessage(snapshot.accountMessage) || snapshot.account, snapshot.plan].filter(Boolean).join(" · ")}</p>
-        <p className="snapshot-source">{t("usage.source", sourceName(snapshot.source))}</p></div>
+        <p>{[formatMessage(snapshot.accountMessage) || snapshot.account, snapshot.plan, t("usage.source", sourceName(snapshot.source))].filter(Boolean).join(" · ")}</p></div>
       {accounts.length > 1 && <Field label={t("account")}><select onChange={e => void run("account", snapshot.provider, Number(e.target.value))} defaultValue="" disabled={busy}>
         <option value="" disabled>{t("account.switch")}</option>{accounts.map(a => <option key={a.index} value={a.index}>{formatMessage(a.labelMessage) || a.label}</option>)}</select></Field>}
       {snapshot.error ? <div className="inline-warning">{formatMessage(snapshot.errorMessage) || t("error.provider", snapshot.displayName)}<p>{snapshot.retryAt ? retryCountdown(snapshot.retryAt)
@@ -301,7 +305,6 @@ function Popover({ state, reload }: { state: DesktopState; reload: () => Promise
         <button className="secondary" disabled={busy} onClick={() => void run("settings")}>{t("settings")}</button>
         <button className="secondary quit-action" disabled={busy} onClick={() => void run("quit")}>{t("tray.quit")}</button>
       </nav>
-    </main><footer className="popover-footer"><small title={snapshot ? dateTime(snapshot.updatedAt) : undefined}>{snapshot ? t("updated", time(snapshot.updatedAt)) : ""}</small>
-      <button className="secondary" disabled={busy} onClick={() => void run("refresh")}>{t(busy ? "refreshing" : "refresh.action")}</button></footer>
+    </main>
   </div>;
 }

@@ -17,6 +17,13 @@ test('popover actions are inside the scrollable content, after the charts', () =
   for (const action of ['usage-dashboard', 'status-page', 'settings', 'quit']) assert.ok(content.includes(`run("${action}"`));
 });
 
+test('popover shows source beside account details and refreshes from the toolbar without a footer', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  assert.match(app, /formatMessage\(snapshot\.accountMessage\)[\s\S]*?t\("usage\.source", sourceName\(snapshot\.source\)\)/);
+  assert.match(app, /className="icon-button popover-refresh"[\s\S]*?run\("refresh"\)/);
+  assert.doesNotMatch(app, /<footer className="popover-footer"/);
+});
+
 test('samples use the whole cycle scale instead of stretching first and last readings across the chart', () => {
   const coords = chartCoordinates([point(2, .2), point(3, .4)], start, end, end);
   assert.equal(coords[0].x, 12 + 2 / 5 * 332);
