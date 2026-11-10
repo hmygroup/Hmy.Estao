@@ -23,7 +23,7 @@ public sealed class UsageChartTests
         Assert.Equal(weeklyReset.AddDays(-7), charts[1].StartAt);
         Assert.Equal(weeklyReset, charts[1].EndAt);
         Assert.Equal(new[] { "5h", "7d" }, charts.Select(c => c.Range));
-        Assert.All(charts, c => Assert.Single(Assert.Single(c.Series).Points)); // No invented preview history or zero boundary.
+        Assert.All(charts, c => Assert.Single(Assert.Single(c.Series, s => s.Kind == "usage").Points)); // No invented preview history or zero boundary.
     }
 
     [Fact]
@@ -37,12 +37,63 @@ public sealed class UsageChartTests
         Assert.Equal(2, chart.Series.Count(s => s.Kind == "usage"));
         var target = Assert.Single(chart.Series, s => s.Kind == "target");
         Assert.Equal(PacingCalculator.BuildTargetLine(chart.StartAt, reset, 100), target.Points);
-        var forecast = UsageExhaustionCalculator.Compute(chart.Series[0].Points, .6, TimeSpan.FromHours(5), Now, reset)!;
+        var forecast = UsageExhaustionCalculator.Compute(chart.Series.First(s => s.Kind == "usage" && s.Window == "session").Points, .6, TimeSpan.FromHours(5), Now, reset)!;
         Assert.Equal(forecast.EstimatedAt, chart.Forecast.At);
         Assert.False(chart.Forecast.ResetOccursFirst);
         var projection = Assert.Single(chart.Series, s => s.Kind == "projection");
         Assert.Equal(Now, projection.Points[0].Timestamp);
         Assert.True(projection.Points[^1].Timestamp <= reset);
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(false, 15)]
+    [InlineData(true, 0)]
+    public void FreshForecastProjectsWithoutAnEnabledDailyTarget(bool enabled, double target)
+    {
+        var reset = Now.AddHours(2);
+        var snapshot = new UsageSnapshot("claude", "Claude", "oauth", Now,
+            [new("session", "Session", .4, reset)]);
+        UsageHistoryPoint[] history = [new("claude", "session", Now.AddHours(-2), .1), new("claude", "session", Now.AddHours(-1), .2)];
+
+        var chart = Assert.Single(UsageChartBuilder.Build(snapshot, history,
+            new() { Enabled = enabled, DailyTargetPercent = target }, Now));
+
+        var projection = Assert.Single(chart.Series, s => s.Kind == "projection");
+        Assert.Equal(Now, projection.Points[0].Timestamp);
+        Assert.Equal(.4, projection.Points[0].Value);
+        Assert.Equal(reset, projection.Points[^1].Timestamp);
+        Assert.DoesNotContain(chart.Series, s => s.Kind == "target");
+    }
+
+    [Fact]
+    public void ProjectionStopsAtExhaustionWhenItPrecedesReset()
+    {
+        var reset = Now.AddHours(4);
+        var snapshot = new UsageSnapshot("claude", "Claude", "oauth", Now,
+            [new("session", "Session", .8, reset)]);
+        UsageHistoryPoint[] history = [new("claude", "session", Now.AddHours(-2), .1), new("claude", "session", Now.AddHours(-1), .2)];
+
+        var chart = Assert.Single(UsageChartBuilder.Build(snapshot, history, new(), Now));
+        var projection = Assert.Single(chart.Series, s => s.Kind == "projection");
+
+        Assert.True(projection.Points[^1].Timestamp < reset);
+        Assert.Equal(1D, projection.Points[^1].Value);
+    }
+
+    [Fact]
+    public void NoRateOrNoFutureResetDoesNotProject()
+    {
+        var noRate = new UsageSnapshot("claude", "Claude", "oauth", Now,
+            [new("session", "Session", 0D, Now.AddHours(2))]);
+        var noRateChart = Assert.Single(UsageChartBuilder.Build(noRate, [], new(), Now));
+        Assert.DoesNotContain(noRateChart.Series, s => s.Kind == "projection");
+
+        var noReset = new UsageSnapshot("claude", "Claude", "oauth", Now,
+            [new("session", "Session", .4, null)]);
+        UsageHistoryPoint[] history = [new("claude", "session", Now.AddHours(-1), .2)];
+        var noResetChart = Assert.Single(UsageChartBuilder.Build(noReset, history, new(), Now));
+        Assert.DoesNotContain(noResetChart.Series, s => s.Kind == "projection");
     }
 
     [Fact]
@@ -54,7 +105,7 @@ public sealed class UsageChartTests
             new("claude", "session", Now.AddHours(-6), .2), new("claude", "session", Now.AddMinutes(2), .7),
             new("claude", "session", Now.AddMinutes(-20), double.NaN), new("claude", "session", Now.AddMinutes(-10), .4)];
         var chart = Assert.Single(UsageChartBuilder.Build(snapshot, history, new(), Now));
-        var points = Assert.Single(chart.Series).Points;
+        var points = Assert.Single(chart.Series, s => s.Kind == "usage").Points;
         Assert.Equal(new[] { .4, .5 }, points.Select(p => p.Value));
         Assert.Equal(Now, points[^1].Timestamp);
     }

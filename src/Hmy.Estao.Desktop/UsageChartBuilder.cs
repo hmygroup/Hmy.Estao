@@ -52,10 +52,12 @@ internal static class UsageChartBuilder
             var forecast = snapshot.Error is null && !snapshot.IsStale && observedAt >= start
                 ? UsageExhaustionCalculator.Compute(actual.Points, reference.PercentUsed, cycle.Key.Range, observedAt, reference.ResetAt)
                 : null;
-            if (forecast is not null && pacing.Enabled && pacing.DailyTargetPercent > 0 && cycle.Key.Reset is { } resetAt)
+            if (forecast is not null && cycle.Key.Reset is { } resetAt)
             {
                 var trend = UsageTrendCalculator.Compute(reference.PercentUsed ?? actual.Points.LastOrDefault().Value,
-                    forecast.DailyConsumptionRate, pacing.DailyTargetPercent, start, observedAt, resetAt);
+                    forecast.DailyConsumptionRate,
+                    pacing.Enabled && pacing.DailyTargetPercent > 0 ? pacing.DailyTargetPercent : 0D,
+                    start, observedAt, resetAt);
                 if (trend is not null)
                     series.Add(new(reference.Id, new("chart.trend"), trend.Line, "projection"));
             }
