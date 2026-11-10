@@ -25,6 +25,12 @@ export interface Snapshot {
   accountMessage?: UserMessage | null;
 }
 export interface HistoryPoint { provider: string; window: string; timestamp: string; percentUsed: number }
+export interface ChartPoint { timestamp: string; value: number }
+export interface ChartSeries { window: string; label: UserMessage; points: ChartPoint[]; kind: "usage" | "target" | "projection"; colorIndex: number }
+export interface UsageChart {
+  provider: string; startAt: string; endAt: string; observedAt: string; nowAt: string; range: string; series: ChartSeries[];
+  forecast: { label: UserMessage; at: string | null; resetOccursFirst: boolean; unavailable: boolean };
+}
 export interface SettingsUpdate {
   theme: string;
   language?: string;
@@ -32,6 +38,7 @@ export interface SettingsUpdate {
   overlayEnabled: boolean; overlayProviderIds: string[]; launchAtSignIn: boolean;
 }
 export interface DesktopState extends SettingsUpdate {
+  charts?: UsageChart[] | null;
   effectiveLanguage?: string;
   providerSignIn?: { provider: string; pending: boolean; userCode: string | null; message: string; isError?: boolean; messageInfo?: UserMessage; operation?: string } | null;
   statusMessage?: UserMessage | null;

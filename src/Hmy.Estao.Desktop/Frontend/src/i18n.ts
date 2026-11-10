@@ -37,7 +37,10 @@ export function message(value?: UserMessage | null): string {
 }
 export const number = (value: number) => new Intl.NumberFormat(language).format(value);
 export const percent = (value: number) => new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 0 }).format(value);
-export const dateTime = (value: string) => new Date(value).toLocaleString(language);
+// Dates are always day-first; time and timezone retain the user's local behavior.
+export const date = (value: string | number, withYear = true) => new Date(value).toLocaleDateString("en-GB",
+  { day: "2-digit", month: "2-digit", ...(withYear ? { year: "numeric" as const } : {}) });
+export const dateTime = (value: string) => `${date(value)}, ${new Date(value).toLocaleTimeString(language)}`;
 export function retryCountdown(value: string, now = Date.now()): string {
   const remaining = Date.parse(value) - now;
   if (!Number.isFinite(remaining)) return t("usage.retry_later");

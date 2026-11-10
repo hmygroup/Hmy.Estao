@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { command, getState, saveSettings, signInProvider, WindowControls } from "./nativeHost";
-import type { DesktopState, HistoryPoint, Provider, RateWindow, SettingsUpdate, UsageAlerts } from "./types";
+import type { DesktopState, Provider, RateWindow, SettingsUpdate, UsageAlerts } from "./types";
+import UsageChart from "./UsageChart";
 import { applyTheme, cachedTheme, cacheTheme, resolveTheme } from "./themes";
 import ThemePicker from "./themes/ThemePicker";
 import HarnessHub from "./HarnessHub";
@@ -245,21 +246,15 @@ function resetText(value: string | null) {
   return !mins ? t("reset.due") : t("reset.in", mins >= 1440 ? t("duration.days", Math.floor(mins / 1440), Math.floor(mins % 1440 / 60))
     : mins >= 60 ? t("duration.hours", Math.floor(mins / 60), mins % 60) : t("duration.minutes", mins));
 }
-function WindowUsage({ window: w, alerts, points }: { window: RateWindow; alerts: UsageAlerts; points: HistoryPoint[] }) {
+function WindowUsage({ window: w, alerts }: { window: RateWindow; alerts: UsageAlerts }) {
   const used = w.percentUsed === null ? null : Math.min(1, Math.max(0, w.percentUsed));
   const color = usageColor(alerts, used);
-  const sorted = points.toSorted((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-  const first = sorted[0] ? Date.parse(sorted[0].timestamp) : 0;
-  const last = sorted.at(-1) ? Date.parse(sorted.at(-1)!.timestamp) : 0;
-  const coords = sorted.map(p => `${4 + (Date.parse(p.timestamp) - first) / Math.max(1, last - first) * 332},${57 - Math.min(1, Math.max(0, p.percentUsed)) * 50}`).join(" ");
   const title = formatMessage(w.titleMessage) || windowTitle(w.id);
   return <section className="usage-window"><div className="usage-window-header"><div><h3>{title}</h3><small title={w.resetAt ? dateTime(w.resetAt) : undefined}>{resetText(w.resetAt)}</small></div>
     <strong style={{ color }}>{used === null ? "—" : percent(used)}<small>{t("used")}</small></strong></div>
     <div className="meter" role="progressbar" aria-label={t("window.usage", title)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={used === null ? undefined : used * 100}>
       <div style={{ width: `${(used || 0) * 100}%`, background: color }} /></div>
     {w.used !== null && <p className="footnote">{number(w.used)}{w.limit !== null ? ` / ${number(w.limit)}` : ""} {formatMessage(w.unitMessage) || w.unit}</p>}
-    {sorted.length > 1 && <svg className="history-chart" viewBox="0 0 340 64" role="img" aria-label={t("window.history", title)}>
-      <path d="M4 57 H336" stroke="var(--border)" /><polyline points={coords} fill="none" stroke={color} strokeWidth="2" /></svg>}
   </section>;
 }
 function Popover({ state, reload }: { state: DesktopState; reload: () => Promise<void> }) {
@@ -279,25 +274,35 @@ function Popover({ state, reload }: { state: DesktopState; reload: () => Promise
     <nav className="provider-tabs" aria-label={t("providers")}>{state.snapshots.map(s => <button key={s.provider} title={s.displayName}
       aria-label={s.displayName} aria-current={snapshot?.provider === s.provider ? "page" : undefined}
        className={snapshot?.provider === s.provider ? "active" : ""} onClick={() => setSelected(s.provider)}><Icon id={s.provider} /></button>)}</nav>
-    <button className="icon-button popover-settings" aria-label={t("open_settings")} title={t("open_settings")} onClick={() => void run("settings")}>⚙</button>
+     <button className="icon-button popover-settings" aria-label={t("open_settings")} title={t("open_settings")} onClick={() => void run("settings")}>
+       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+         <path d="m9 3-.5 2.1-1.8 1L4.6 6 3 9l1.5 1.5v3L3 15l1.6 3 2.1-.1 1.8 1L9 21h6l.5-2.1 1.8-1 2.1.1 1.6-3-1.5-1.5v-3L21 9l-1.6-3-2.1.1-1.8-1L15 3Z" />
+         <circle cx="12" cy="12" r="3" /></svg></button>
     </header>
     <main className="popover-content">{snapshot ? <>
-      <div className="snapshot-heading"><span className="eyebrow">{t("provider_usage")}</span><h1>{snapshot.displayName}</h1>
-        <p>{[formatMessage(snapshot.accountMessage) || snapshot.account, snapshot.plan].filter(Boolean).join(" · ") || sourceName(snapshot.source)}</p></div>
+      <div className="snapshot-heading"><h1>{snapshot.displayName}</h1>
+        <p>{[formatMessage(snapshot.accountMessage) || snapshot.account, snapshot.plan].filter(Boolean).join(" · ")}</p>
+        <p className="snapshot-source">{t("usage.source", sourceName(snapshot.source))}</p></div>
       {accounts.length > 1 && <Field label={t("account")}><select onChange={e => void run("account", snapshot.provider, Number(e.target.value))} defaultValue="" disabled={busy}>
         <option value="" disabled>{t("account.switch")}</option>{accounts.map(a => <option key={a.index} value={a.index}>{formatMessage(a.labelMessage) || a.label}</option>)}</select></Field>}
       {snapshot.error ? <div className="inline-warning">{formatMessage(snapshot.errorMessage) || t("error.provider", snapshot.displayName)}<p>{snapshot.retryAt ? retryCountdown(snapshot.retryAt)
         : snapshot.errorMessage?.code === "error.claude_rate_limited" ? t("usage.retry_later") : t("provider.check")}</p></div> : null}
       {(!snapshot.error || snapshot.isStale) && <>
         {snapshot.isStale && !snapshot.error && <p className="inline-warning">{t("usage.stale")}</p>}
-        {snapshot.windows.map(w => <WindowUsage key={w.id} window={w} alerts={state.usageAlerts}
-          points={state.history.filter(p => p.provider === snapshot.provider && p.window === w.id)} />)}
+        {snapshot.windows.map(w => <WindowUsage key={w.id} window={w} alerts={state.usageAlerts} />)}
         {!snapshot.windows.length && <p>{t("usage.no_windows")}</p>}
         {snapshot.credits && <div className="credits">{t("credits")} <strong>{snapshot.credits.unlimited ? t("unlimited") : `${snapshot.credits.balance == null ? "—" : number(snapshot.credits.balance)} ${snapshot.credits.unit || ""}`}</strong></div>}
       </>}
+      {state.charts?.filter(c => c.provider === snapshot.provider).map((chart, index) => <UsageChart key={`${snapshot.provider}-${index}`} chart={chart} />)}
     </> : <div className="empty-state"><h2>{t("usage.empty")}</h2><p>{t("usage.get_started")}</p><button className="primary" onClick={() => void run("settings")}>{t("open_settings")}</button></div>}
       {error && <p role="alert" className="inline-warning">{error}</p>}
-    </main><footer className="popover-footer"><small>{snapshot ? t("updated", time(snapshot.updatedAt)) : ""}</small>
+      <nav className="popover-actions" aria-label={t("usage.actions")}>
+        <button className="secondary" disabled={busy || !snapshot} onClick={() => void run("usage-dashboard", snapshot?.provider)}>{t("usage.dashboard")}</button>
+        <button className="secondary" disabled={busy || !snapshot} onClick={() => void run("status-page", snapshot?.provider)}>{t("usage.status_page")}</button>
+        <button className="secondary" disabled={busy} onClick={() => void run("settings")}>{t("settings")}</button>
+        <button className="secondary quit-action" disabled={busy} onClick={() => void run("quit")}>{t("tray.quit")}</button>
+      </nav>
+    </main><footer className="popover-footer"><small title={snapshot ? dateTime(snapshot.updatedAt) : undefined}>{snapshot ? t("updated", time(snapshot.updatedAt)) : ""}</small>
       <button className="secondary" disabled={busy} onClick={() => void run("refresh")}>{t(busy ? "refreshing" : "refresh.action")}</button></footer>
   </div>;
 }

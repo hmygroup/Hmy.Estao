@@ -29,4 +29,5 @@ internal sealed record DesktopState(string View, string? SelectedProvider, List<
     UsageColorConfig UsageAlerts, RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds,
     bool LaunchAtSignIn, IReadOnlyList<UsageSnapshot> Snapshots, IReadOnlyList<UsageHistoryPoint> History,
     Dictionary<string, List<AccountChoice>> Accounts, string? Status, string Theme, ProviderSignInState? ProviderSignIn = null,
-    string Language = "system", UserMessage? StatusMessage = null, string EffectiveLanguage = "en");
+    string Language = "system", UserMessage? StatusMessage = null, string EffectiveLanguage = "en",
+    IReadOnlyList<UsageChart>? Charts = null);

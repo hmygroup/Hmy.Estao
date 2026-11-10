@@ -1,0 +1,16 @@
+.usage-history{padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;min-width:0;font-variant-numeric:tabular-nums}
+.usage-history>header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.chart-subtitle{font-size:12px;margin-top:5px}
+.chart-forecast{font-size:12px;margin-top:8px;color:var(--text);overflow-wrap:anywhere}
+.chart-legend{display:flex;flex-wrap:wrap;gap:6px 14px;list-style:none;padding:0;margin:12px 0 4px;font-size:12px;color:var(--muted)}
+.chart-legend li{display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
+.chart-legend svg{flex-shrink:0}
+.usage-history-plot{display:block;width:100%;height:auto;overflow:visible}
+.usage-history-plot text{fill:var(--muted);font-size:14.5px}
+.chart-grid{stroke:var(--border);stroke-dasharray:2 4;stroke-opacity:.65}
+.chart-now line{stroke:var(--muted);stroke-dasharray:4 4;stroke-opacity:.7}
+.chart-sample{opacity:0}.chart-sample:hover{opacity:1}
+.snapshot-source{font-size:12px!important;color:var(--muted);margin-top:6px}
+.popover-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}
+.popover-actions button{font-size:12px;min-height:36px;overflow-wrap:anywhere}
+@media(forced-colors:active){.usage-history-plot polyline,.chart-legend line{stroke:CanvasText}.usage-history-plot circle{fill:CanvasText}.usage-history-plot text{fill:CanvasText}.chart-grid,.chart-now line{stroke:CanvasText}}

@@ -77,9 +77,19 @@ test('French text, branding, errors and regional formatting work without native 
   assert.equal(i18n.message({ code: 'error.http', arguments: ['Claude', 401] }), 'Claude a renvoyé le code HTTP 401.');
   assert.equal(i18n.number(1234.5), new Intl.NumberFormat('fr').format(1234.5));
   assert.equal(i18n.percent(.42), new Intl.NumberFormat('fr', { style: 'percent', maximumFractionDigits: 0 }).format(.42));
-  const date = '2026-11-07T12:34:00Z';
-  assert.equal(i18n.dateTime(date), new Date(date).toLocaleString('fr'));
+  const date = new Date(2026, 10, 7, 12, 34).toISOString();
+  assert.equal(i18n.dateTime(date), `07/11/2026, ${new Date(date).toLocaleTimeString('fr')}`);
   assert.equal(i18n.time(date), new Date(date).toLocaleTimeString('fr', { hour: '2-digit', minute: '2-digit' }));
+});
+test('dates are always dd/MM/yyyy across languages, preserving local time and compact day-first chart labels', () => {
+  const value = new Date(2026, 10, 7, 11, 57, 45).toISOString();
+  for (const language of ['en', 'es', 'fr']) {
+    i18n.setLanguage(language);
+    assert.equal(i18n.date(value), '07/11/2026');
+    assert.equal(i18n.date(Date.parse(value), false), '07/11');
+    assert.equal(i18n.dateTime(value), `07/11/2026, ${new Date(value).toLocaleTimeString(language)}`);
+    assert.equal(i18n.date(new Date(2026, 0, 2).toISOString()), '02/01/2026');
+  }
 });
 test('French plurals handle zero, singular, plural and the million category', () => {
   i18n.setLanguage('fr');

@@ -222,7 +222,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return new DesktopState(view, _selectedProvider, providers, _config.UsageAlerts!, _config.Refresh,
             _config.TaskbarOverlay.Enabled, _config.TaskbarOverlay.ProviderIds, StartupManager.Enabled,
             _service.LastSnapshots, view == "popover" ? _service.History : [], accounts, _status,
-            DesktopThemeCatalog.Resolve(_config.Theme).Id, view == "settings" ? _providerSignIn : null, DesktopLocalization.Preference(_config.Language), _statusMessage, DesktopLocalization.Language);
+            DesktopThemeCatalog.Resolve(_config.Theme).Id, view == "settings" ? _providerSignIn : null, DesktopLocalization.Preference(_config.Language), _statusMessage, DesktopLocalization.Language,
+            view == "popover" ? _service.LastSnapshots.SelectMany(s => UsageChartBuilder.Build(s, _service.History,
+                _config.Providers.First(p => p.Id == s.Provider).Pacing, DateTimeOffset.UtcNow)).ToArray() : null);
     }
 
     private async Task SaveSettingsAsync(SettingsUpdate update)
@@ -317,6 +319,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             case "refresh": await RefreshAsync(); break;
             case "settings": _overlay.BeginInvoke(ShowSettings); break;
+            case "usage-dashboard": _openBrowser(ProviderLinks.Dashboard(command.Provider ?? "")); break;
+            case "status-page": _openBrowser(ProviderLinks.Status(command.Provider ?? "")); break;
+            case "quit": _overlay.BeginInvoke(ExitThread); break;
             case "close": _overlay.BeginInvoke(() => _popover?.Close()); break;
             case "account":
                 await _saveGate.WaitAsync();
