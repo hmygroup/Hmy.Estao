@@ -83,14 +83,15 @@ public sealed class HarnessHubSessionTests
         using var session = fixture.Session();
         session.Command(new("check")); await session.CurrentOperation;
         Assert.True(session.State.Connected);
+        fixture.Requests.Clear();
         session.Command(new("review")); await session.CurrentOperation;
         var review = Assert.IsType<HubReview>(session.State.Review);
         Assert.Equal(3, review.Tools.Count);
         Assert.Equal("conflict", Assert.Single(review.Tools.Single(t => t.Id == "claude").Artifacts).Status);
         Assert.Equal("new", Assert.Single(review.Tools.Single(t => t.Id == "codex").Artifacts).Status);
         Assert.Contains(session.State.Results, r => r.Id == "opencode" && r.Outcome == "skipped");
-        Assert.Equal(2, fixture.Requests.Count(r => r.EndsWith("/commits/main", StringComparison.Ordinal)));
-        Assert.Equal(2, fixture.Requests.Count(r => r.EndsWith("/commits/" + Fixture.Commit, StringComparison.Ordinal)));
+        Assert.DoesNotContain(fixture.Requests, r => r.EndsWith("/commits/main", StringComparison.Ordinal));
+        Assert.Contains(fixture.Requests, r => r.EndsWith("/commits/" + Fixture.Commit, StringComparison.Ordinal));
         Assert.False(File.Exists(Path.Combine(fixture.Adapter("codex").SkillsRoot, "sample", "SKILL.md")));
 
         session.Command(new("install", ReviewId: review.Id, Selection: review.Tools.ToDictionary(t => t.Id, _ => new[] { "sample" })));
@@ -168,13 +169,13 @@ public sealed class HarnessHubSessionTests
     }
 
     [Fact]
-    public async Task SkillReviewOnlyTargetsDeclaredCompatibleHarnesses()
+    public async Task StandardSkillsCanBeReviewedForAllDetectedToolsWithoutAuthoredHarnessLists()
     {
-        using var fixture = new Fixture { SkillHarnesses = ["codex"] };
+        using var fixture = new Fixture();
         using var session = fixture.Session();
         session.Command(new("review", SkillId: "sample")); await session.CurrentOperation;
         var review = Assert.IsType<HubReview>(session.State.Review);
-        Assert.Equal(["codex"], review.Tools.Select(tool => tool.Id));
+        Assert.Equal(["codex", "claude", "copilot"], review.Tools.Select(tool => tool.Id));
         Assert.DoesNotContain(session.State.Results, result => result.Outcome == "failed");
     }
 
@@ -215,6 +216,96 @@ public sealed class HarnessHubSessionTests
     }
 
     [Fact]
+    public async Task CatalogIncludesLocalizedSkillsInstructionsAndFilesWithoutInventedCompatibilityWarnings()
+    {
+        using var fixture = new Fixture { IncludeFileItems = true };
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        Assert.Null(session.State.CatalogError);
+        Assert.Equal("en", session.State.CatalogDefaultLanguage);
+        Assert.Equal("General", session.State.CatalogCategories!["core"]["es"]);
+        Assert.Equal(["file", "instruction", "skill"], session.State.Skills!.Select(item => item.ItemType).Order());
+        Assert.All(session.State.Skills!, item =>
+        {
+            Assert.True(item.Curated);
+            Assert.Equal(["core"], item.Categories);
+            Assert.NotNull(item.Descriptions!["es"]);
+            Assert.Null(item.Issue);
+            Assert.Equal(item.ItemType == "skill", item.Installable);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingOrInvalidManifestLeavesOtherSkillsReviewable(bool invalid)
+    {
+        using var fixture = new Fixture { OmitManifest = !invalid, InvalidManifest = invalid };
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        Assert.True(session.State.LibraryLoaded);
+        Assert.NotNull(session.State.CatalogError);
+        var skill = Assert.Single(session.State.Skills!);
+        Assert.False(skill.Curated);
+        Assert.True(skill.InLibrary);
+        Assert.True(skill.Installable);
+        Assert.Null(skill.Issue);
+        session.Command(new("review", "codex", SkillId: skill.Id)); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        Assert.Equal(skill.Id, Assert.Single(Assert.Single(session.State.Review!.Tools).Artifacts).Id);
+    }
+
+    [Fact]
+    public async Task CatalogIdsAreIndependentOfSkillFolderNamesForLocalMatchingAndReview()
+    {
+        using var fixture = new Fixture { SampleId = "curated-sample" };
+        var file = Path.Combine(fixture.Adapter("codex").SkillsRoot, "sample", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllTextAsync(file, "---\nname: sample\ndescription: Personal copy\n---\n");
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        var item = Assert.Single(session.State.Skills!);
+        Assert.Equal("curated-sample", item.Id);
+        Assert.Equal(2, item.Occurrences.Count);
+        session.Command(new("review", "codex", SkillId: item.Id)); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        var artifact = Assert.Single(Assert.Single(session.State.Review!.Tools).Artifacts);
+        Assert.Equal(item.Id, artifact.Id);
+        Assert.All(artifact.Files, file => Assert.Contains(Path.Combine("sample", "SKILL.md"), file.Path));
+    }
+
+    [Fact]
+    public async Task CatalogFileExportUsesChosenDestinationAndPinnedSnapshotWithoutConfigInstallation()
+    {
+        using var fixture = new Fixture { IncludeFileItems = true };
+        var destination = Path.Combine(fixture.Directory, "exported.json");
+        Directory.CreateDirectory(fixture.Directory);
+        using var session = fixture.Session(exportDestination: _ => destination);
+        session.Command(new("check")); await session.CurrentOperation;
+        fixture.Requests.Clear();
+        session.Command(new("export-item", SkillId: "example-template")); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        Assert.Equal("{\"sample\":true}", await File.ReadAllTextAsync(destination));
+        Assert.DoesNotContain(fixture.Requests, request => request.EndsWith("/commits/main", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(fixture.Adapter("codex").SkillsRoot));
+        Assert.Throws<ArgumentException>(() => session.Command(new("export-item", SkillId: "sample")));
+    }
+
+    [Fact]
+    public async Task CancelledSaveDialogDoesNotDownloadOrWriteCatalogFiles()
+    {
+        using var fixture = new Fixture { IncludeFileItems = true };
+        using var session = fixture.Session(exportDestination: _ => null);
+        session.Command(new("check")); await session.CurrentOperation;
+        fixture.Requests.Clear();
+        session.Command(new("export-item", SkillId: "database-instructions"));
+        Assert.False(session.State.Busy);
+        Assert.Empty(fixture.Requests);
+    }
+
+    [Fact]
     public async Task MissingToolsCannotBePreparedAndCancellationAllowsAnotherOperation()
     {
         using var fixture = new Fixture();
@@ -243,12 +334,16 @@ public sealed class HarnessHubSessionTests
         public bool DenyAccess { get; set; }
         public bool BlockReads { get; set; }
         public bool FailTree { get; set; }
-        public string[] SkillHarnesses { get; set; } = ["codex", "claude", "copilot", "opencode"];
         public bool IncludeExtraSkills { get; set; }
+        public bool IncludeFileItems { get; set; }
+        public bool OmitManifest { get; set; }
+        public bool InvalidManifest { get; set; }
+        public string SampleId { get; set; } = "sample";
         public HarnessAdapter Adapter(string id) => new(id, Path.Combine(Directory, "home"), _ => null);
-        public HarnessHubSession Session(string token = "fake-test-token", Func<CancellationToken, Task<IReadOnlyList<string>>>? candidates = null) => new(Path.Combine(Directory, "config.json"),
+        public HarnessHubSession Session(string token = "fake-test-token", Func<CancellationToken, Task<IReadOnlyList<string>>>? candidates = null,
+            Func<HubSkill, string?>? exportDestination = null) => new(Path.Combine(Directory, "config.json"),
             new HttpClient(new Handler(this)), id => id != "opencode", Adapter,
-            candidates ?? (_ => Task.FromResult<IReadOnlyList<string>>([token])));
+            candidates ?? (_ => Task.FromResult<IReadOnlyList<string>>([token])), exportDestination);
 
         private HttpResponseMessage Respond(HttpRequestMessage request)
         {
@@ -257,32 +352,42 @@ public sealed class HarnessHubSessionTests
             if (DenyAccess) return new(HttpStatusCode.Forbidden) { Content = new StringContent("{}") };
             if (FailTree && path.Contains("/git/trees/", StringComparison.Ordinal)) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
             var skill = Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n---\nFixture, never execute.\n");
-            var sourceManifest = new SourceManifest
+            object CatalogItem(string id, string type, string source, string[]? dependencies = null) => new
             {
-                Artifacts = [new() { Id = "sample", Source = "skills/sample", Harnesses = SkillHarnesses.ToList(),
-                    Dependencies = IncludeExtraSkills ? ["base"] : [] }]
+                id, type, path = source, categories = "core",
+                description = new Dictionary<string, string> { ["en"] = "Catalog " + id, ["es"] = "Catálogo " + id },
+                dependencies = dependencies ?? []
             };
+            var items = new List<object> { CatalogItem(SampleId, "skill", "skills/sample", IncludeExtraSkills ? ["base"] : []) };
             var extras = new Dictionary<string, byte[]>();
             if (IncludeExtraSkills)
                 foreach (var id in new[] { "base", "unrelated" })
                 {
                     extras["skills/" + id + "/SKILL.md"] = Encoding.UTF8.GetBytes($"---\nname: {id}\ndescription: Test skill\n---\n");
-                    sourceManifest.Artifacts.Add(new() { Id = id, Source = "skills/" + id, Harnesses = SkillHarnesses.ToList() });
+                    items.Add(CatalogItem(id, "skill", "skills/" + id));
                 }
-            var manifest = JsonSerializer.SerializeToUtf8Bytes(sourceManifest, InstallerJson.Options);
-            var hash = InstallerPaths.GitBlob(skill);
-            var manifestHash = InstallerPaths.GitBlob(manifest);
-            var entries = new[] {
-                new { path = "skills/sample/SKILL.md", sha = hash, size = skill.Length, mode = "100644", type = "blob" },
-                new { path = "estao-harness.json", sha = manifestHash, size = manifest.Length, mode = "100644", type = "blob" }
-            }.Concat(extras.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" })).ToArray();
-            var extraBlob = extras.Values.FirstOrDefault(bytes => path.EndsWith("/" + InstallerPaths.GitBlob(bytes), StringComparison.Ordinal));
+            if (IncludeFileItems)
+            {
+                extras["instructions/database.md"] = Encoding.UTF8.GetBytes("Project database guidance. Never execute.");
+                extras["templates/example.json"] = Encoding.UTF8.GetBytes("{\"sample\":true}");
+                items.Add(CatalogItem("database-instructions", "instruction", "instructions/database.md"));
+                items.Add(CatalogItem("example-template", "file", "templates/example.json"));
+            }
+            extras["skills/sample/SKILL.md"] = skill;
+            if (!OmitManifest)
+                extras["hub-manifest.json"] = InvalidManifest ? Encoding.UTF8.GetBytes("{invalid-json") :
+                    JsonSerializer.SerializeToUtf8Bytes(new
+                    {
+                        schemaVersion = 1, defaultLanguage = "en",
+                        categories = new Dictionary<string, Dictionary<string, string>> { ["core"] = new() { ["en"] = "Core", ["es"] = "General" } },
+                        items
+                    });
+            var entries = extras.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" }).ToArray();
+            var blob = extras.Values.FirstOrDefault(bytes => path.EndsWith("/" + InstallerPaths.GitBlob(bytes), StringComparison.Ordinal));
             object body = path.Contains("/contents/", StringComparison.Ordinal) ? Array.Empty<object>()
                 : path.Contains("/commits/", StringComparison.Ordinal) ? new { sha = Commit, commit = new { tree = new { sha = Tree } } }
                 : path.Contains("/git/trees/", StringComparison.Ordinal) ? new { truncated = false, tree = entries }
-                : extraBlob is not null ? new { encoding = "base64", content = Convert.ToBase64String(extraBlob) }
-                : path.EndsWith("/" + hash, StringComparison.Ordinal) ? new { encoding = "base64", content = Convert.ToBase64String(skill) }
-                : path.EndsWith("/" + manifestHash, StringComparison.Ordinal) ? new { encoding = "base64", content = Convert.ToBase64String(manifest) }
+                : blob is not null ? new { encoding = "base64", content = Convert.ToBase64String(blob) }
                 : new { full_name = GitHubRepositorySource.Repository };
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body)) };
         }

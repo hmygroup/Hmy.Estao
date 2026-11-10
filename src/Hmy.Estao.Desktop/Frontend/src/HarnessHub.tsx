@@ -70,6 +70,7 @@ export default function HarnessHub() {
   const busy = sending || !state || state.busy || checkingAuthorization;
   const chosen = Object.values(selection).reduce((sum, ids) => sum + ids.length, 0);
   const review = state?.review;
+  const hasCuratedSkills = state?.skills?.some(item => item.curated && (item.itemType ?? "skill") === "skill" && item.installable) === true;
   const visibleResults = state?.results.filter(result => state.tools.some(tool => tool.id === result.id && tool.detected)) ?? [];
 
   return <div className="harness-hub">
@@ -92,7 +93,7 @@ export default function HarnessHub() {
 
     <div className="hub-section-heading"><h2>{t("hub.tools")}</h2><div className="hub-actions">
       <button type="button" className="secondary" disabled={busy} onClick={() => void run({ action: "check" })}>{t("hub.check_again")}</button>
-      <button type="button" className="primary" disabled={busy || !state?.connected || !state?.tools.some(t => t.detected)}
+      <button type="button" className="primary" disabled={busy || !state?.connected || !hasCuratedSkills || !state?.tools.some(t => t.detected)}
         onClick={() => void run({ action: "review" })}>{t("hub.install_all")}</button>
     </div></div>
     <p className="hub-helper">{t("hub.helper")}</p>
@@ -101,7 +102,7 @@ export default function HarnessHub() {
         <small>{tool.status === "RecoveryRequired" || tool.status === "Error" ? t(`hub.status.${tool.status}`) : plural("hub.skill_count", state.skills?.filter(skill => skill.occurrences.some(item => item.toolId === tool.id)).length ?? 0)}</small></div></div>
       {tool.error && <p className="hub-helper">{message(tool.errorMessage) || t("error.operation")}</p>}
       {tool.status === "RecoveryRequired" ? <button type="button" className="secondary" disabled={busy} onClick={() => void run({ action: "recover", harnessId: tool.id })}>{t("hub.recover")}</button>
-        : <button type="button" className="secondary" disabled={busy || !state.connected} onClick={() => void run({ action: "review", harnessId: tool.id })}>{t("hub.review_install")}</button>}
+        : <button type="button" className="secondary" disabled={busy || !state.connected || !hasCuratedSkills} onClick={() => void run({ action: "review", harnessId: tool.id })}>{t("hub.review_install")}</button>}
     </article>)}</div>
 
     <div className="hub-progress" role="status">{(!checkingAuthorization || showCheckingAuthorization) && <span>{message(state?.progressMessage) || t("hub.check_tools")}</span>}

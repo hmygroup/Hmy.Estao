@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "defaultLanguage": "en",
+  "categories": {
+    "core": { "en": "Core", "es": "General" }
+  },
+  "items": [
+    {
+      "id": "example-skill",
+      "type": "skill",
+      "path": "skills/example-skill",
+      "description": { "en": "Example catalog entry; replace with curated content." },
+      "categories": "core"
+    }
+  ]
+}

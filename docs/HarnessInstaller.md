@@ -1,29 +1,24 @@
 # Harness Hub: instalador personal
 
-## Fuente y cobertura
+## Fuente y catálogo
 
 El origen fijo es `hmygroup/hmy-prompt-engineer`, branch `main`. Cada operación resuelve el commit una vez y obtiene tree/blobs por SHA. No requiere Git, Node ni npm para instalar archivos. Nunca ejecuta scripts de la biblioteca.
 
-El contrato bootstrap revisado está en `src/Hmy.Estao.Core/Harnesses/Installer/estao-harness.json`, incluido como recurso. Este mismo archivo es el entregable propuesto para los responsables de la fuente; **no se ha publicado allí**.
+El catálogo se obtiene de **`hub-manifest.json` en la raíz del repositorio fuente**. Sustituye el contrato `estao-harness.json` y su fallback bootstrap. La especificación, el esquema JSON y un ejemplo para los responsables de HMY están en [HubManifest.md](HubManifest.md); estos entregables **no se han publicado allí**.
 
-Snapshot bootstrap: `86145451d35141cfe2d246d68047d7be63d72b0d`, tree `d1f86100c5cecdd4065eefca46f7096af6285655`. Sustituye el inventario histórico de trece prompts y recoge la sustitución upstream de `itab-group-style` por `itab-design`. Contiene 22 skills/450 archivos de recursos. Codex recibe las 22; Claude Code, Copilot CLI y OpenCode reciben 21, excluyendo `hatch-pet` por su formato de mascota exclusivo de Codex.
-
-Los tres documentos de `prompts/` son flujos para ChatGPT, no skills nativas. Los agentes `revisor-biblioteca` y el comando `validar-biblioteca` dependen del checkout y contrato CMP: no se registran globalmente. Documentación, tooling, fixtures y arte gráfico quedan excluidos. La vista de detalles informa categoría, motivo y cantidad de archivos por cada grupo, además de todos los destinos.
+HMY muestra únicamente elementos declarados. Other muestra skills del repositorio no catalogadas y skills locales sin correspondencia. Installed mantiene el inventario local. Instrucciones y otros archivos solo se muestran si están declarados; no se convierten en skills ni se registran automáticamente como instrucciones globales. La ausencia de un elemento del catálogo no significa incompatibilidad con una herramienta.
 
 Instalar una skill no verifica sus runtimes: Tengu, Jira, navegadores, TFVC, herramientas de imagen y agentes internos siguen necesitando infraestructura y autorización propias. Los scripts, referencias y licencias dentro de la carpeta de una skill se conservan sin modificación. No se registran automáticamente sus agentes internos ni se activan hooks.
 
-## Contrato `estao-harness.json`, schemaVersion 1
+## Catálogo `hub-manifest.json`, schemaVersion 1
 
-- `repository`, `version`: identidad y versión del contrato.
-- `commit`, `tree`: pin opcional. En el bootstrap son obligatorios y coinciden con el snapshot completo. Un manifiesto mantenido **dentro** del repositorio debe omitirlos o dejarlos vacíos (no puede incluir su propio hash de árbol).
-- `artifacts`: `id`, `source`, `category`, `classification`, `destination`, `transformation`, `harnesses`, `requirements`, `dependencies`, `minimumVersions`.
-- `source`: archivo relativo o carpeta completa de skill; todas las referencias/assets/scripts/licencias dentro de esa carpeta forman un único grupo transaccional.
-- `category` y `destination`: `skill`, `agent`, `command`, `mcp`. No se aceptan rutas de destino absolutas del repositorio.
-- `classification`: `shared` o `harness-specific`. Es independiente del destino user-global.
-- `transformation`: actualmente `native`. No se convierte un prompt genérico en agente ni se traduce automáticamente política de herramientas.
-- `exclusions`: prefijos/archivos explícitos con clasificación `documentation`, `support`, `unsupported` o `external-runtime` y un motivo.
+- `defaultLanguage`: idioma de fallback mediante código ISO 639-1 de dos letras.
+- `categories`: identificadores estables y etiquetas traducidas.
+- `items`: elementos con `id`, `type` (`skill`, `instruction`, `file`), `path`, `description` traducida y `categories` separadas por comas. Dependencias de skills opcionales en `dependencies`.
+- Una skill referencia su carpeta completa: recursos, scripts y licencias forman el mismo grupo transaccional. Otros tipos referencian archivos concretos.
+- No contiene listas de harnesses, rutas de instalación, comandos ni pins de commit/tree. No exige clasificar todos los archivos del repositorio.
 
-Cada archivo del árbol debe pertenecer exactamente a un artefacto o exclusión. Las nuevas rutas no declaradas, la cobertura ambigua, enlaces, submódulos, ciclos o dependencias ausentes bloquean el snapshot antes de escribir. No hay fallback silencioso a una revisión anterior. Un cambio de main sin manifiesto publicado y compatible requiere actualizar el bootstrap tras revisar la fuente.
+La validación de catálogo comprueba rutas, identidad, traducciones, categorías y dependencias. Si falta o no es válido, se muestra un único error de catálogo; no se ocultan las skills locales ni se bloquea por ese motivo la revisión de una skill válida de Other. Los blobs y rutas siguen sujetos a límites y comprobaciones de integridad. El snapshot se fija durante cada revisión, no en el manifiesto mantenido por HMY.
 
 ## Autorización
 
@@ -40,9 +35,9 @@ Si el administrador configura `HMY_ESTAO_GITHUB_APP_CLIENT_ID`, Conectar GitHub 
 - Copilot CLI: `COPILOT_HOME` o `~/.copilot`; skills, agents `.agent.md`, MCP en `mcp-config.json`. No se usan `.prompt.md` de VS Code como comandos CLI.
 - OpenCode: `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` y `OPENCODE_CONFIG`, según corresponda. Se conserva JSONC existente y se bloquea ambigüedad JSON/JSONC. Agentes/MCP requieren versión V2 verificada; skills usan formato estándar.
 
-Los overrides deben ser rutas locales absolutas sin enlaces. El instalador no deduce un proyecto desde el directorio de trabajo de la bandeja. La detección PATH es indicativa: no ejecuta ni instala el harness. Si no se detecta, pide confirmación para preparar solo sus archivos.
+Los overrides deben ser rutas locales absolutas sin enlaces. El instalador no deduce un proyecto desde el directorio de trabajo de la bandeja. La detección PATH es indicativa: no ejecuta ni instala el harness. Las herramientas no detectadas no se muestran ni se seleccionan para instalar.
 
-Los adapters validan formatos nativos y rechazan políticas de agentes no soportadas. El bootstrap actual no instala agentes, MCP ni comandos. Una futura declaración MCP queda bloqueada hasta disponer de aprobación individual de endpoints; la infraestructura de merge no constituye autorización para habilitar servidores desconocidos. No se afirma aceptación runtime de todos los hosts a partir de validaciones de formato.
+Los adapters validan el formato estándar de skills y conservan el contenido fuente. El catálogo no instala agentes, MCP ni comandos. Las instrucciones y archivos se exportan mediante Guardar como explícito; no se fusionan automáticamente en configuraciones globales o de proyecto. No se afirma aceptación runtime de todos los hosts a partir de validaciones de formato.
 
 ## Política aditiva y recuperación
 
@@ -69,4 +64,4 @@ dotnet build Hmy.Estao.slnx -c Release --no-restore
 dotnet test tests/Hmy.Estao.Tests/Hmy.Estao.Tests.csproj -c Release --no-restore
 ```
 
-La integración real está separada y requiere `HMY_ESTAO_TEST_GITHUB_TOKEN` en el entorno del proceso. Valida el commit bootstrap explícito, para no depender de ediciones concurrentes de main durante QA; la UI normal siempre resuelve main y lo contrasta con su contrato. Solo descarga contenido y escribe perfiles temporales propios del test; no ejecuta scripts ni toca la configuración real de los harnesses. El test de integración devuelve sin contactar GitHub cuando no se habilita expresamente; un resultado general verde no implica integración real ni aceptación visual/runtime.
+Las pruebas usan respuestas GitHub simuladas y perfiles temporales. No necesitan autorización real ni modifican herramientas personales. Los checks de UI con fixtures no equivalen a integración con el repositorio privado ni a aceptación runtime de los hosts.

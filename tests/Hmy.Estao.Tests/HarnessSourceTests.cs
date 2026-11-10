@@ -11,40 +11,6 @@ public sealed class HarnessSourceTests
     private static readonly string Tree = new('b', 40);
     private static byte[] Bytes(string text) => Encoding.UTF8.GetBytes(text);
 
-    [Fact]
-    public void bootstrap_covers_current_skills_and_explicit_exclusions_not_historical_prompts()
-    {
-        var manifest = ManifestContract.Bootstrap();
-        Assert.Equal(22, manifest.Artifacts.Count);
-        Assert.All(manifest.Artifacts, a => Assert.Equal("skill", a.Category));
-        Assert.Single(manifest.Artifacts.Single(a => a.Id == "hatch-pet").Harnesses);
-        Assert.Contains(manifest.Exclusions, e => e.Source == "prompts" && e.Classification == "external-runtime");
-        foreach (var id in HarnessAdapter.Ids)
-            Assert.Equal(id == "codex" ? 22 : 21, manifest.Artifacts.Count(a => a.Harnesses.Contains(id)));
-    }
-
-    [Theory]
-    [InlineData("120000")]
-    [InlineData("160000")]
-    public void manifest_rejects_links_and_submodules(string mode)
-    {
-        var manifest = Minimal();
-        Assert.Throws<InvalidDataException>(() => ManifestContract.Validate(manifest, Commit, Tree, [new("skills/test/SKILL.md", Commit, 1, mode)]));
-    }
-
-    [Fact]
-    public void contract_rejects_new_files_mismatched_bootstrap_duplicates_and_missing_dependencies()
-    {
-        var entries = new[] { new SourceEntry("skills/test/SKILL.md", Commit, 1, "100644") };
-        ManifestContract.Validate(Minimal(), Commit, Tree, entries);
-        Assert.Throws<InvalidDataException>(() => ManifestContract.Validate(Minimal(), Commit, Tree, [.. entries, new("new.md", Commit, 1, "100644")]));
-        var pinned = Minimal(); pinned.Commit = new string('c', 40);
-        Assert.Throws<InvalidDataException>(() => ManifestContract.Validate(pinned, Commit, Tree, entries));
-        var dependencies = Minimal(); dependencies.Artifacts[0].Dependencies = ["missing"];
-        Assert.Throws<InvalidDataException>(() => ManifestContract.Validate(dependencies, Commit, Tree, entries));
-        Assert.Throws<InvalidDataException>(() => ManifestContract.Validate(Minimal(), Commit, Tree, [.. entries, new("SKILLS/test/skill.md", Commit, 1, "100644")]));
-    }
-
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
@@ -79,160 +45,289 @@ public sealed class HarnessSourceTests
     }
 
     [Fact]
-    public async Task retrieves_a_single_verified_snapshot_and_rejects_corruption_or_truncation()
+    public async Task discovery_partitions_curated_and_other_items_and_normalizes_localized_categories()
     {
-        var content = Bytes("---\nname: test\ndescription: Test skill\n---\nBody remains intact.\n");
-        var hash = InstallerPaths.GitBlob(content);
-        var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(Minimal(), InstallerJson.Options);
-        var manifestHash = InstallerPaths.GitBlob(manifestBytes);
-        var truncated = false;
-        var corrupt = false;
-        var requests = new List<string>();
-        using var client = new HttpClient(new Handler(request =>
+        var fixture = new Fixture();
+        fixture.Skill("skills/a", "a");
+        fixture.Skill("skills/b", "b");
+        fixture.Skill("plugins/a", "a"); // Same folder name: stable identity remains unique and source-bound.
+        fixture.Skill("skills/other", "other");
+        fixture.File("docs/howto.md", "Instructions");
+        fixture.File("assets/license.txt", "License");
+        fixture.Catalog(new HubCatalog
         {
-            var path = request.RequestUri!.PathAndQuery;
-            requests.Add(path);
-            Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
-            object response = path.EndsWith("/commits/main", StringComparison.Ordinal) ? new { sha = Commit, commit = new { tree = new { sha = Tree } } } :
-                path.Contains("/git/trees/", StringComparison.Ordinal) ? new { truncated, tree = new[] {
-                    new { path = "skills/test/SKILL.md", sha = hash, size = content.Length, mode = "100644", type = "blob" },
-                    new { path = "estao-harness.json", sha = manifestHash, size = manifestBytes.Length, mode = "100644", type = "blob" } } } :
-                path.EndsWith("/" + manifestHash, StringComparison.Ordinal) ? new { encoding = "base64", content = Convert.ToBase64String(manifestBytes) } :
-                path.EndsWith("/" + hash, StringComparison.Ordinal) ? new { encoding = "base64", content = Convert.ToBase64String(corrupt ? Bytes("tampered") : content) } :
-                new { full_name = GitHubRepositorySource.Repository };
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(response)) };
-        }));
-        var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), "estao-source-fixture"), _ => null);
-        var source = new GitHubRepositorySource(client);
-        var snapshot = await source.PrepareAsync("fake-token", adapter);
-        Assert.Equal(Commit, snapshot.Commit);
-        Assert.Equal(content, Assert.Single(snapshot.Files).Content);
-        var artifact = Assert.Single(snapshot.Artifacts!);
-        Assert.Equal("Test skill", artifact.Description);
-        Assert.Equal("test", artifact.Id);
-        Assert.Equal("skills/test", artifact.Source);
-        Assert.Single(requests, p => p.EndsWith("/commits/main", StringComparison.Ordinal));
-        Assert.Contains(requests, p => p.Contains("/git/trees/" + Tree, StringComparison.Ordinal));
-        corrupt = true;
-        await Assert.ThrowsAsync<InvalidDataException>(() => source.PrepareAsync("fake-token", adapter));
-        truncated = true;
-        await Assert.ThrowsAsync<InvalidDataException>(() => source.PrepareAsync("fake-token", adapter));
+            SchemaVersion = 1,
+            DefaultLanguage = "en",
+            Categories = new() { ["core"] = new() { ["en"] = "Core", ["es"] = "General" }, ["database"] = new() { ["en"] = "Database" } },
+            Items =
+            [
+                new() { Id = "curated-a", Type = "skill", Path = "skills/a", Description = new() { ["en"] = "A", ["es"] = "Una" }, Categories = " core, database,core " },
+                new() { Id = "curated-b", Type = "skill", Path = "skills/b", Description = new() { ["en"] = "B" }, Categories = "core" },
+                new() { Id = "howto", Type = "instruction", Path = "docs/howto.md", Description = new() { ["en"] = "Guide" }, Categories = "core" },
+                new() { Id = "license", Type = "file", Path = "assets/license.txt", Description = new() { ["en"] = "License" }, Categories = "core" }
+            ]
+        });
+        using var client = fixture.Client();
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+
+        Assert.Null(library.CatalogError);
+        Assert.Equal("en", library.DefaultLanguage);
+        Assert.Equal("Core", library.Categories!["core"]["en"]);
+        Assert.Equal(2, library.Skills.Count(s => s.Curated && s.ItemType == "skill"));
+        Assert.Equal(2, library.Skills.Count(s => s.Curated && s.ItemType != "skill"));
+        Assert.Equal(["core", "database"], library.Skills.Single(s => s.Id == "curated-a").Categories);
+        Assert.Equal("Una", library.Skills.Single(s => s.Id == "curated-a").Descriptions!["es"]);
+        Assert.All(library.Skills.Where(s => s.Curated && s.ItemType == "skill"), s => Assert.Equal(HarnessAdapter.Ids, s.CompatibleHarnesses));
+        Assert.Single(library.Skills, s => s.Source == "plugins/a");
+        Assert.NotEqual("a", library.Skills.Single(s => s.Source == "plugins/a").Id);
+        Assert.True(library.Skills.Single(s => s.Source == "skills/other").Installable);
+        Assert.False(library.Skills.Single(s => s.Source == "skills/other").Curated);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task discovery_finds_repository_and_shared_skills_without_approving_stale_manifest(bool stale)
+    public async Task missing_or_invalid_catalog_does_not_hide_safe_other_skills(bool malformed)
     {
-        var blobs = new Dictionary<string, byte[]>();
-        void Add(string path, string text) => blobs[path] = Bytes(text);
-        Add("skills/repository-only/SKILL.md", "---\nname: repository-only\ndescription: Repository skill\n---\nBody\n");
-        Add("skills/shared/SKILL.md", "---\nname: shared\ndescription: Shared skill\n---\nBody\n");
-        var manifest = JsonSerializer.SerializeToUtf8Bytes(new SourceManifest
-        {
-            Commit = stale ? new string('c', 40) : Commit, // Old pin must not prevent browsing or imply approval.
-            Artifacts = [new() { Id = "shared", Source = "skills/shared", Harnesses = ["claude", "codex"] }],
-            Exclusions = [new("skills/repository-only", "unsupported", "Not approved for installation.")]
-        }, InstallerJson.Options);
-        blobs["estao-harness.json"] = manifest;
-        var entries = blobs.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" }).ToArray();
-        using var client = new HttpClient(new Handler(request =>
-        {
-            var path = request.RequestUri!.PathAndQuery;
-            object response = path.EndsWith("/commits/main", StringComparison.Ordinal)
-                ? new { sha = Commit, commit = new { tree = new { sha = Tree } } }
-                : path.Contains("/git/trees/", StringComparison.Ordinal) ? new { truncated = false, tree = entries }
-                : path.Contains("/git/blobs/", StringComparison.Ordinal)
-                    ? new { encoding = "base64", content = Convert.ToBase64String(blobs.Values.Single(bytes => InstallerPaths.GitBlob(bytes) == path[(path.LastIndexOf('/') + 1)..])) }
-                    : new { full_name = GitHubRepositorySource.Repository };
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(response)) };
-        }));
+        var fixture = new Fixture();
+        fixture.Skill("skills/other", "other");
+        if (malformed) fixture.RawCatalog("{ invalid json");
+        using var client = fixture.Client();
         var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
-        Assert.Equal(Commit, library.Commit);
-        Assert.Equal(2, library.Skills.Count);
-        var approved = library.Skills.Single(skill => skill.Id == "shared");
-        Assert.Equal(!stale, approved.Installable);
-        Assert.Equal(["claude", "codex"], approved.CompatibleHarnesses);
-        var unapproved = library.Skills.Single(skill => skill.Id == "repository-only");
-        Assert.False(unapproved.Installable);
-        Assert.Empty(unapproved.CompatibleHarnesses);
+        Assert.NotNull(library.CatalogError);
+        var skill = Assert.Single(library.Skills);
+        Assert.Equal("skills/other", skill.Source);
+        Assert.False(skill.Curated);
+        Assert.True(skill.Installable);
     }
 
     [Fact]
-    public async Task discovery_keeps_root_and_malformed_skills_visible_without_a_manifest()
+    public async Task invalid_catalog_schema_is_rejected_as_curation_but_unlisted_skill_remains_available()
     {
-        var blobs = new Dictionary<string, byte[]>
-        {
-            ["SKILL.md"] = Bytes("---\nname: root-skill\ndescription: Root skill\n---\n"),
-            ["skills/broken/SKILL.md"] = Bytes("---\nname: [unclosed\ndescription: broken\n---\n"),
-            ["skills/quoted/SKILL.md"] = Bytes("---\n'name': \"quoted\"\ndescription: Quoted YAML keys are valid\n---\n")
-        };
-        var entries = blobs.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" }).ToArray();
-        using var client = new HttpClient(new Handler(request =>
-        {
-            var path = request.RequestUri!.PathAndQuery;
-            object response = path.EndsWith("/commits/main", StringComparison.Ordinal)
-                ? new { sha = Commit, commit = new { tree = new { sha = Tree } } }
-                : path.Contains("/git/trees/", StringComparison.Ordinal) ? new { truncated = false, tree = entries }
-                : path.Contains("/git/blobs/", StringComparison.Ordinal)
-                    ? new { encoding = "base64", content = Convert.ToBase64String(blobs.Values.Single(bytes => InstallerPaths.GitBlob(bytes) == path[(path.LastIndexOf('/') + 1)..])) }
-                    : new { full_name = GitHubRepositorySource.Repository };
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(response)) };
-        }));
+        var fixture = new Fixture();
+        fixture.Skill("skills/other", "other");
+        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en", Categories = new() { ["core"] = new() { ["en"] = "Core" } },
+            Items = [new() { Id = "bad", Type = "skill", Path = "skills/missing", Description = new() { ["en"] = "Bad" }, Categories = "core" }] });
+        using var client = fixture.Client();
         var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
-        Assert.Equal(3, library.Skills.Count);
-        Assert.All(library.Skills, skill => Assert.False(skill.Installable));
-        Assert.Equal(".", library.Skills.Single(skill => skill.Id == "root-skill").Source);
-        Assert.NotNull(library.Skills.Single(skill => skill.Id == "broken").Issue);
-        Assert.Null(library.Skills.Single(skill => skill.Id == "quoted").Issue);
+        Assert.NotNull(library.CatalogError);
+        Assert.False(Assert.Single(library.Skills).Curated);
     }
 
     [Fact]
-    public async Task real_github_snapshot_can_be_prepared_in_an_isolated_profile_when_explicitly_enabled()
+    public async Task catalog_rejects_invalid_language_fallback_categories_and_dependencies()
     {
-        var token = Environment.GetEnvironmentVariable("HMY_ESTAO_TEST_GITHUB_TOKEN");
-        if (string.IsNullOrWhiteSpace(token)) return; // Opt-in integration, never uses personal configuration.
-        var root = Path.Combine(Path.GetTempPath(), "estao-live-source-" + Guid.NewGuid().ToString("N"));
-        try
+        foreach (var invalid in new Func<HubCatalog>[]
         {
-            using var client = GitHubRepositorySource.CreateClient();
-            var adapter = new HarnessAdapter("codex", Path.Combine(root, "profile"), _ => null);
-            var snapshot = await new GitHubRepositorySource(client).PrepareAsync(token, adapter, reference: ManifestContract.Bootstrap().Commit);
-            Assert.Equal(22, snapshot.Coverage.Count(c => c.Classification == "installable"));
-            Assert.Equal(450, snapshot.Files.Count);
-            var installer = new HarnessInstallationService(Path.Combine(root, "state"));
-            var result = await installer.ApplyAsync(adapter, await installer.PlanAsync(adapter, snapshot), false);
-            Assert.Equal(450, result.Created);
-            Assert.All((await installer.PlanAsync(adapter, snapshot)).Files, f => Assert.Equal(InstallAction.AlreadyPresent, f.Action));
-            // Reuse the already verified immutable bytes to exercise all adapters without downloading four copies.
-            var manifest = ManifestContract.Bootstrap();
-            foreach (var id in new[] { "claude", "copilot", "opencode" })
-            {
-                var target = new HarnessAdapter(id, Path.Combine(root, id), _ => null);
-                var files = new List<PreparedFile>();
-                foreach (var artifact in manifest.Artifacts.Where(a => a.Harnesses.Contains(id)))
-                {
-                    var payloads = snapshot.Files.Where(f => f.ArtifactId == artifact.Id).Select(f =>
-                    {
-                        var relative = Path.GetRelativePath(Path.Combine(adapter.SkillsRoot, artifact.Id), f.RelativePath).Replace('\\', '/');
-                        return (new SourceEntry(artifact.Source + "/" + relative, InstallerPaths.GitBlob(f.Content), f.Content.Length, "100644"), f.Content);
-                    }).ToList();
-                    files.AddRange(target.Prepare(artifact, payloads));
-                }
-                var prepared = snapshot with { Files = files };
-                Assert.Equal(21, files.Select(f => f.ArtifactId).Distinct().Count());
-                var applied = await installer.ApplyAsync(target, await installer.PlanAsync(target, prepared), false);
-                Assert.Equal(files.Count, applied.Created);
-                Assert.All((await installer.PlanAsync(target, prepared)).Files, f => Assert.Equal(InstallAction.AlreadyPresent, f.Action));
-            }
+            () => Catalog("EN", "en", "core", []),
+            () => Catalog("en", "es", "core", []),
+            () => Catalog("en", "en", "unknown", []),
+            () => Catalog("en", "en", "core", ["missing"])
+        })
+        {
+            var fixture = new Fixture(); fixture.Skill("skills/a", "a"); fixture.Catalog(invalid());
+            using var client = fixture.Client();
+            var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+            Assert.NotNull(library.CatalogError);
+            Assert.False(Assert.Single(library.Skills).Curated);
         }
-        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+
+        static HubCatalog Catalog(string language, string labelLanguage, string itemCategory, List<string> dependencies) => new()
+        {
+            SchemaVersion = 1, DefaultLanguage = language,
+            Categories = new() { ["core"] = new() { [labelLanguage] = "Core" } },
+            Items = [new() { Id = "a", Type = "skill", Path = "skills/a", Description = new() { ["en"] = "A" },
+                Categories = itemCategory, Dependencies = dependencies }]
+        };
     }
 
-    private static SourceManifest Minimal() => new()
+    [Fact]
+    public async Task prepare_pins_commit_installs_curated_dependency_closure_and_explicit_unlisted_source_only()
     {
-        Version = "test", Artifacts = [new() { Id = "test", Source = "skills/test", Harnesses = ["claude"] }]
-    };
+        var fixture = new Fixture();
+        fixture.Skill("skills/a", "a"); fixture.Skill("skills/b", "b"); fixture.Skill("skills/other", "other");
+        fixture.File("docs/readme.md", "not installed");
+        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en",
+            Categories = new() { ["core"] = new() { ["en"] = "Core" } },
+            Items =
+            [
+                new() { Id = "registered-a", Type = "skill", Path = "skills/a", Description = new() { ["en"] = "A" }, Categories = "core", Dependencies = ["registered-b"] },
+                new() { Id = "registered-b", Type = "skill", Path = "skills/b", Description = new() { ["en"] = "B" }, Categories = "core" },
+                new() { Id = "doc", Type = "file", Path = "docs/readme.md", Description = new() { ["en"] = "Doc" }, Categories = "core" }
+            ] });
+        using var client = fixture.Client();
+        var source = new GitHubRepositorySource(client);
+        var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
+        var curated = await source.PrepareAsync("fake-token", adapter);
+        Assert.Equal(Commit, curated.Commit);
+        Assert.Equal(new[] { "registered-a", "registered-b" }, curated.Artifacts!.Select(a => a.Id));
+        Assert.All(curated.Files, file => Assert.Contains(file.ArtifactId, new[] { "registered-a", "registered-b" }));
+        var dependencyClosure = await source.PrepareAsync("fake-token", adapter, sourcePath: "skills/a");
+        Assert.Equal(new[] { "registered-b", "registered-a" }, dependencyClosure.Artifacts!.Select(a => a.Id));
+        var explicitItem = await source.PrepareAsync("fake-token", adapter, sourcePath: "skills/other");
+        Assert.Equal(new[] { "other" }, explicitItem.Artifacts!.Select(a => a.Id));
+        Assert.All(explicitItem.Files, file => Assert.Equal("other", file.ArtifactId));
+    }
+
+    [Fact]
+    public async Task catalog_file_export_is_whitelisted_at_the_pinned_revision()
+    {
+        var fixture = new Fixture();
+        fixture.Skill("skills/a", "a");
+        fixture.File("docs/howto.md", "Safe export bytes");
+        fixture.File("docs/unlisted.md", "Must not export");
+        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en",
+            Categories = new() { ["core"] = new() { ["en"] = "Core" } },
+            Items = [new() { Id = "howto", Type = "instruction", Path = "docs/howto.md", Description = new() { ["en"] = "Guide" }, Categories = "core" }] });
+        using var client = fixture.Client();
+        var source = new GitHubRepositorySource(client);
+        Assert.Equal(Bytes("Safe export bytes"), await source.ReadCatalogFileAsync("fake-token", "docs/howto.md", Commit));
+        await Assert.ThrowsAsync<InvalidDataException>(() => source.ReadCatalogFileAsync("fake-token", "docs/unlisted.md", Commit));
+        await Assert.ThrowsAsync<InvalidDataException>(() => source.ReadCatalogFileAsync("fake-token", "skills/a/SKILL.md", Commit));
+    }
+
+    [Fact]
+    public async Task discovered_other_ids_remain_unique_and_match_review_artifact_ids()
+    {
+        var fixture = new Fixture();
+        fixture.Skill("skills/a", "a");
+        fixture.Skill("plugins/a", "a");
+        fixture.Skill("skills/custom-id", "custom-id");
+        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en", Categories = [],
+            Items = [new() { Id = "custom-id", Type = "skill", Path = "skills/a", Description = new() { ["en"] = "A" }, Categories = "" }] });
+        using var client = fixture.Client();
+        var source = new GitHubRepositorySource(client);
+        var library = await source.DiscoverSkillsAsync("fake-token");
+        Assert.Null(library.CatalogError);
+        Assert.Equal(library.Skills.Count, library.Skills.Select(item => item.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal("custom-id", library.Skills.Single(item => item.Curated).Id);
+        var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
+        foreach (var item in library.Skills)
+        {
+            var review = await source.PrepareAsync("fake-token", adapter, reference: library.Commit, sourcePath: item.Source);
+            Assert.Equal(item.Id, Assert.Single(review.Artifacts!).Id);
+            Assert.All(review.Files, file => Assert.Equal(item.Id, file.ArtifactId));
+        }
+    }
+
+    [Theory]
+    [InlineData("unknown-language")]
+    [InlineData("null-categories")]
+    [InlineData("null-default")]
+    [InlineData("null-dependency")]
+    public async Task malformed_catalog_fields_do_not_abort_other_skill_discovery(string failure)
+    {
+        var fixture = new Fixture(); fixture.Skill("skills/a", "a");
+        var catalog = new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en", Categories = [],
+            Items = [new() { Id = "a", Type = "skill", Path = "skills/a", Description = new() { ["en"] = "A" }, Categories = "" }] };
+        if (failure == "unknown-language") { catalog.DefaultLanguage = "zz"; catalog.Items[0].Description = new() { ["zz"] = "Unknown" }; }
+        if (failure == "null-categories") catalog.Items[0].Categories = null!;
+        if (failure == "null-default") catalog.DefaultLanguage = null!;
+        if (failure == "null-dependency") catalog.Items[0].Dependencies = [null!];
+        fixture.Catalog(catalog);
+        using var client = fixture.Client();
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+        Assert.NotNull(library.CatalogError);
+        var item = Assert.Single(library.Skills);
+        Assert.False(item.Curated);
+        Assert.True(item.Installable);
+    }
+
+    [Fact]
+    public async Task root_skill_is_visible_but_not_installable_as_a_folder()
+    {
+        var fixture = new Fixture();
+        fixture.File("SKILL.md", "---\nname: root-skill\ndescription: Root description\n---\n");
+        using var client = fixture.Client();
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+        var item = Assert.Single(library.Skills);
+        Assert.Equal("root-skill", item.Name);
+        Assert.Equal(".", item.Source);
+        Assert.False(item.Installable);
+        Assert.NotNull(item.Issue);
+    }
+
+    [Fact]
+    public async Task pinned_prepare_and_export_reject_a_different_returned_commit()
+    {
+        var fixture = new Fixture { ReturnedCommit = new string('c', 40) };
+        using var client = fixture.Client();
+        var source = new GitHubRepositorySource(client);
+        var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
+        await Assert.ThrowsAsync<InvalidDataException>(() => source.PrepareAsync("fake-token", adapter, reference: Commit, sourcePath: "skills/a"));
+        await Assert.ThrowsAsync<InvalidDataException>(() => source.ReadCatalogFileAsync("fake-token", "docs/howto.md", Commit));
+    }
+
+    [Fact]
+    public async Task rejects_unsafe_tree_and_corrupt_blobs()
+    {
+        var fixture = new Fixture(); fixture.Skill("skills/a", "a"); fixture.CorruptBlobs = true;
+        using var client = fixture.Client();
+        await Assert.ThrowsAsync<InvalidDataException>(() => new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token"));
+        fixture.CorruptBlobs = false; fixture.UnsafePath = true;
+        await Assert.ThrowsAsync<InvalidDataException>(() => new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token"));
+        fixture.UnsafePath = false; fixture.Truncated = true;
+        await Assert.ThrowsAsync<InvalidDataException>(() => new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token"));
+    }
+
+    [Fact]
+    public async Task prepare_omits_invalid_curated_metadata_and_rejects_it_when_explicitly_requested()
+    {
+        var fixture = new Fixture();
+        fixture.File("skills/a/SKILL.md", "---\nname: not-a\ndescription: Bad identity\n---\n");
+        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en",
+            Categories = new() { ["core"] = new() { ["en"] = "Core" } },
+            Items = [new() { Id = "a-registered-id", Type = "skill", Path = "skills/a", Description = new() { ["en"] = "Skill" }, Categories = "core" }] });
+        using var client = fixture.Client();
+        var source = new GitHubRepositorySource(client);
+        var library = await source.DiscoverSkillsAsync("fake-token");
+        var listed = Assert.Single(library.Skills);
+        Assert.True(listed.Curated);
+        Assert.False(listed.Installable);
+        Assert.Empty(listed.CompatibleHarnesses);
+        var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
+        var snapshot = await source.PrepareAsync("fake-token", adapter);
+        Assert.Empty(snapshot.Artifacts!);
+        await Assert.ThrowsAsync<InvalidDataException>(() => source.PrepareAsync("fake-token", adapter, sourcePath: "skills/a"));
+    }
+
+    private sealed class Fixture
+    {
+        private readonly Dictionary<string, byte[]> _blobs = new(StringComparer.Ordinal);
+        public bool CorruptBlobs { get; set; }
+        public bool UnsafePath { get; set; }
+        public bool Truncated { get; set; }
+        public string ReturnedCommit { get; set; } = Commit;
+        private static byte[] CatalogBytes(HubCatalog catalog) => JsonSerializer.SerializeToUtf8Bytes(catalog, InstallerJson.Options);
+        public void Skill(string path, string name) => File(path + "/SKILL.md", $"---\nname: {name}\ndescription: {name} skill\n---\nBody\n");
+        public void File(string path, string text) => _blobs[path] = Bytes(text);
+        public void Catalog(HubCatalog catalog) => RawCatalog(Encoding.UTF8.GetString(CatalogBytes(catalog)));
+        public void RawCatalog(string text) => File("hub-manifest.json", text);
+        public HttpClient Client() => new(new Handler(Respond));
+        private HttpResponseMessage Respond(HttpRequestMessage request)
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            object response;
+            if (path.EndsWith("/commits/main", StringComparison.Ordinal) || path.EndsWith("/commits/" + Commit, StringComparison.Ordinal))
+                response = new { sha = ReturnedCommit, commit = new { tree = new { sha = Tree } } };
+            else if (path.Contains("/git/trees/", StringComparison.Ordinal))
+            {
+                var entries = _blobs.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" }).ToList();
+                if (UnsafePath) entries.Add(new { path = "../evil", sha = new string('c', 40), size = 1, mode = "100644", type = "blob" });
+                response = new { truncated = Truncated, tree = entries };
+            }
+            else if (path.Contains("/git/blobs/", StringComparison.Ordinal))
+            {
+                var sha = path[(path.LastIndexOf('/') + 1)..];
+                var bytes = _blobs.Values.First(value => InstallerPaths.GitBlob(value) == sha);
+                if (CorruptBlobs) bytes = Bytes("tampered");
+                response = new { encoding = "base64", content = Convert.ToBase64String(bytes) };
+            }
+            else response = new { full_name = GitHubRepositorySource.Repository };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(response)) };
+        }
+    }
+
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => Task.FromResult(respond(request));

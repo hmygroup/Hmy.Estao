@@ -27,7 +27,11 @@ internal sealed record HubState(bool Busy, string Phase, string Progress, bool C
     IReadOnlyList<HubTool> Tools, HubReview? Review, IReadOnlyList<HubResult> Results, HubDeviceCode? DeviceCode,
     string? Error, UserMessage? ProgressMessage = null, UserMessage? ConnectionMessage = null, UserMessage? ErrorMessage = null,
     bool AuthorizationChecked = false, bool CheckingAuthorization = false,
-    IReadOnlyList<HubSkill>? Skills = null, string? LibraryCommit = null, string? LibraryError = null, bool LibraryLoaded = false);
+    IReadOnlyList<HubSkill>? Skills = null, string? LibraryCommit = null, string? LibraryError = null, bool LibraryLoaded = false,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? CatalogCategories = null,
+    string CatalogDefaultLanguage = "en", string? CatalogError = null);
 internal sealed record HubSkill(string Id, string Name, string Description, bool InLibrary, bool Installable,
-    IReadOnlyList<string> CompatibleTools, IReadOnlyList<HubSkillOccurrence> Occurrences, string? Source = null, string? Issue = null);
+    IReadOnlyList<string> CompatibleTools, IReadOnlyList<HubSkillOccurrence> Occurrences, string? Source = null, string? Issue = null,
+    bool Curated = false, string ItemType = "skill", IReadOnlyDictionary<string, string>? Descriptions = null,
+    IReadOnlyList<string>? Categories = null, string DefaultLanguage = "en");
 internal sealed record HubSkillOccurrence(string ToolId, string Path, bool Shared, string? Hash, string? Error = null);

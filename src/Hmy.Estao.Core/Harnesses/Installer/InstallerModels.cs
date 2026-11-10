@@ -16,17 +16,6 @@ public static class InstallerJson
         ?? throw new InvalidDataException("Empty installer document.");
 }
 
-public sealed class SourceManifest
-{
-    public int SchemaVersion { get; set; } = 1;
-    public string Repository { get; set; } = "hmygroup/hmy-prompt-engineer";
-    public string Version { get; set; } = "1";
-    public string Commit { get; set; } = "";
-    public string Tree { get; set; } = "";
-    public List<SourceArtifact> Artifacts { get; set; } = [];
-    public List<SourceExclusion> Exclusions { get; set; } = [];
-}
-
 public sealed class SourceArtifact
 {
     public string Id { get; set; } = "";
@@ -41,7 +30,6 @@ public sealed class SourceArtifact
     public Dictionary<string, string> MinimumVersions { get; set; } = [];
 }
 
-public sealed record SourceExclusion(string Source, string Classification, string Reason);
 public sealed record SourceEntry(string Path, string Sha, long Size, string Mode);
 public sealed record CoverageItem(string Source, string Classification, string Reason, int FileCount);
 public sealed record PreparedFile(string ArtifactId, string RelativePath, byte[] Content, string Format = "file");
@@ -54,8 +42,12 @@ public sealed record PreparedArtifact(string Id, string Category, string Source,
     IReadOnlyList<string> Requirements);
 
 public sealed record RepositorySkill(string Id, string Name, string Description, string Source,
-    IReadOnlyList<string> CompatibleHarnesses, bool Installable, string? Issue = null);
-public sealed record RepositorySkillLibrary(string Commit, IReadOnlyList<RepositorySkill> Skills);
+    IReadOnlyList<string> CompatibleHarnesses, bool Installable, string? Issue = null,
+    bool Curated = false, string ItemType = "skill", IReadOnlyDictionary<string, string>? Descriptions = null,
+    IReadOnlyList<string>? Categories = null, string DefaultLanguage = "en");
+public sealed record RepositorySkillLibrary(string Commit, IReadOnlyList<RepositorySkill> Skills,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? Categories = null,
+    string DefaultLanguage = "en", string? CatalogError = null);
 
 public enum InstallAction { Create, Update, Merge, AlreadyPresent, Conflict }
 public sealed record PlannedFile(string ArtifactId, string Path, byte[] Content, string? BeforeHash,

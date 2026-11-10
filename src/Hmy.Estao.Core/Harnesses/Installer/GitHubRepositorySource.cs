@@ -36,94 +36,134 @@ public sealed class GitHubRepositorySource(HttpClient client)
         using var revision = await GetAsync($"repos/{Repository}/commits/main", token, ct).ConfigureAwait(false);
         var commit = revision.RootElement.GetProperty("sha").GetString()!;
         var tree = revision.RootElement.GetProperty("commit").GetProperty("tree").GetProperty("sha").GetString()!;
-        if (!ManifestContract.Sha().IsMatch(commit) || !ManifestContract.Sha().IsMatch(tree)) throw new InvalidDataException("Invalid source revision.");
+        if (!SourceRevision.Sha().IsMatch(commit) || !SourceRevision.Sha().IsMatch(tree)) throw new InvalidDataException("Invalid source revision.");
         using var listing = await GetAsync($"repos/{Repository}/git/trees/{tree}?recursive=1", token, ct).ConfigureAwait(false);
         if (listing.RootElement.GetProperty("truncated").GetBoolean()) throw new InvalidDataException("GitHub returned an incomplete source tree.");
         var entries = ReadTreeEntries(listing.RootElement.GetProperty("tree"));
-        var declarations = new Dictionary<string, SourceArtifact>(StringComparer.OrdinalIgnoreCase);
-        var manifestEntry = entries.SingleOrDefault(e => e.Path == "estao-harness.json");
-        SourceManifest? manifest = null;
-        var snapshotApproved = false;
+        var manifestEntry = entries.SingleOrDefault(e => e.Path == "hub-manifest.json");
+        ValidatedCatalog? catalog = null;
+        string? catalogError = null;
         try
         {
-            manifest = manifestEntry is null ? ManifestContract.Bootstrap() :
-                InstallerJson.Read<SourceManifest>(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false));
-            ManifestContract.Validate(manifest, commit, tree, entries);
-            snapshotApproved = true;
+            if (manifestEntry is null) throw new InvalidDataException("hub-manifest.json is missing.");
+            catalog = HubCatalogContract.Read(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false), entries);
         }
         catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException)
-        { /* Browsing remains available when the installation contract is stale or invalid. */ }
-        if (manifest?.Artifacts is not null)
-            foreach (var artifact in manifest.Artifacts.Where(a => a is not null && a.Category == "skill" &&
-                         !string.IsNullOrWhiteSpace(a.Id) && !string.IsNullOrWhiteSpace(a.Source) && a.Harnesses is not null))
-                declarations.TryAdd(artifact.Id, artifact);
+        { catalogError = ex.Message; }
+        var curatedByPath = catalog?.Catalog.Items.Where(i => i.Type == "skill")
+            .ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase) ?? new Dictionary<string, HubCatalogItem>(StringComparer.OrdinalIgnoreCase);
         var skills = new List<RepositorySkill>();
-        foreach (var entry in entries.Where(e => e.Path == "SKILL.md" || e.Path.EndsWith("/SKILL.md", StringComparison.Ordinal)))
+        var candidates = entries.Where(IsSkillEntry).ToArray();
+        var skillIds = SkillIds(candidates, catalog);
+        foreach (var entry in candidates)
         {
             ct.ThrowIfCancellationRequested();
             var bytes = await BlobAsync(entry, token, ct).ConfigureAwait(false);
-            var source = entry.Path == "SKILL.md" ? "" : entry.Path[..^"/SKILL.md".Length];
-            var id = source.Length == 0 ? "repository" : source[(source.LastIndexOf('/') + 1)..];
+            var source = SkillSource(entry);
+            var folder = SkillFolder(source);
+            var id = skillIds[source];
             string name = id, description;
             var metadataValid = false;
             string? issue = null;
             try
             {
                 (name, description) = HarnessAdapter.SkillMetadata(bytes);
-                if (source.Length == 0 && !string.IsNullOrWhiteSpace(name)) id = name;
-                metadataValid = name == id && !string.IsNullOrWhiteSpace(description) && description.Length <= 1024;
-                if (!metadataValid) issue = "Invalid skill identity or description in repository metadata.";
+                metadataValid = source != "." && name == folder && !string.IsNullOrWhiteSpace(description) && description.Length <= 1024;
+                if (!metadataValid) issue = source == "." ? "Root SKILL.md has no installable skill folder. Curate it as a file to export it."
+                    : "Invalid skill identity or description in repository metadata.";
             }
             catch (Exception ex) when (ex is InvalidDataException or DecoderFallbackException or ArgumentException or YamlException)
             { description = ""; issue = "Could not parse repository skill metadata."; }
             if (string.IsNullOrWhiteSpace(name)) name = id;
-            var declared = declarations.TryGetValue(id, out var declaration) && declaration is not null &&
-                declaration.Id == id && declaration.Source == source;
-            var compatible = declared ? declaration!.Harnesses.Where(HarnessAdapter.Ids.Contains).Distinct(StringComparer.Ordinal).ToArray() : [];
-            skills.Add(new RepositorySkill(id, name, description, source.Length == 0 ? "." : source,
-                compatible, snapshotApproved && declared && metadataValid && compatible.Length > 0, issue));
+            HubCatalogItem? item = null;
+            var curated = catalog is not null && curatedByPath.TryGetValue(source, out item);
+            if (!curated) item = null;
+            skills.Add(new RepositorySkill(curated ? item!.Id : id, name, description, source,
+                metadataValid ? HarnessAdapter.Ids : [], metadataValid, issue, curated, "skill",
+                item?.Description, item is null ? [] : catalog!.ItemCategories[item.Id], catalog?.Catalog.DefaultLanguage ?? "en"));
         }
-        return new RepositorySkillLibrary(commit, skills);
+        if (catalog is not null)
+            foreach (var item in catalog.Catalog.Items.Where(i => i.Type != "skill"))
+                skills.Add(new RepositorySkill(item.Id, item.Id, item.Description[catalog.Catalog.DefaultLanguage], item.Path,
+                    [], false, null, true, item.Type, item.Description, catalog.ItemCategories[item.Id], catalog.Catalog.DefaultLanguage));
+        return new RepositorySkillLibrary(commit, skills, catalog?.Categories, catalog?.Catalog.DefaultLanguage ?? "en", catalogError);
     }
 
     public async Task<PreparedSnapshot> PrepareAsync(string token, HarnessAdapter adapter,
-        IProgress<string>? progress = null, CancellationToken cancellationToken = default, string reference = "main")
+        IProgress<string>? progress = null, CancellationToken cancellationToken = default, string reference = "main", string? sourcePath = null)
     {
         if (string.IsNullOrWhiteSpace(token)) throw new GitHubAccessException("Conecta GitHub para leer la biblioteca privada.", HttpStatusCode.Unauthorized);
-        if (reference != "main" && !ManifestContract.Sha().IsMatch(reference)) throw new InvalidDataException("Invalid source reference.");
+        if (reference != "main" && !SourceRevision.Sha().IsMatch(reference)) throw new InvalidDataException("Invalid source reference.");
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         operation.CancelAfter(TimeSpan.FromMinutes(8));
         var ct = operation.Token;
-        progress.ReportMessage(new("hub.check_access"), "Comprobando acceso a GitHub…");
+        progress?.ReportMessage(new("hub.check_access"), "Comprobando acceso a GitHub…");
         using (var access = await GetAsync($"repos/{Repository}", token, ct).ConfigureAwait(false))
             if (access.RootElement.GetProperty("full_name").GetString() != Repository)
                 throw new InvalidDataException("Unexpected source repository identity.");
         using var revision = await GetAsync($"repos/{Repository}/commits/{reference}", token, ct).ConfigureAwait(false);
         var commit = revision.RootElement.GetProperty("sha").GetString()!;
         var tree = revision.RootElement.GetProperty("commit").GetProperty("tree").GetProperty("sha").GetString()!;
-        if (!ManifestContract.Sha().IsMatch(commit) || !ManifestContract.Sha().IsMatch(tree)) throw new InvalidDataException("Invalid source revision.");
+        if (!SourceRevision.Sha().IsMatch(commit) || !SourceRevision.Sha().IsMatch(tree)) throw new InvalidDataException("Invalid source revision.");
+        if (reference != "main" && commit != reference) throw new InvalidDataException("The source revision no longer matches the reviewed snapshot.");
+        if (reference != "main" && commit != reference) throw new InvalidDataException("GitHub returned a different source revision than requested.");
         using var listing = await GetAsync($"repos/{Repository}/git/trees/{tree}?recursive=1", token, ct).ConfigureAwait(false);
         if (listing.RootElement.GetProperty("truncated").GetBoolean()) throw new InvalidDataException("GitHub returned an incomplete source tree.");
         var entries = ReadTreeEntries(listing.RootElement.GetProperty("tree"));
-        var manifestEntry = entries.SingleOrDefault(e => e.Path == "estao-harness.json");
-        var manifest = manifestEntry is null ? ManifestContract.Bootstrap() :
-            InstallerJson.Read<SourceManifest>(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false));
-        ManifestContract.Validate(manifest, commit, tree, entries);
+        var manifestEntry = entries.SingleOrDefault(e => e.Path == "hub-manifest.json");
+        ValidatedCatalog? catalog = null;
+        if (manifestEntry is not null)
+            try { catalog = HubCatalogContract.Read(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false), entries); }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException) { }
         var coverage = new List<CoverageItem>();
         var files = new List<PreparedFile>();
         var artifacts = new List<PreparedArtifact>();
-        var selected = manifest.Artifacts.Where(a => a.Harnesses.Contains(adapter.Id)).ToList();
-        foreach (var artifact in manifest.Artifacts)
+        var selected = new List<HubCatalogItem>();
+        if (sourcePath is null) selected.AddRange(catalog?.Catalog.Items.Where(i => i.Type == "skill") ?? []);
+        else
         {
-            var members = entries.Where(e => ManifestContract.Matches(artifact.Source, e.Path)).ToList();
-            if (!selected.Contains(artifact))
+            InstallerPaths.Relative(sourcePath);
+            var entry = entries.SingleOrDefault(e => e.Path == sourcePath + "/SKILL.md");
+            if (entry is null) throw new InvalidDataException("Requested source is not a repository skill.");
+            var declared = catalog?.Catalog.Items.SingleOrDefault(i => i.Type == "skill" && i.Path == sourcePath);
+            if (declared is not null) AddDependencies(declared, catalog!, selected);
+            else selected.Add(new HubCatalogItem { Id = SkillIds(entries.Where(IsSkillEntry), catalog)[sourcePath], Type = "skill", Path = sourcePath });
+        }
+        var invalidSkills = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in selected.Where(i => i.Type == "skill"))
+        {
+            var source = entries.Single(e => e.Path == item.Path + "/SKILL.md");
+            try
             {
-                coverage.Add(new(artifact.Source, "unsupported", "No declarado compatible con este harness.", members.Count));
-                continue;
+                var (name, description) = HarnessAdapter.SkillMetadata(await BlobAsync(source, token, ct).ConfigureAwait(false));
+                if (name != item.Path[(item.Path.LastIndexOf('/') + 1)..] || string.IsNullOrWhiteSpace(description) || description.Length > 1024)
+                    invalidSkills.Add(item.Id);
             }
-            if (artifact.Dependencies.Any(d => selected.All(a => a.Id != d))) throw new InvalidDataException("A required dependency is unavailable for the selected harness.");
-            adapter.CheckCapabilities(artifact);
-            progress.ReportMessage(new("hub.downloading", artifact.Id), $"Descargando {artifact.Id}…");
+            catch (Exception ex) when (ex is InvalidDataException or DecoderFallbackException or ArgumentException or YamlException)
+            { invalidSkills.Add(item.Id); }
+        }
+        if (sourcePath is not null && invalidSkills.Count > 0)
+            throw new InvalidDataException("Requested repository skill has invalid metadata.");
+        var removedInvalidDependency = true;
+        while (removedInvalidDependency)
+        {
+            removedInvalidDependency = selected.RemoveAll(item => invalidSkills.Contains(item.Id) ||
+                item.Dependencies.Any(dependency => invalidSkills.Contains(dependency) ||
+                    selected.All(candidate => candidate.Id != dependency))) > 0;
+        }
+        selected.RemoveAll(item => invalidSkills.Contains(item.Id));
+        foreach (var item in selected)
+        {
+            if (item.Type != "skill") continue;
+            var source = item.Path;
+            var folder = source[(source.LastIndexOf('/') + 1)..];
+            var artifact = new SourceArtifact { Id = folder, Source = source, Category = "skill" };
+            var members = entries.Where(e => e.Path == source + "/SKILL.md" || e.Path.StartsWith(source + "/", StringComparison.Ordinal)).ToList();
+            var metadata = await BlobAsync(members.Single(e => e.Path == source + "/SKILL.md"), token, ct).ConfigureAwait(false);
+            var (name, description) = HarnessAdapter.SkillMetadata(metadata);
+            if (name != folder || string.IsNullOrWhiteSpace(description) || description.Length > 1024)
+                throw new InvalidDataException("Invalid skill identity or description in repository metadata.");
+            progress?.ReportMessage(new("hub.downloading", item.Id), $"Descargando {item.Id}…");
             var payloads = new List<(SourceEntry Entry, byte[] Bytes)>();
             // Bounded parallelism avoids hundreds of serial requests without exhausting GitHub's concurrency limits.
             foreach (var batch in members.Chunk(6))
@@ -131,17 +171,69 @@ public sealed class GitHubRepositorySource(HttpClient client)
                 var downloaded = await Task.WhenAll(batch.Select(async e => (Entry: e, Bytes: await BlobAsync(e, token, ct).ConfigureAwait(false)))).ConfigureAwait(false);
                 payloads.AddRange(downloaded);
             }
-            files.AddRange(adapter.Prepare(artifact, payloads));
-            var description = artifact.Category == "skill"
-                ? HarnessAdapter.SkillDescription(payloads.Single(p => p.Entry.Path == artifact.Source + "/SKILL.md").Bytes)
-                : "Native " + artifact.Category + " configuration.";
-            artifacts.Add(new(artifact.Id, artifact.Category, artifact.Source, description, artifact.Requirements));
-            coverage.Add(new(artifact.Source, "installable", string.Join("; ", artifact.Requirements.Prepend("Formato nativo; no se ejecutan scripts ni se instalan dependencias.")), members.Count));
+            files.AddRange(adapter.Prepare(artifact, payloads).Select(file => file with { ArtifactId = item.Id }));
+            var actualDescription = catalog?.ById.GetValueOrDefault(item.Id)?.Description.GetValueOrDefault(catalog.Catalog.DefaultLanguage) ?? description;
+            artifacts.Add(new(item.Id, "skill", source, actualDescription, []));
+            coverage.Add(new(source, "installable", "Formato nativo; no se ejecutan scripts ni se instalan dependencias.", members.Count));
         }
-        coverage.AddRange(manifest.Exclusions.Select(e => new CoverageItem(e.Source, e.Classification, e.Reason,
-            entries.Count(f => ManifestContract.Matches(e.Source, f.Path)))));
-        return new PreparedSnapshot(commit, tree, manifest.Version, files, coverage,
-            selected.ToDictionary(a => a.Id, a => (IReadOnlyList<string>)a.Dependencies), artifacts);
+        var dependencyMap = selected.ToDictionary(i => i.Id, i => (IReadOnlyList<string>)(catalog?.ById.GetValueOrDefault(i.Id)?.Dependencies ?? []), StringComparer.OrdinalIgnoreCase);
+        return new PreparedSnapshot(commit, tree, "1", files, coverage, dependencyMap, artifacts);
+    }
+
+    public async Task<byte[]> ReadCatalogFileAsync(string token, string sourcePath, string reference, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(token)) throw new GitHubAccessException("Connect GitHub to read the private repository.", HttpStatusCode.Unauthorized);
+        if (string.IsNullOrWhiteSpace(token)) throw new GitHubAccessException("Conecta GitHub para leer la biblioteca privada.", HttpStatusCode.Unauthorized);
+        InstallerPaths.Relative(sourcePath);
+        if (reference != "main" && !SourceRevision.Sha().IsMatch(reference)) throw new InvalidDataException("Invalid source reference.");
+        using var revision = await GetAsync($"repos/{Repository}/commits/{reference}", token, cancellationToken).ConfigureAwait(false);
+        var commit = revision.RootElement.GetProperty("sha").GetString()!;
+        var tree = revision.RootElement.GetProperty("commit").GetProperty("tree").GetProperty("sha").GetString()!;
+        if (!SourceRevision.Sha().IsMatch(commit) || !SourceRevision.Sha().IsMatch(tree)) throw new InvalidDataException("Invalid source revision.");
+        if (reference != "main" && commit != reference) throw new InvalidDataException("The source revision no longer matches the reviewed snapshot.");
+        if (reference != "main" && commit != reference) throw new InvalidDataException("GitHub returned a different source revision than requested.");
+        using var listing = await GetAsync($"repos/{Repository}/git/trees/{tree}?recursive=1", token, cancellationToken).ConfigureAwait(false);
+        if (listing.RootElement.GetProperty("truncated").GetBoolean()) throw new InvalidDataException("GitHub returned an incomplete source tree.");
+        var entries = ReadTreeEntries(listing.RootElement.GetProperty("tree"));
+        var manifest = entries.SingleOrDefault(e => e.Path == "hub-manifest.json") ?? throw new InvalidDataException("hub-manifest.json is missing.");
+        var catalog = HubCatalogContract.Read(await BlobAsync(manifest, token, cancellationToken).ConfigureAwait(false), entries);
+        var item = catalog.Catalog.Items.SingleOrDefault(i => i.Path == sourcePath && i.Type is "instruction" or "file")
+            ?? throw new InvalidDataException("Only explicitly curated instruction and file items can be exported.");
+        var source = entries.Single(e => e.Path == item.Path);
+        return await BlobAsync(source, token, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void AddDependencies(HubCatalogItem item, ValidatedCatalog catalog, List<HubCatalogItem> selected)
+    {
+        if (selected.Any(existing => existing.Id == item.Id)) return;
+        foreach (var id in item.Dependencies) AddDependencies(catalog.ById[id], catalog, selected);
+        selected.Add(item);
+    }
+
+    private static bool IsSkillEntry(SourceEntry entry) => entry.Path == "SKILL.md" || entry.Path.EndsWith("/SKILL.md", StringComparison.Ordinal);
+    private static string SkillSource(SourceEntry entry) => entry.Path == "SKILL.md" ? "." : entry.Path[..^"/SKILL.md".Length];
+    private static string SkillFolder(string source) => source == "." ? "repository-skill" : source[(source.LastIndexOf('/') + 1)..];
+
+    // Discovery and preparation must agree on identity for duplicate names and catalog-ID collisions.
+    private static IReadOnlyDictionary<string, string> SkillIds(IEnumerable<SourceEntry> entries, ValidatedCatalog? catalog)
+    {
+        var sources = entries.Select(SkillSource).Order(StringComparer.Ordinal).ToArray();
+        var counts = sources.GroupBy(SkillFolder, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+        var used = (catalog?.ById.Keys ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var curated = catalog?.Catalog.Items.Where(item => item.Type == "skill")
+            .ToDictionary(item => item.Path, item => item.Id, StringComparer.Ordinal) ?? new Dictionary<string, string>();
+        var ids = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var source in sources)
+        {
+            if (curated.TryGetValue(source, out var declared)) { ids[source] = declared; continue; }
+            var folder = SkillFolder(source);
+            var id = counts[folder] == 1 && !used.Contains(folder) ? folder
+                : folder + "-" + InstallerPaths.GitBlob(Encoding.UTF8.GetBytes(source));
+            while (!used.Add(id)) id += "-other";
+            ids.Add(source, id);
+        }
+        return ids;
     }
 
     private static List<SourceEntry> ReadTreeEntries(JsonElement tree)
@@ -161,7 +253,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
         foreach (var entry in entries)
         {
             InstallerPaths.Relative(entry.Path);
-            if (!paths.Add(entry.Path) || !ManifestContract.Sha().IsMatch(entry.Sha))
+            if (!paths.Add(entry.Path) || !SourceRevision.Sha().IsMatch(entry.Sha))
                 throw new InvalidDataException("Unsafe or duplicate source entry.");
         }
         return entries;
@@ -169,7 +261,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
 
     private async Task<byte[]> BlobAsync(SourceEntry entry, string token, CancellationToken ct)
     {
-        if (entry.Size is < 0 or > 4 * 1024 * 1024 || !ManifestContract.Sha().IsMatch(entry.Sha)) throw new InvalidDataException("Unsafe source blob.");
+        if (entry.Size is < 0 or > 4 * 1024 * 1024 || !SourceRevision.Sha().IsMatch(entry.Sha)) throw new InvalidDataException("Unsafe source blob.");
         using var document = await GetAsync($"repos/{Repository}/git/blobs/{entry.Sha}", token, ct).ConfigureAwait(false);
         if (document.RootElement.GetProperty("encoding").GetString() != "base64") throw new InvalidDataException("Unsupported GitHub encoding.");
         var bytes = Convert.FromBase64String(document.RootElement.GetProperty("content").GetString()!);

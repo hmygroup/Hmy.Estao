@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Estao Hub catalog",
+  "description": "Publish as hub-manifest.json at the root of hmygroup/hmy-prompt-engineer. Curation and metadata, not executable policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "defaultLanguage", "categories", "items"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "defaultLanguage": { "type": "string", "pattern": "^[a-z]{2}$" },
+    "categories": {
+      "type": "object",
+      "maxProperties": 100,
+      "propertyNames": { "$ref": "#/$defs/id" },
+      "additionalProperties": { "$ref": "#/$defs/translations" }
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "path", "description", "categories"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "type": { "enum": ["skill", "instruction", "file"] },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "description": "Repository-relative forward-slash path. Skill: whole folder containing SKILL.md. Other types: one file. Runtime validation rejects unsafe, missing or overlapping paths."
+          },
+          "description": { "$ref": "#/$defs/translations" },
+          "categories": {
+            "type": "string",
+            "maxLength": 4096,
+            "description": "Comma-separated registered category IDs, or empty for Uncategorized. Whitespace is trimmed; repeated IDs are deduplicated."
+          },
+          "dependencies": {
+            "type": "array",
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/id" },
+            "description": "Optional required catalog skill IDs. References, types and cycles are checked by Estao."
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "type": { "enum": ["instruction", "file"] } } },
+            "then": { "properties": { "dependencies": { "maxItems": 0 } } }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "maxLength": 80, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "translations": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 20,
+      "propertyNames": { "pattern": "^[a-z]{2}$" },
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 1024 },
+      "description": "Lowercase ISO 639-1 language codes. The defaultLanguage translation is mandatory; runtime validation checks supported ISO codes."
+    }
+  }
+}
