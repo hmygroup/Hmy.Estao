@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { detectedTools, filterSkills, isCurated, itemType, localizedCategory, localizedDescription, skillCategories, skillToolStatus, type CatalogItemType, type HubCommand, type HubSkill, type HubState, type HubTool, type SkillStatus, type SkillView } from "./hubTypes";
-import { currentLanguage, t, plural } from "./i18n";
+import { detectedTools, filterSkills, isCurated, itemType, localizedCategory, localizedDescription, showHubConnect, skillCategories, skillToolStatus, type CatalogItemType, type HubCommand, type HubSkill, type HubState, type HubTool, type SkillStatus, type SkillView } from "./hubTypes";
+import { currentLanguage, t, plural, message } from "./i18n";
 
 export default function HubSkillBrowser({ state, busy, run }: { state?: HubState; busy: boolean; run: (command: HubCommand) => Promise<void> }) {
   const [view, setView] = useState<SkillView>("installed");
@@ -28,7 +28,9 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
         <button type="button" aria-pressed={view === "library"} onClick={() => changeView("library")}>{t("hub.view.library")}</button>
         <button type="button" aria-pressed={view === "other"} onClick={() => changeView("other")}>{t("hub.view.other")}</button>
       </div>
-      <small>{plural("hub.item_count", skills.length)}</small>
+      <div className="hub-browser-actions"><small>{plural("hub.item_count", skills.length)}</small>
+        <button type="button" className="secondary" disabled={busy} onClick={() => void run({ action: "check" })}>{t("hub.check_again")}</button>
+      </div>
     </div>
     <div className="hub-filters">
       <label className="hub-search">{t("hub.search")}<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={t("hub.search_placeholder")} /></label>
@@ -38,17 +40,23 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
       <label>{t("hub.status_filter")}<select aria-label={t("hub.status_filter")} value={status} onChange={event => setStatus(event.target.value as SkillStatus)}>
         {["all", "missing", "attention", "installable"].map(value => <option key={value} value={value}>{t(`hub.filter.${value}`)}</option>)}
       </select></label>
-      <label>{t("hub.category_filter")}<select aria-label={t("hub.category_filter")} value={effectiveCategory} onChange={event => setCategory(event.target.value)}>
-          <option value="">{t("hub.category_all")}</option>{categories.map(value => <option key={value} value={value}>{localizedCategory(value, catalogCategories, language, state?.catalogDefaultLanguage)}</option>)}
-          <option value="__uncategorized">{t("hub.category_uncategorized")}</option>
-      </select></label>
       {catalogFilter && <>
         <label>{t("hub.type_filter")}<select aria-label={t("hub.type_filter")} value={type} onChange={event => setType(event.target.value as CatalogItemType)}>
           {(["all", "skill", "instruction", "file"] as CatalogItemType[]).map(value => <option key={value} value={value}>{t(`hub.type.${value}`)}</option>)}
         </select></label>
       </>}
+      <div className={`hub-category-filter${catalogFilter ? " with-repository" : ""}`}><label>{t("hub.category_filter")}<select aria-label={t("hub.category_filter")} value={effectiveCategory} onChange={event => setCategory(event.target.value)}>
+          <option value="">{t("hub.category_all")}</option>{categories.map(value => <option key={value} value={value}>{localizedCategory(value, catalogCategories, language, state?.catalogDefaultLanguage)}</option>)}
+          <option value="__uncategorized">{t("hub.category_uncategorized")}</option>
+      </select></label>
+      {catalogFilter && <button type="button" className="secondary hub-repository-button" onClick={() => void run({ action: "open-repo" })}>{t("hub.open_repo")}</button>}
+      </div>
     </div>
     <p className="hub-helper">{t("hub.scope_hint")}</p>
+    {catalogFilter && showHubConnect(state) && <div className="hub-auth-notice" role="status">
+      <span>{message(state?.connectionMessage) || t("hub.connect_required")}</span>
+      <button type="button" className="primary" disabled={busy} onClick={() => void run({ action: "connect" })}>{t("hub.connect")}</button>
+    </div>}
     {view === "library" && state?.catalogError && <p className="inline-warning" role="alert">{t("hub.catalog_failed")} <span className="hub-diagnostic">{state.catalogError}</span></p>}
     {view !== "installed" && state?.libraryError && <p className="inline-warning" role="alert">{t("hub.library_failed")} <span className="hub-diagnostic">{state.libraryError}</span></p>}
     {view === "library" && !state?.libraryLoaded && !state?.libraryError && <p className="hub-browser-notice" role="status">{t(state?.busy ? "hub.library_loading" : state?.connected ? "hub.library_unavailable" : "hub.library_connect")}</p>}

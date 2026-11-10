@@ -114,7 +114,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
         <button key={id} className={page === id ? "nav-item active" : "nav-item"} onClick={() => setPage(id)}
           aria-current={page === id ? "page" : undefined}><span aria-hidden="true">{["⚙", "◐", "◈", "▣", "◷", "◇"][i]}</span>{title}</button>)}</nav>
     </aside>
-    <div className="settings-body"><header className="page-header"><div>
+    <div className={`settings-body${page === "hub" ? " settings-body-hub" : ""}`}><header className="page-header"><div>
       <h1>{titles[page][0]}</h1><p>{titles[page][1]}</p></div></header>
       <main className="settings-content">{page === "hub" ? <HarnessHub /> : <fieldset className="editor" disabled={busy}>
         {page === "providers" && <>

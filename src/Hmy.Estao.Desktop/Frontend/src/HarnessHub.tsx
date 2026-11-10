@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getHubState, hubCommand } from "./nativeHost";
-import { defaultSelection, updateSelection, showHubConnect, type HubCommand, type HubState, type HubToolReview } from "./hubTypes";
+import { defaultSelection, updateSelection, type HubCommand, type HubState, type HubToolReview } from "./hubTypes";
 import { t, plural, message, errorText } from "./i18n";
 import HubSkillBrowser from "./HubSkillBrowser";
 
@@ -70,20 +70,11 @@ export default function HarnessHub() {
   const busy = sending || !state || state.busy || checkingAuthorization;
   const chosen = Object.values(selection).reduce((sum, ids) => sum + ids.length, 0);
   const review = state?.review;
-  const hasCuratedSkills = state?.skills?.some(item => item.curated && (item.itemType ?? "skill") === "skill" && item.installable) === true;
   const visibleResults = state?.results.filter(result => state.tools.some(tool => tool.id === result.id && tool.detected)) ?? [];
+  const showProgress = (state?.busy && (!checkingAuthorization || showCheckingAuthorization))
+    || state?.progressMessage?.code === "hub.export_complete" || state?.progressMessage?.code === "hub.cancelled";
 
   return <div className="harness-hub">
-    <section className="section hub-connection">
-      <div className="hub-connection-copy"><h2>{t("hub.title")}</h2>
-        {!state?.connected && (!checkingAuthorization || showCheckingAuthorization) && <span className="hub-connection-status" role="status">{checkingAuthorization ? t("hub.check_access") : message(state?.connectionMessage) || t("connection.unknown")}</span>}
-      </div>
-      <div className="hub-actions">
-        <button type="button" className="secondary" onClick={() => void run({ action: "open-repo" })}>{t("hub.open_repo")}</button>
-        {showHubConnect(state) && <button type="button" className="primary" disabled={busy} onClick={() => void run({ action: "connect" })}>{t("hub.connect")}</button>}
-      </div>
-    </section>
-
     {state?.deviceCode && <section className="section hub-device" aria-label={t("hub.authorization")}>
       <h2>{t("hub.authorize")}</h2><p>{t("hub.enter_code")}</p>
       <strong className="hub-device-code">{state.deviceCode.code}</strong>
@@ -91,23 +82,14 @@ export default function HarnessHub() {
         <button type="button" className="secondary" onClick={() => void run({ action: "open-auth" })}>{t("open_github")}</button></div>
     </section>}
 
-    <div className="hub-section-heading"><h2>{t("hub.tools")}</h2><div className="hub-actions">
-      <button type="button" className="secondary" disabled={busy} onClick={() => void run({ action: "check" })}>{t("hub.check_again")}</button>
-      <button type="button" className="primary" disabled={busy || !state?.connected || !hasCuratedSkills || !state?.tools.some(t => t.detected)}
-        onClick={() => void run({ action: "review" })}>{t("hub.install_all")}</button>
-    </div></div>
-    <p className="hub-helper">{t("hub.helper")}</p>
-    <div className="hub-tool-summary">{state?.tools.filter(tool => tool.detected).map(tool => <article className="hub-tool-summary-item" key={tool.id}>
-      <div className="hub-tool-heading"><img className="provider-icon" src={`/providers/${tool.id}.svg`} alt="" /><div><h3>{tool.name}</h3>
-        <small>{tool.status === "RecoveryRequired" || tool.status === "Error" ? t(`hub.status.${tool.status}`) : plural("hub.skill_count", state.skills?.filter(skill => skill.occurrences.some(item => item.toolId === tool.id)).length ?? 0)}</small></div></div>
-      {tool.error && <p className="hub-helper">{message(tool.errorMessage) || t("error.operation")}</p>}
-      {tool.status === "RecoveryRequired" ? <button type="button" className="secondary" disabled={busy} onClick={() => void run({ action: "recover", harnessId: tool.id })}>{t("hub.recover")}</button>
-        : <button type="button" className="secondary" disabled={busy || !state.connected || !hasCuratedSkills} onClick={() => void run({ action: "review", harnessId: tool.id })}>{t("hub.review_install")}</button>}
-    </article>)}</div>
+    {state?.tools.filter(tool => tool.detected && (tool.status === "RecoveryRequired" || tool.error)).map(tool =>
+      <div className="inline-warning hub-recovery" role="alert" key={tool.id}><span><strong>{tool.name}</strong> · {tool.status === "RecoveryRequired" ? t("hub.recovery_required") : message(tool.errorMessage) || t("error.operation")}</span>
+        {tool.status === "RecoveryRequired" && <button type="button" className="secondary" disabled={busy} onClick={() => void run({ action: "recover", harnessId: tool.id })}>{t("hub.recover")}</button>}
+      </div>)}
 
-    <div className="hub-progress" role="status">{(!checkingAuthorization || showCheckingAuthorization) && <span>{message(state?.progressMessage) || t("hub.check_tools")}</span>}
+    {showProgress && <div className="hub-progress" role="status"><span>{message(state?.progressMessage) || t("hub.check_tools")}</span>
       {state?.busy && <button type="button" className="secondary" disabled={sending} onClick={() => void run({ action: "cancel" })}>{t("cancel")}</button>}
-    </div>
+    </div>}
     {(error || state?.error) && <p className="inline-warning" role="alert">{error || message(state?.errorMessage) || t("error.operation")}</p>}
 
     <HubSkillBrowser state={state} busy={busy} run={run} />
