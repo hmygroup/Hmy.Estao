@@ -291,7 +291,6 @@ function Popover({ state, reload }: { state: DesktopState; reload: () => Promise
         {snapshot.isStale && !snapshot.error && <p className="inline-warning">{t("usage.stale")}</p>}
         {snapshot.windows.map(w => <WindowUsage key={w.id} window={w} alerts={state.usageAlerts} />)}
         {!snapshot.windows.length && <p>{t("usage.no_windows")}</p>}
-        {snapshot.provider !== "codex" && snapshot.credits && <div className="credits">{t("credits")} <strong>{snapshot.credits.unlimited ? t("unlimited") : `${snapshot.credits.balance == null ? "—" : number(snapshot.credits.balance)} ${snapshot.credits.unit || ""}`}</strong></div>}
       </>}
       {state.charts?.filter(c => c.provider === snapshot.provider).map((chart, index) => <UsageChart key={`${snapshot.provider}-${index}`} chart={chart} />)}
     </> : <div className="empty-state"><h2>{t("usage.empty")}</h2><p>{t("usage.get_started")}</p><button className="primary" onClick={() => void run("settings")}>{t("open_settings")}</button></div>}
