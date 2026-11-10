@@ -53,6 +53,10 @@ public sealed record PreparedSnapshot(string Commit, string Tree, string Manifes
 public sealed record PreparedArtifact(string Id, string Category, string Source, string Description,
     IReadOnlyList<string> Requirements);
 
+public sealed record RepositorySkill(string Id, string Name, string Description, string Source,
+    IReadOnlyList<string> CompatibleHarnesses, bool Installable, string? Issue = null);
+public sealed record RepositorySkillLibrary(string Commit, IReadOnlyList<RepositorySkill> Skills);
+
 public enum InstallAction { Create, Update, Merge, AlreadyPresent, Conflict }
 public sealed record PlannedFile(string ArtifactId, string Path, byte[] Content, string? BeforeHash,
     string AfterHash, InstallAction Action, string Reason, IReadOnlyDictionary<string, string>? StructuredNodes = null,

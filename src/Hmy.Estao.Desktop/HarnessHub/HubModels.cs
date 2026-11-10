@@ -10,7 +10,7 @@ internal static class HubContracts
 }
 
 internal sealed record HubCommand(string Action, string? HarnessId = null, string? ReviewId = null,
-    Dictionary<string, string[]>? Selection = null);
+    Dictionary<string, string[]>? Selection = null, string? SkillId = null);
 internal sealed record HubTool(string Id, string Name, bool Detected, string Status, string? Error = null, UserMessage? ErrorMessage = null);
 internal sealed record HubArtifact(string Id, string Description, string Category, string Status,
     int FileCount, string Source, IReadOnlyList<string> Requirements, IReadOnlyList<string> Dependencies,
@@ -26,4 +26,8 @@ internal sealed record HubDeviceCode(string Code, string VerificationUrl);
 internal sealed record HubState(bool Busy, string Phase, string Progress, bool Connected, string Connection,
     IReadOnlyList<HubTool> Tools, HubReview? Review, IReadOnlyList<HubResult> Results, HubDeviceCode? DeviceCode,
     string? Error, UserMessage? ProgressMessage = null, UserMessage? ConnectionMessage = null, UserMessage? ErrorMessage = null,
-    bool AuthorizationChecked = false, bool CheckingAuthorization = false);
+    bool AuthorizationChecked = false, bool CheckingAuthorization = false,
+    IReadOnlyList<HubSkill>? Skills = null, string? LibraryCommit = null, string? LibraryError = null, bool LibraryLoaded = false);
+internal sealed record HubSkill(string Id, string Name, string Description, bool InLibrary, bool Installable,
+    IReadOnlyList<string> CompatibleTools, IReadOnlyList<HubSkillOccurrence> Occurrences, string? Source = null, string? Issue = null);
+internal sealed record HubSkillOccurrence(string ToolId, string Path, bool Shared, string? Hash, string? Error = null);

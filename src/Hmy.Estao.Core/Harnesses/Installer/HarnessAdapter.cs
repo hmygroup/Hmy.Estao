@@ -185,10 +185,21 @@ public sealed class HarnessAdapter
     }
 
     public static string SkillDescription(byte[] bytes)
+        => SkillMetadata(bytes).Description;
+
+    public static (string Name, string Description) SkillMetadata(byte[] bytes)
     {
-        var yaml = ReadFrontmatter(bytes);
-        return yaml.Children.TryGetValue(new YamlScalarNode("description"), out var description)
-            && description is YamlScalarNode scalar ? scalar.Value ?? string.Empty : string.Empty;
+        try
+        {
+            var yaml = ReadFrontmatter(bytes);
+            var name = yaml.Children.TryGetValue(new YamlScalarNode("name"), out var nameNode) && nameNode is YamlScalarNode nameScalar
+                ? nameScalar.Value ?? string.Empty : string.Empty;
+            var descriptionText = yaml.Children.TryGetValue(new YamlScalarNode("description"), out var description)
+                && description is YamlScalarNode scalar ? scalar.Value ?? string.Empty : string.Empty;
+            return (name, descriptionText);
+        }
+        catch (Exception ex) when (ex is YamlDotNet.Core.YamlException or InvalidOperationException)
+        { throw new InvalidDataException("Invalid YAML skill metadata.", ex); }
     }
 
     public bool IsAllowedDestination(string path)

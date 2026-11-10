@@ -1,7 +1,9 @@
 using System.Net;
 using Hmy.Estao.Core.Models;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
+using YamlDotNet.Core;
 
 namespace Hmy.Estao.Core.Harnesses.Installer;
 
@@ -22,6 +24,68 @@ public sealed class GitHubRepositorySource(HttpClient client)
         if (response.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException("Invalid repository content response.");
     }
 
+    public async Task<RepositorySkillLibrary> DiscoverSkillsAsync(string token, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(token)) throw new GitHubAccessException("Conecta GitHub para leer la biblioteca privada.", HttpStatusCode.Unauthorized);
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        operation.CancelAfter(TimeSpan.FromMinutes(3));
+        var ct = operation.Token;
+        using (var access = await GetAsync($"repos/{Repository}", token, ct).ConfigureAwait(false))
+            if (access.RootElement.GetProperty("full_name").GetString() != Repository)
+                throw new InvalidDataException("Unexpected source repository identity.");
+        using var revision = await GetAsync($"repos/{Repository}/commits/main", token, ct).ConfigureAwait(false);
+        var commit = revision.RootElement.GetProperty("sha").GetString()!;
+        var tree = revision.RootElement.GetProperty("commit").GetProperty("tree").GetProperty("sha").GetString()!;
+        if (!ManifestContract.Sha().IsMatch(commit) || !ManifestContract.Sha().IsMatch(tree)) throw new InvalidDataException("Invalid source revision.");
+        using var listing = await GetAsync($"repos/{Repository}/git/trees/{tree}?recursive=1", token, ct).ConfigureAwait(false);
+        if (listing.RootElement.GetProperty("truncated").GetBoolean()) throw new InvalidDataException("GitHub returned an incomplete source tree.");
+        var entries = ReadTreeEntries(listing.RootElement.GetProperty("tree"));
+        var declarations = new Dictionary<string, SourceArtifact>(StringComparer.OrdinalIgnoreCase);
+        var manifestEntry = entries.SingleOrDefault(e => e.Path == "estao-harness.json");
+        SourceManifest? manifest = null;
+        var snapshotApproved = false;
+        try
+        {
+            manifest = manifestEntry is null ? ManifestContract.Bootstrap() :
+                InstallerJson.Read<SourceManifest>(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false));
+            ManifestContract.Validate(manifest, commit, tree, entries);
+            snapshotApproved = true;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException)
+        { /* Browsing remains available when the installation contract is stale or invalid. */ }
+        if (manifest?.Artifacts is not null)
+            foreach (var artifact in manifest.Artifacts.Where(a => a is not null && a.Category == "skill" &&
+                         !string.IsNullOrWhiteSpace(a.Id) && !string.IsNullOrWhiteSpace(a.Source) && a.Harnesses is not null))
+                declarations.TryAdd(artifact.Id, artifact);
+        var skills = new List<RepositorySkill>();
+        foreach (var entry in entries.Where(e => e.Path == "SKILL.md" || e.Path.EndsWith("/SKILL.md", StringComparison.Ordinal)))
+        {
+            ct.ThrowIfCancellationRequested();
+            var bytes = await BlobAsync(entry, token, ct).ConfigureAwait(false);
+            var source = entry.Path == "SKILL.md" ? "" : entry.Path[..^"/SKILL.md".Length];
+            var id = source.Length == 0 ? "repository" : source[(source.LastIndexOf('/') + 1)..];
+            string name = id, description;
+            var metadataValid = false;
+            string? issue = null;
+            try
+            {
+                (name, description) = HarnessAdapter.SkillMetadata(bytes);
+                if (source.Length == 0 && !string.IsNullOrWhiteSpace(name)) id = name;
+                metadataValid = name == id && !string.IsNullOrWhiteSpace(description) && description.Length <= 1024;
+                if (!metadataValid) issue = "Invalid skill identity or description in repository metadata.";
+            }
+            catch (Exception ex) when (ex is InvalidDataException or DecoderFallbackException or ArgumentException or YamlException)
+            { description = ""; issue = "Could not parse repository skill metadata."; }
+            if (string.IsNullOrWhiteSpace(name)) name = id;
+            var declared = declarations.TryGetValue(id, out var declaration) && declaration is not null &&
+                declaration.Id == id && declaration.Source == source;
+            var compatible = declared ? declaration!.Harnesses.Where(HarnessAdapter.Ids.Contains).Distinct(StringComparer.Ordinal).ToArray() : [];
+            skills.Add(new RepositorySkill(id, name, description, source.Length == 0 ? "." : source,
+                compatible, snapshotApproved && declared && metadataValid && compatible.Length > 0, issue));
+        }
+        return new RepositorySkillLibrary(commit, skills);
+    }
+
     public async Task<PreparedSnapshot> PrepareAsync(string token, HarnessAdapter adapter,
         IProgress<string>? progress = null, CancellationToken cancellationToken = default, string reference = "main")
     {
@@ -40,15 +104,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
         if (!ManifestContract.Sha().IsMatch(commit) || !ManifestContract.Sha().IsMatch(tree)) throw new InvalidDataException("Invalid source revision.");
         using var listing = await GetAsync($"repos/{Repository}/git/trees/{tree}?recursive=1", token, ct).ConfigureAwait(false);
         if (listing.RootElement.GetProperty("truncated").GetBoolean()) throw new InvalidDataException("GitHub returned an incomplete source tree.");
-        var entries = new List<SourceEntry>();
-        foreach (var item in listing.RootElement.GetProperty("tree").EnumerateArray())
-        {
-            var mode = item.GetProperty("mode").GetString()!;
-            if (item.GetProperty("type").GetString() == "tree") continue;
-            if (mode is not ("100644" or "100755")) throw new InvalidDataException("Source contains a symbolic link or submodule.");
-            entries.Add(new SourceEntry(item.GetProperty("path").GetString()!, item.GetProperty("sha").GetString()!,
-                item.TryGetProperty("size", out var size) ? size.GetInt64() : -1, mode));
-        }
+        var entries = ReadTreeEntries(listing.RootElement.GetProperty("tree"));
         var manifestEntry = entries.SingleOrDefault(e => e.Path == "estao-harness.json");
         var manifest = manifestEntry is null ? ManifestContract.Bootstrap() :
             InstallerJson.Read<SourceManifest>(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false));
@@ -86,6 +142,29 @@ public sealed class GitHubRepositorySource(HttpClient client)
             entries.Count(f => ManifestContract.Matches(e.Source, f.Path)))));
         return new PreparedSnapshot(commit, tree, manifest.Version, files, coverage,
             selected.ToDictionary(a => a.Id, a => (IReadOnlyList<string>)a.Dependencies), artifacts);
+    }
+
+    private static List<SourceEntry> ReadTreeEntries(JsonElement tree)
+    {
+        var entries = new List<SourceEntry>();
+        foreach (var item in tree.EnumerateArray())
+        {
+            if (item.GetProperty("type").GetString() == "tree") continue;
+            var mode = item.GetProperty("mode").GetString()!;
+            if (mode is not ("100644" or "100755")) throw new InvalidDataException("Source contains a symbolic link or submodule.");
+            entries.Add(new SourceEntry(item.GetProperty("path").GetString()!, item.GetProperty("sha").GetString()!,
+                item.TryGetProperty("size", out var size) ? size.GetInt64() : -1, mode));
+        }
+        if (entries.Count > 5000 || entries.Any(e => e.Size is < 0 or > 4 * 1024 * 1024) || entries.Sum(e => e.Size) > 50L * 1024 * 1024)
+            throw new InvalidDataException("Source snapshot exceeds safety limits.");
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            InstallerPaths.Relative(entry.Path);
+            if (!paths.Add(entry.Path) || !ManifestContract.Sha().IsMatch(entry.Sha))
+                throw new InvalidDataException("Unsafe or duplicate source entry.");
+        }
+        return entries;
     }
 
     private async Task<byte[]> BlobAsync(SourceEntry entry, string token, CancellationToken ct)

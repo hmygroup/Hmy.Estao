@@ -12,13 +12,53 @@ export interface HubToolReview {
 export interface HubReview { id: string; commit: string; tools: HubToolReview[] }
 export interface HubResult { id: string; name: string; outcome: string; created: number; updated: number; unchanged: number; conflicts: number; error: string | null; errorMessage?: UserMessage }
 export interface HubState {
+  skills?: HubSkill[] | null; libraryCommit?: string | null; libraryError?: string | null; libraryLoaded?: boolean;
   authorizationChecked?: boolean; checkingAuthorization?: boolean;
   progressMessage?: UserMessage; connectionMessage?: UserMessage; errorMessage?: UserMessage;
   busy: boolean; phase: string; progress: string; connected: boolean; connection: string;
   tools: HubTool[]; review: HubReview | null; results: HubResult[];
   deviceCode: { code: string; verificationUrl: string } | null; error: string | null;
 }
-export interface HubCommand { action: string; harnessId?: string; reviewId?: string; selection?: Record<string, string[]> }
+export interface HubCommand { action: string; harnessId?: string; reviewId?: string; selection?: Record<string, string[]>; skillId?: string }
+
+export interface HubSkillOccurrence { toolId: string; path: string; shared: boolean; hash: string | null; error?: string | null }
+export interface HubSkill {
+  id: string; name: string; description: string; inLibrary: boolean; installable: boolean;
+  compatibleTools: string[]; occurrences: HubSkillOccurrence[]; source?: string | null; issue?: string | null;
+}
+export type SkillView = "installed" | "library";
+export type SkillStatus = "all" | "missing" | "attention" | "installable";
+export function detectedTools(tools: HubTool[]): HubTool[] { return tools.filter(tool => tool.detected); }
+export function skillToolStatus(skill: HubSkill, tool: HubTool): "present" | "missing" | "unknown" | "unsupported" {
+  const occurrences = skill.occurrences.filter(item => item.toolId === tool.id);
+  if (occurrences.some(item => item.error)) return "unknown";
+  if (occurrences.length > 0) return "present";
+  if (tool.error) return "unknown";
+  if (skill.inLibrary && !skill.compatibleTools.includes(tool.id)) return "unsupported";
+  return "missing";
+}
+export function filterSkills(skills: HubSkill[], tools: HubTool[], view: SkillView, query: string, toolId: string, status: SkillStatus): HubSkill[] {
+  const visible = detectedTools(tools);
+  const selected = visible.filter(tool => !toolId || tool.id === toolId);
+  const text = query.trim().toLocaleLowerCase();
+  return skills.filter(skill => {
+    const installed = skill.occurrences.some(item => visible.some(tool => tool.id === item.toolId));
+    if (view === "installed" ? !installed : !skill.inLibrary) return false;
+    if (text && !`${skill.name} ${skill.id} ${skill.description}`.toLocaleLowerCase().includes(text)) return false;
+    if (toolId && !selected.some(tool => view === "installed"
+      ? skill.occurrences.some(item => item.toolId === tool.id)
+      : skill.compatibleTools.includes(tool.id) || skill.occurrences.some(item => item.toolId === tool.id))) return false;
+    if (status === "installable" && (!skill.installable || !selected.some(tool => skill.compatibleTools.includes(tool.id)))) return false;
+    if (status === "attention") {
+      const local = skill.occurrences.filter(item => selected.some(tool => tool.id === item.toolId));
+      const differing = local.some(item => item.hash && skill.occurrences.some(other => other.hash && other.hash !== item.hash));
+      const issue = skill.issue && (!toolId || differing || (skill.inLibrary && !skill.installable));
+      if (!issue && !selected.some(tool => skillToolStatus(skill, tool) === "unknown")) return false;
+    }
+    if (status === "missing" && !selected.some(tool => skillToolStatus(skill, tool) === "missing")) return false;
+    return true;
+  }).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+}
 
 export function showHubConnect(state?: Pick<HubState, "connected" | "authorizationChecked" | "checkingAuthorization">): boolean {
   return state?.authorizationChecked === true && !state.checkingAuthorization && !state.connected;

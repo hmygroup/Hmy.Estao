@@ -89,7 +89,7 @@ public sealed class HarnessHubSessionTests
         Assert.Equal("conflict", Assert.Single(review.Tools.Single(t => t.Id == "claude").Artifacts).Status);
         Assert.Equal("new", Assert.Single(review.Tools.Single(t => t.Id == "codex").Artifacts).Status);
         Assert.Contains(session.State.Results, r => r.Id == "opencode" && r.Outcome == "skipped");
-        Assert.Single(fixture.Requests, r => r.EndsWith("/commits/main", StringComparison.Ordinal));
+        Assert.Equal(2, fixture.Requests.Count(r => r.EndsWith("/commits/main", StringComparison.Ordinal)));
         Assert.Equal(2, fixture.Requests.Count(r => r.EndsWith("/commits/" + Fixture.Commit, StringComparison.Ordinal)));
         Assert.False(File.Exists(Path.Combine(fixture.Adapter("codex").SkillsRoot, "sample", "SKILL.md")));
 
@@ -101,6 +101,9 @@ public sealed class HarnessHubSessionTests
         Assert.Contains(session.State.Results, r => r.Id == "copilot" && r.Outcome == "installed" && r.Created == 0 && r.Unchanged == 1);
         Assert.Equal("Personal skill. Must not be overwritten.", await File.ReadAllTextAsync(existing));
         Assert.False(File.Exists(Path.Combine(fixture.Adapter("copilot").SkillsRoot, "sample", "SKILL.md")));
+        var sample = Assert.Single(session.State.Skills!, skill => skill.Id == "sample");
+        Assert.True(sample.InLibrary);
+        Assert.Contains(sample.Occurrences, occurrence => occurrence.ToolId == "codex");
     }
 
     [Fact]
@@ -151,6 +154,67 @@ public sealed class HarnessHubSessionTests
     }
 
     [Fact]
+    public async Task RepositoryLibraryFailureKeepsLocalSkillsAvailable()
+    {
+        using var fixture = new Fixture { FailTree = true };
+        var local = Path.Combine(fixture.Adapter("codex").SkillsRoot, "personal", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(local)!);
+        await File.WriteAllTextAsync(local, "---\nname: personal\ndescription: Local skill\n---\nBody");
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.False(session.State.LibraryLoaded);
+        Assert.NotNull(session.State.LibraryError);
+        Assert.Contains(session.State.Skills!, skill => skill.Id == "personal" && !skill.InLibrary);
+    }
+
+    [Fact]
+    public async Task SkillReviewOnlyTargetsDeclaredCompatibleHarnesses()
+    {
+        using var fixture = new Fixture { SkillHarnesses = ["codex"] };
+        using var session = fixture.Session();
+        session.Command(new("review", SkillId: "sample")); await session.CurrentOperation;
+        var review = Assert.IsType<HubReview>(session.State.Review);
+        Assert.Equal(["codex"], review.Tools.Select(tool => tool.Id));
+        Assert.DoesNotContain(session.State.Results, result => result.Outcome == "failed");
+    }
+
+    [Fact]
+    public async Task LibraryAndLocalOccurrencesAreReplacedOnRefreshRatherThanAccumulated()
+    {
+        using var fixture = new Fixture();
+        var file = Path.Combine(fixture.Adapter("codex").SkillsRoot, "sample", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllTextAsync(file, "---\nname: sample\ndescription: Personal sample\n---\n");
+        using var session = fixture.Session();
+        for (var i = 0; i < 2; i++)
+        {
+            session.Command(new("check")); await session.CurrentOperation;
+            Assert.Null(session.State.Error);
+            Assert.True(session.State.LibraryLoaded);
+            Assert.Equal(Fixture.Commit, session.State.LibraryCommit);
+            var skill = Assert.Single(session.State.Skills!);
+            Assert.True(skill.InLibrary);
+            Assert.True(skill.Installable);
+            Assert.Equal(2, skill.Occurrences.Count); // Codex and Copilot observe the same root.
+        }
+        File.Delete(file);
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.Empty(Assert.Single(session.State.Skills!).Occurrences);
+    }
+
+    [Fact]
+    public async Task SingleSkillReviewIncludesOnlyTheSkillAndItsDependencyClosure()
+    {
+        using var fixture = new Fixture { IncludeExtraSkills = true };
+        using var session = fixture.Session();
+        session.Command(new("review", "codex", SkillId: "sample")); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        var review = Assert.IsType<HubReview>(session.State.Review);
+        Assert.Equal(["base", "sample"], Assert.Single(review.Tools).Artifacts.Select(artifact => artifact.Id).Order());
+        Assert.DoesNotContain(Assert.Single(review.Tools).Artifacts, artifact => artifact.Id == "unrelated");
+    }
+
+    [Fact]
     public async Task MissingToolsCannotBePreparedAndCancellationAllowsAnotherOperation()
     {
         using var fixture = new Fixture();
@@ -178,6 +242,9 @@ public sealed class HarnessHubSessionTests
         public List<string> Requests { get; } = [];
         public bool DenyAccess { get; set; }
         public bool BlockReads { get; set; }
+        public bool FailTree { get; set; }
+        public string[] SkillHarnesses { get; set; } = ["codex", "claude", "copilot", "opencode"];
+        public bool IncludeExtraSkills { get; set; }
         public HarnessAdapter Adapter(string id) => new(id, Path.Combine(Directory, "home"), _ => null);
         public HarnessHubSession Session(string token = "fake-test-token", Func<CancellationToken, Task<IReadOnlyList<string>>>? candidates = null) => new(Path.Combine(Directory, "config.json"),
             new HttpClient(new Handler(this)), id => id != "opencode", Adapter,
@@ -188,18 +255,32 @@ public sealed class HarnessHubSessionTests
             var path = request.RequestUri!.PathAndQuery;
             Requests.Add(path);
             if (DenyAccess) return new(HttpStatusCode.Forbidden) { Content = new StringContent("{}") };
+            if (FailTree && path.Contains("/git/trees/", StringComparison.Ordinal)) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
             var skill = Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n---\nFixture, never execute.\n");
-            var manifest = JsonSerializer.SerializeToUtf8Bytes(new SourceManifest
+            var sourceManifest = new SourceManifest
             {
-                Artifacts = [new() { Id = "sample", Source = "skills/sample", Harnesses = ["codex", "claude", "copilot", "opencode"] }]
-            }, InstallerJson.Options);
+                Artifacts = [new() { Id = "sample", Source = "skills/sample", Harnesses = SkillHarnesses.ToList(),
+                    Dependencies = IncludeExtraSkills ? ["base"] : [] }]
+            };
+            var extras = new Dictionary<string, byte[]>();
+            if (IncludeExtraSkills)
+                foreach (var id in new[] { "base", "unrelated" })
+                {
+                    extras["skills/" + id + "/SKILL.md"] = Encoding.UTF8.GetBytes($"---\nname: {id}\ndescription: Test skill\n---\n");
+                    sourceManifest.Artifacts.Add(new() { Id = id, Source = "skills/" + id, Harnesses = SkillHarnesses.ToList() });
+                }
+            var manifest = JsonSerializer.SerializeToUtf8Bytes(sourceManifest, InstallerJson.Options);
             var hash = InstallerPaths.GitBlob(skill);
             var manifestHash = InstallerPaths.GitBlob(manifest);
+            var entries = new[] {
+                new { path = "skills/sample/SKILL.md", sha = hash, size = skill.Length, mode = "100644", type = "blob" },
+                new { path = "estao-harness.json", sha = manifestHash, size = manifest.Length, mode = "100644", type = "blob" }
+            }.Concat(extras.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" })).ToArray();
+            var extraBlob = extras.Values.FirstOrDefault(bytes => path.EndsWith("/" + InstallerPaths.GitBlob(bytes), StringComparison.Ordinal));
             object body = path.Contains("/contents/", StringComparison.Ordinal) ? Array.Empty<object>()
                 : path.Contains("/commits/", StringComparison.Ordinal) ? new { sha = Commit, commit = new { tree = new { sha = Tree } } }
-                : path.Contains("/git/trees/", StringComparison.Ordinal) ? new { truncated = false, tree = new[] {
-                    new { path = "skills/sample/SKILL.md", sha = hash, size = skill.Length, mode = "100644", type = "blob" },
-                    new { path = "estao-harness.json", sha = manifestHash, size = manifest.Length, mode = "100644", type = "blob" } } }
+                : path.Contains("/git/trees/", StringComparison.Ordinal) ? new { truncated = false, tree = entries }
+                : extraBlob is not null ? new { encoding = "base64", content = Convert.ToBase64String(extraBlob) }
                 : path.EndsWith("/" + hash, StringComparison.Ordinal) ? new { encoding = "base64", content = Convert.ToBase64String(skill) }
                 : path.EndsWith("/" + manifestHash, StringComparison.Ordinal) ? new { encoding = "base64", content = Convert.ToBase64String(manifest) }
                 : new { full_name = GitHubRepositorySource.Repository };

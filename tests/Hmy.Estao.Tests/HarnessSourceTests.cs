@@ -119,6 +119,74 @@ public sealed class HarnessSourceTests
         await Assert.ThrowsAsync<InvalidDataException>(() => source.PrepareAsync("fake-token", adapter));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task discovery_finds_repository_and_shared_skills_without_approving_stale_manifest(bool stale)
+    {
+        var blobs = new Dictionary<string, byte[]>();
+        void Add(string path, string text) => blobs[path] = Bytes(text);
+        Add("skills/repository-only/SKILL.md", "---\nname: repository-only\ndescription: Repository skill\n---\nBody\n");
+        Add("skills/shared/SKILL.md", "---\nname: shared\ndescription: Shared skill\n---\nBody\n");
+        var manifest = JsonSerializer.SerializeToUtf8Bytes(new SourceManifest
+        {
+            Commit = stale ? new string('c', 40) : Commit, // Old pin must not prevent browsing or imply approval.
+            Artifacts = [new() { Id = "shared", Source = "skills/shared", Harnesses = ["claude", "codex"] }],
+            Exclusions = [new("skills/repository-only", "unsupported", "Not approved for installation.")]
+        }, InstallerJson.Options);
+        blobs["estao-harness.json"] = manifest;
+        var entries = blobs.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" }).ToArray();
+        using var client = new HttpClient(new Handler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            object response = path.EndsWith("/commits/main", StringComparison.Ordinal)
+                ? new { sha = Commit, commit = new { tree = new { sha = Tree } } }
+                : path.Contains("/git/trees/", StringComparison.Ordinal) ? new { truncated = false, tree = entries }
+                : path.Contains("/git/blobs/", StringComparison.Ordinal)
+                    ? new { encoding = "base64", content = Convert.ToBase64String(blobs.Values.Single(bytes => InstallerPaths.GitBlob(bytes) == path[(path.LastIndexOf('/') + 1)..])) }
+                    : new { full_name = GitHubRepositorySource.Repository };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(response)) };
+        }));
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+        Assert.Equal(Commit, library.Commit);
+        Assert.Equal(2, library.Skills.Count);
+        var approved = library.Skills.Single(skill => skill.Id == "shared");
+        Assert.Equal(!stale, approved.Installable);
+        Assert.Equal(["claude", "codex"], approved.CompatibleHarnesses);
+        var unapproved = library.Skills.Single(skill => skill.Id == "repository-only");
+        Assert.False(unapproved.Installable);
+        Assert.Empty(unapproved.CompatibleHarnesses);
+    }
+
+    [Fact]
+    public async Task discovery_keeps_root_and_malformed_skills_visible_without_a_manifest()
+    {
+        var blobs = new Dictionary<string, byte[]>
+        {
+            ["SKILL.md"] = Bytes("---\nname: root-skill\ndescription: Root skill\n---\n"),
+            ["skills/broken/SKILL.md"] = Bytes("---\nname: [unclosed\ndescription: broken\n---\n"),
+            ["skills/quoted/SKILL.md"] = Bytes("---\n'name': \"quoted\"\ndescription: Quoted YAML keys are valid\n---\n")
+        };
+        var entries = blobs.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" }).ToArray();
+        using var client = new HttpClient(new Handler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            object response = path.EndsWith("/commits/main", StringComparison.Ordinal)
+                ? new { sha = Commit, commit = new { tree = new { sha = Tree } } }
+                : path.Contains("/git/trees/", StringComparison.Ordinal) ? new { truncated = false, tree = entries }
+                : path.Contains("/git/blobs/", StringComparison.Ordinal)
+                    ? new { encoding = "base64", content = Convert.ToBase64String(blobs.Values.Single(bytes => InstallerPaths.GitBlob(bytes) == path[(path.LastIndexOf('/') + 1)..])) }
+                    : new { full_name = GitHubRepositorySource.Repository };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(response)) };
+        }));
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+        Assert.Equal(3, library.Skills.Count);
+        Assert.All(library.Skills, skill => Assert.False(skill.Installable));
+        Assert.Equal(".", library.Skills.Single(skill => skill.Id == "root-skill").Source);
+        Assert.NotNull(library.Skills.Single(skill => skill.Id == "broken").Issue);
+        Assert.Null(library.Skills.Single(skill => skill.Id == "quoted").Issue);
+    }
+
     [Fact]
     public async Task real_github_snapshot_can_be_prepared_in_an_isolated_profile_when_explicitly_enabled()
     {

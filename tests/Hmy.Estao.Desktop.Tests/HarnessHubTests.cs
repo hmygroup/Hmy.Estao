@@ -35,6 +35,28 @@ public sealed class HarnessHubTests
     }
 
     [Fact]
+    public void LocalInventoryUnionsSharedRootsAndKeepsDifferentCopies()
+    {
+        var home = Path.Combine(Path.GetTempPath(), "estao-hub-inventory-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var codex = new HarnessAdapter("codex", home, _ => null);
+            var claude = new HarnessAdapter("claude", home, _ => null);
+            Directory.CreateDirectory(Path.Combine(codex.SkillsRoot, "same"));
+            Directory.CreateDirectory(Path.Combine(claude.SkillsRoot, "same"));
+            File.WriteAllText(Path.Combine(codex.SkillsRoot, "same", "SKILL.md"), "---\nname: same\ndescription: Codex copy\n---\n");
+            File.WriteAllText(Path.Combine(claude.SkillsRoot, "same", "SKILL.md"), "---\nname: same\ndescription: Claude copy\n---\n");
+            var skills = HubSkillInventory.Scan(["codex", "claude"], id => id == "codex" ? codex : claude);
+            var skill = Assert.Single(skills);
+            Assert.Equal("same", skill.Id);
+            Assert.Equal(2, skill.Occurrences.Count);
+            Assert.All(skill.Occurrences, occurrence => Assert.NotNull(occurrence.Hash));
+            Assert.Contains("different", skill.Issue, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { if (Directory.Exists(home)) Directory.Delete(home, recursive: true); }
+    }
+
+    [Fact]
     public void SelectionPreservesWholeSkillFoldersAndRequiresDependencies()
     {
         var bytes = Encoding.UTF8.GetBytes("resource");

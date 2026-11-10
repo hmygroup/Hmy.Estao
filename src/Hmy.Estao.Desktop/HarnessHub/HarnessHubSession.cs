@@ -24,6 +24,8 @@ internal sealed class HarnessHubSession : IDisposable
     private CancellationTokenSource? _cancellation;
     private Task? _running;
     private string? _token;
+    private IReadOnlyList<HubSkill> _localSkills = [];
+    private IReadOnlyList<HubSkill> _librarySkills = [];
     private bool _disposed;
     private HubState _state = new(false, "idle", "Check your tools to get started.", false, "Not connected", [], null, [], null, null);
 
@@ -69,7 +71,7 @@ internal sealed class HarnessHubSession : IDisposable
             case "connect": Start("connecting", ConnectAsync); break;
             case "review":
                 if (command.HarnessId is not null && !HarnessAdapter.Ids.Contains(command.HarnessId)) throw new ArgumentException("Unknown harness.").WithUserMessage("hub.unknown_tool");
-                Start("preparing", ct => PrepareAsync(command.HarnessId, ct)); break;
+                Start("preparing", ct => PrepareAsync(command.HarnessId, ct, command.SkillId)); break;
             case "install":
                 var review = State.Review ?? throw new InvalidOperationException("Review the installation first.").WithUserMessage("hub.review_first");
                 if (command.ReviewId != review.Id || command.Selection is null) throw new ArgumentException("The review has changed. Review again.").WithUserMessage("hub.review_changed");
@@ -122,9 +124,12 @@ internal sealed class HarnessHubSession : IDisposable
     private async Task CheckAsync(CancellationToken ct)
     {
         _prepared.Clear();
-        Update(s => s with { Review = null, Results = [], Progress = "Checking installed tools…", ProgressMessage = new("hub.check_tools") });
+        _librarySkills = [];
+        Update(s => s with { Review = null, Results = [], LibraryCommit = null, LibraryError = null, LibraryLoaded = false,
+            Progress = "Checking installed tools…", ProgressMessage = new("hub.check_tools") });
         await UpdateToolsAsync(ct);
-        await FindAuthorizationAsync(ct);
+        await UpdateLocalInventoryAsync(ct);
+        if (await FindAuthorizationAsync(ct)) await UpdateRepositoryLibraryAsync(ct);
         Update(s => s with { Progress = "Tools checked. Review a tool or install all compatible skills.", ProgressMessage = new("hub.checked") });
     }
 
@@ -175,7 +180,9 @@ internal sealed class HarnessHubSession : IDisposable
 
     private async Task ConnectAsync(CancellationToken ct)
     {
-        if (await FindAuthorizationAsync(ct)) return;
+        await UpdateToolsAsync(ct);
+        await UpdateLocalInventoryAsync(ct);
+        if (await FindAuthorizationAsync(ct)) { await UpdateRepositoryLibraryAsync(ct); return; }
         var authorization = await OAuthLoginService.StartHarnessDeviceFlowAsync(ct);
         Update(s => s with { DeviceCode = new(authorization.UserCode, authorization.VerificationUri),
             Progress = "Enter the code in GitHub to authorize access.", ProgressMessage = new("hub.authorize") });
@@ -185,16 +192,25 @@ internal sealed class HarnessHubSession : IDisposable
         await _authorization.SaveAsync(token, ct);
         _token = token;
         Update(s => s with { Connected = true, Connection = "Connected to the private repository", Progress = "GitHub connected.", ConnectionMessage = new("hub.connected"), ProgressMessage = new("hub.connected") });
+        await UpdateRepositoryLibraryAsync(ct);
     }
 
-    private async Task PrepareAsync(string? harnessId, CancellationToken ct)
+    private async Task PrepareAsync(string? harnessId, CancellationToken ct, string? skillId = null)
     {
         _prepared.Clear();
         Update(s => s with { Review = null, Results = [] });
         await UpdateToolsAsync(ct);
-        var targets = State.Tools.Where(t => t.Detected && (harnessId is null || t.Id == harnessId)).ToArray();
-        if (targets.Length == 0) throw new InvalidOperationException("No selected tool is installed. Use Go to website, then Check again.").WithUserMessage("hub.no_tools");
+        await UpdateLocalInventoryAsync(ct);
+        if (!State.Tools.Any(t => t.Detected && (harnessId is null || t.Id == harnessId)))
+            throw new InvalidOperationException("No selected tool is installed. Use Go to website, then Check again.").WithUserMessage("hub.no_tools");
         if (!await FindAuthorizationAsync(ct)) throw new InvalidOperationException(State.Connection).WithUserMessage(State.ConnectionMessage?.Code ?? "hub.connect_required");
+        if (!State.LibraryLoaded) await UpdateRepositoryLibraryAsync(ct);
+        var librarySkill = skillId is null ? null : State.Skills?.FirstOrDefault(s => s.Id == skillId && s.InLibrary);
+        if (skillId is not null && librarySkill is not { Installable: true })
+            throw new ArgumentException("Select a repository skill approved for installation.").WithUserMessage("hub.select_skill");
+        var targets = State.Tools.Where(t => t.Detected && (harnessId is null || t.Id == harnessId) &&
+            (librarySkill is null || librarySkill.CompatibleTools.Contains(t.Id, StringComparer.Ordinal))).ToArray();
+        if (targets.Length == 0) throw new InvalidOperationException("No selected tool is installed. Use Go to website, then Check again.").WithUserMessage("hub.no_tools");
         var reviews = new List<HubToolReview>();
         var results = new List<HubResult>();
         string? commit = null;
@@ -208,6 +224,19 @@ internal sealed class HarnessHubSession : IDisposable
                     throw new InvalidOperationException("Recover the interrupted installation before reviewing this tool.").WithUserMessage("hub.recovery_required");
                 var snapshot = await new GitHubRepositorySource(_client).PrepareAsync(_token!, adapter, Progress(), ct, commit ?? "main");
                 commit ??= snapshot.Commit; // Every subsequent tool reads the same immutable commit.
+                if (skillId is not null)
+                {
+                    var dependencies = snapshot.Dependencies ?? new Dictionary<string, IReadOnlyList<string>>();
+                    if (!dependencies.ContainsKey(skillId)) throw new ArgumentException($"Skill '{skillId}' is not available for this tool.");
+                    var closure = new HashSet<string>(StringComparer.Ordinal) { skillId };
+                    void IncludeDependencies(string id)
+                    {
+                        foreach (var dependency in dependencies.GetValueOrDefault(id) ?? [])
+                            if (closure.Add(dependency)) IncludeDependencies(dependency);
+                    }
+                    IncludeDependencies(skillId);
+                    snapshot = HubReviewBuilder.Select(snapshot, closure);
+                }
                 var plan = await _installer.PlanAsync(adapter, snapshot, ct);
                 _prepared[target.Id] = (adapter, snapshot, plan);
                 reviews.Add(HubReviewBuilder.Build(adapter, snapshot, plan));
@@ -254,6 +283,66 @@ internal sealed class HarnessHubSession : IDisposable
         _prepared.Clear();
         Update(s => s with { Review = null, Progress = "Finished. Local conflicts were preserved; downloaded scripts were not executed.", ProgressMessage = new("hub.finished") });
         await UpdateToolsAsync(ct);
+        await UpdateLocalInventoryAsync(ct);
+    }
+
+    private Task UpdateLocalInventoryAsync(CancellationToken ct)
+    {
+        var errors = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        _localSkills = HubSkillInventory.Scan(State.Tools.Where(t => t.Detected).Select(t => t.Id), _adapter,
+            (id, error) =>
+            {
+                if (!errors.TryGetValue(id, out var messages)) errors[id] = messages = [];
+                if (messages.Count < 10) messages.Add(error);
+                else if (messages.Count == 10) messages.Add("Additional discovery errors omitted.");
+            }, ct);
+        var skills = MergeSkills(_localSkills, _librarySkills);
+        Update(s => s with { Skills = skills, Tools = s.Tools.Select(tool => errors.TryGetValue(tool.Id, out var messages)
+            ? tool with { Status = tool.Status == "RecoveryRequired" ? tool.Status : "Error",
+                Error = SafeError(new IOException(string.Join(" ", messages))), ErrorMessage = new("error.io") } : tool).ToArray() });
+        return Task.CompletedTask;
+    }
+
+    private async Task UpdateRepositoryLibraryAsync(CancellationToken ct)
+    {
+        Update(s => s with { Progress = "Loading the HMY skill library…", ProgressMessage = new("hub.library_loading") });
+        try
+        {
+            var library = await new GitHubRepositorySource(_client).DiscoverSkillsAsync(_token!, ct);
+            _librarySkills = library.Skills.GroupBy(skill => skill.Id, StringComparer.OrdinalIgnoreCase).Select(group =>
+            {
+                var preferred = group.FirstOrDefault(skill => skill.Installable) ?? group.First();
+                var sources = group.Select(skill => skill.Source).Distinct(StringComparer.Ordinal).ToArray();
+                var issues = new[] { preferred.Issue, sources.Length > 1
+                        ? "Multiple repository entries share this name. The approved mapping, if any, is used for installation." : null,
+                    preferred.Installable ? null : "Not approved for automatic installation." }.Where(issue => issue is not null).ToArray();
+                return new HubSkill(preferred.Id, preferred.Name, preferred.Description, true, preferred.Installable,
+                    preferred.CompatibleHarnesses, [], string.Join("; ", sources), issues.Length == 0 ? null : string.Join(" ", issues));
+            }).ToArray();
+            Update(s => s with { LibraryCommit = library.Commit, LibraryLoaded = true, LibraryError = null,
+                Skills = MergeSkills(_localSkills, _librarySkills) });
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception)
+        {
+            Update(s => s with { LibraryCommit = null, LibraryLoaded = false, LibraryError = SafeError(exception) });
+        }
+    }
+
+    private static IReadOnlyList<HubSkill> MergeSkills(IEnumerable<HubSkill> local, IEnumerable<HubSkill> library)
+    {
+        var merged = local.ToDictionary(skill => skill.Id, StringComparer.OrdinalIgnoreCase);
+        foreach (var item in library)
+        {
+            if (merged.TryGetValue(item.Id, out var existing))
+            {
+                var issues = new[] { existing.Issue, item.Issue }.Where(issue => !string.IsNullOrWhiteSpace(issue)).Distinct().ToArray();
+                merged[item.Id] = item with { Occurrences = existing.Occurrences,
+                    Issue = issues.Length == 0 ? null : string.Join(" ", issues) };
+            }
+            else merged[item.Id] = item;
+        }
+        return merged.Values.OrderBy(skill => skill.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private async Task RecoverAsync(string id, CancellationToken ct)
@@ -264,6 +353,7 @@ internal sealed class HarnessHubSession : IDisposable
             Results = [new(id, Name(id), issues.Count == 0 ? "recovered" : "failed", 0, 0, 0, issues.Count,
                 issues.Count == 0 ? null : string.Join(Environment.NewLine, issues), issues.Count == 0 ? null : new("hub.recovery_required"))] });
         await UpdateToolsAsync(ct);
+        await UpdateLocalInventoryAsync(ct);
     }
 
     private string SafeError(Exception exception)
