@@ -72,6 +72,13 @@ internal sealed class HarnessHubSession : IDisposable
         {
             case "check": Start("checking", CheckAsync); break;
             case "connect": Start("connecting", ConnectAsync); break;
+            case "install-instruction":
+                var instruction = _librarySkills.SingleOrDefault(item => item.Id == command.SkillId && item.Curated &&
+                    item.ItemType == "instruction" && item.Installable)
+                    ?? throw new ArgumentException("Select a catalog instruction to install.").WithUserMessage("hub.select_instruction");
+                if (!State.LibraryLoaded || State.LibraryCommit is not { } instructionCommit || _token is null)
+                    throw new InvalidOperationException("Refresh the repository catalog before installing.").WithUserMessage("hub.review_changed");
+                Start("installing", ct => InstallInstructionAsync(instruction, instructionCommit, ct)); break;
             case "uninstall-skill":
                 var installed = State.Skills?.SingleOrDefault(skill => skill.Id == command.SkillId && skill.Occurrences.Count > 0)
                     ?? throw new ArgumentException("Select an installed skill.").WithUserMessage("hub.select_skill");
@@ -139,6 +146,33 @@ internal sealed class HarnessHubSession : IDisposable
                 }
                 finally { Update(s => s with { Busy = false, CheckingAuthorization = false, Phase = "idle", DeviceCode = null }); }
             });
+        }
+    }
+
+    private async Task InstallInstructionAsync(HubSkill item, string commit, CancellationToken ct)
+    {
+        _prepared.Clear();
+        Update(s => s with { Review = null, Results = [] });
+        await UpdateToolsAsync(ct);
+        var targets = State.Tools.Where(tool => tool.Detected).ToArray();
+        if (targets.Length == 0) throw new InvalidOperationException("No tools are installed.").WithUserMessage("hub.no_tools");
+        var bytes = await new GitHubRepositorySource(_client).ReadCatalogFileAsync(_token!, item.Source!, commit, ct);
+        var results = new List<HubResult>();
+        foreach (var tool in targets)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if (!_detected(tool.Id)) throw new InvalidOperationException("Tool is no longer installed.").WithUserMessage("hub.no_tools");
+                var adapter = _adapter(tool.Id);
+                if (await _installer.GetInstallationStatusAsync(adapter) == HubOperationState.RecoveryRequired)
+                    throw new InvalidOperationException("Recover the interrupted installation first.").WithUserMessage("hub.recovery_required");
+                await HubInstructionInstaller.InstallAsync(adapter, item.Id, bytes, _dataDirectory, ct);
+                results.Add(new(tool.Id, tool.Name, "installed", 0, 0, 0, 0));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception exception) { results.Add(new(tool.Id, tool.Name, "failed", 0, 0, 0, 0, SafeError(exception), UserMessage.FromException(exception))); }
+            Update(s => s with { Results = results.ToArray() });
         }
     }
 

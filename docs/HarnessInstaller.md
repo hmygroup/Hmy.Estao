@@ -6,7 +6,7 @@ El origen fijo es `hmygroup/hmy-prompt-engineer`, branch `main`. Cada operación
 
 El catálogo se obtiene de **`hub-manifest.json` en la raíz del repositorio fuente**. Sustituye el contrato `estao-harness.json` y su fallback bootstrap. La especificación, el esquema JSON y un ejemplo para los responsables de HMY están en [HubManifest.md](HubManifest.md); estos entregables **no se han publicado allí**.
 
-HMY muestra únicamente elementos declarados. Other muestra skills del repositorio no catalogadas y skills locales sin correspondencia. Installed mantiene el inventario local. Instrucciones y otros archivos solo se muestran si están declarados; no se convierten en skills ni se registran automáticamente como instrucciones globales. La ausencia de un elemento del catálogo no significa incompatibilidad con una herramienta.
+HMY muestra únicamente elementos declarados. Other muestra skills del repositorio no catalogadas y skills locales sin correspondencia. Installed mantiene el inventario local. Instrucciones y otros archivos solo se muestran si están declarados; no se convierten en skills. Las instrucciones se registran globalmente solo mediante la acción explícita Instalar instrucción, nunca al cargar el catálogo o exportar. La ausencia de un elemento del catálogo no significa incompatibilidad con una herramienta.
 
 Instalar una skill no verifica sus runtimes: Tengu, Jira, navegadores, TFVC, herramientas de imagen y agentes internos siguen necesitando infraestructura y autorización propias. Los scripts, referencias y licencias dentro de la carpeta de una skill se conservan sin modificación. No se registran automáticamente sus agentes internos ni se activan hooks.
 
@@ -39,7 +39,7 @@ Instalar en `~/.agents/skills` hace disponible la skill a todas las herramientas
 
 Los overrides deben ser rutas locales absolutas sin enlaces. El instalador no deduce un proyecto desde el directorio de trabajo de la bandeja. La detección PATH es indicativa: no ejecuta ni instala el harness. Las herramientas no detectadas no se muestran ni se seleccionan para instalar.
 
-Los adapters validan el formato estándar de skills y conservan el contenido fuente. El catálogo no instala agentes, MCP ni comandos. Las instrucciones y archivos se exportan mediante Guardar como explícito; no se fusionan automáticamente en configuraciones globales o de proyecto. No se afirma aceptación runtime de todos los hosts a partir de validaciones de formato.
+Los adapters validan el formato estándar de skills y conservan el contenido fuente. El catálogo no instala agentes, MCP ni comandos. Las instrucciones y archivos se exportan mediante Guardar como explícito. Las instrucciones también ofrecen Instalar instrucción para todos los hosts detectados: Codex `<perfil>/AGENTS.md` (o `AGENTS.override.md` activo), Claude `<perfil>/CLAUDE.md`, Copilot `<perfil>/copilot-instructions.md` y OpenCode `<perfil>/AGENTS.md`. Se lee la descripción del frontmatter opcional, que no se copia al cuerpo instalado. Se añade un bloque identificado sin reemplazar instrucciones existentes, con backup previo; contenido idéntico no se duplica y bloques distintos del mismo ID se conservan como conflicto para resolver manualmente. No se modifican instrucciones de proyecto. Iniciar una conversación nueva asegura su carga. No se afirma aceptación runtime de todos los hosts a partir de validaciones de formato.
 
 ## Política aditiva y recuperación
 

@@ -109,6 +109,13 @@ test('tool installation filters do not present exportable files as installed or 
   assert.deepEqual(filterSkills([file], tools, 'library', '', '', 'all'), [file]);
 });
 
+test('installable instruction items can be filtered by tool without appearing as installed skills', () => {
+  const instruction = skill('global', { curated: true, inLibrary: true, itemType: 'instruction', installable: true, compatibleTools: ['codex'] });
+  assert.deepEqual(filterSkills([instruction], tools, 'library', '', 'codex', 'installable'), [instruction]);
+  assert.deepEqual(filterSkills([instruction], tools, 'installed', '', '', 'all'), []);
+  assert.deepEqual(filterSkills([instruction], tools, 'library', '', '', 'missing'), []);
+});
+
 test('shared occurrences remain present and independently represented per tool', () => {
   const shared = skill('shared', { occurrences: [occurrence('codex', '/shared/SKILL.md', true), occurrence('claude', '/shared/SKILL.md', true)] });
   assert.equal(skillToolStatus(shared, tools[0]), 'present');

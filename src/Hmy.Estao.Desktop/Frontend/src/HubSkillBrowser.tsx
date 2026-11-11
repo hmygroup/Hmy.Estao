@@ -110,11 +110,12 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
     <div className="hub-skill-details-content">
     <div className="hub-skill-details-heading">
       <h3>{skill.name}</h3>
-      <div className="hub-item-categories">{skill.categories?.length ? skill.categories.map(value => <span className="hub-badge" key={value}>{localizedCategory(value, catalogCategories, language, catalogDefaultLanguage)}</span>) : <small>{t("hub.category_uncategorized")}</small>}</div>
+      <div className="hub-item-categories">{skill.categories?.length ? skill.categories.map(value => <span className="hub-badge" key={value}>{localizedCategory(value, catalogCategories, language, catalogDefaultLanguage)}</span>) : <small>{t("hub.category_uncategorized")}</small>}
+        {!isSkill && <span className="hub-badge">{t(`hub.type.${itemType(skill)}`)}</span>}
+      </div>
     </div>
     <p>{description || t("hub.no_description")}</p>
     {!isCurated(skill) && skill.inLibrary && <small>{t("hub.origin_repo")}</small>}
-    {!isSkill && <span className="hub-badge hub-item-type">{t(`hub.type.${itemType(skill)}`)}</span>}
     {skill.issue && <p className="inline-warning">{t("hub.attention")} <span className="hub-diagnostic">{skill.issue}</span></p>}
     {isSkill && <div className="hub-skill-locations">{tools.map(tool => {
       const status = skillToolStatus(skill, tool);
@@ -139,7 +140,13 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
         {skill.inLibrary && skill.installable && <button type="button" className="primary" disabled={busy || !connected || !compatible.length} onClick={() => void run({ action: "install-skill", skillId: skill.id, ...(effectiveTarget ? { harnessId: effectiveTarget } : {}) })}>{t(skill.occurrences.length > 0 ? "hub.update_skill" : "hub.install_skill")}</button>}
         {isSkill && skill.occurrences.length > 0 && <UninstallSkill skill={skill} busy={busy} run={run} />}
       </div>
-    </> : <div className="hub-skill-install"><button type="button" className="secondary" disabled={busy || !connected} onClick={() => void run({ action: "export-item", skillId: skill.id })}>{t("hub.export_item")}</button><p className="hub-helper">{t("hub.export_hint")}</p></div>}
+    </> : <>
+      <div className="hub-skill-actions">
+        <button type="button" className="secondary" disabled={busy || !connected} onClick={() => void run({ action: "export-item", skillId: skill.id })}>{t("hub.export_item")}</button>
+        {itemType(skill) === "instruction" && <button type="button" className="primary" disabled={busy || !connected || !skill.installable || !tools.length} onClick={() => void run({ action: "install-instruction", skillId: skill.id })}>{t("hub.install_instruction")}</button>}
+      </div>
+      <p className="hub-helper">{t(itemType(skill) === "instruction" ? "hub.instruction_install_hint" : "hub.export_hint")}</p>
+    </>}
     </div>
   </section>;
 }

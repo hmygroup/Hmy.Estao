@@ -65,3 +65,12 @@ test('installed skills use the update label without changing the install command
   assert.match(source, /t\(skill.occurrences.length > 0 \? "hub.update_skill" : "hub.install_skill"\)/);
   assert.match(source, /action: "install-skill", skillId: skill.id/);
 });
+
+test('instruction pill shares the category group and install sits beside export', () => {
+  const details = source.slice(source.indexOf('function SkillDetails('));
+  const heading = details.slice(details.indexOf('className="hub-item-categories"'), details.indexOf('<p>{description'));
+  assert.match(heading, /hub\.type\.\$\{itemType\(skill\)\}/);
+  assert.doesNotMatch(details, /hub-item-type/);
+  assert.match(details, /className="hub-skill-actions">\s*<button[\s\S]*?action: "export-item"[\s\S]*?itemType\(skill\) === "instruction" && <button[\s\S]*?action: "install-instruction"/);
+  assert.match(details, /disabled=\{busy \|\| !connected \|\| !skill.installable \|\| !tools.length\}/);
+});

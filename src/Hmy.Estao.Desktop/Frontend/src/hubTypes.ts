@@ -66,11 +66,12 @@ export function filterSkills(skills: HubSkill[], tools: HubTool[], view: SkillVi
     if (category === "__uncategorized" && (skill.categories ?? []).length > 0) return false;
     if (category && category !== "__uncategorized" && !(skill.categories ?? []).includes(category)) return false;
     if (text && !`${skill.name} ${skill.id} ${localizedDescription(skill, language)} ${(skill.categories ?? []).map(value => localizedCategory(value, catalogCategories, language, catalogDefaultLanguage)).join(" ")}`.toLocaleLowerCase(language).includes(text)) return false;
-    if (toolId && itemType(skill) !== "skill") return false;
+    if (toolId && itemType(skill) === "file") return false;
+    if (toolId && itemType(skill) === "instruction" && !selected.some(tool => skill.compatibleTools.includes(tool.id))) return false;
     if (itemType(skill) === "skill" && toolId && !selected.some(tool => view === "installed"
       ? skill.occurrences.some(item => item.toolId === tool.id)
       : skill.compatibleTools.includes(tool.id) || skill.occurrences.some(item => item.toolId === tool.id))) return false;
-    if (status === "installable" && (itemType(skill) !== "skill" || !skill.installable || !selected.some(tool => skill.compatibleTools.includes(tool.id)))) return false;
+    if (status === "installable" && (itemType(skill) === "file" || !skill.installable || !selected.some(tool => skill.compatibleTools.includes(tool.id)))) return false;
     if (status === "attention") {
       if (itemType(skill) !== "skill") return false;
       const local = skill.occurrences.filter(item => selected.some(tool => tool.id === item.toolId));

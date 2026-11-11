@@ -96,8 +96,25 @@ public sealed class GitHubRepositorySource(HttpClient client)
         }
         if (catalog is not null)
             foreach (var item in catalog.Catalog.Items.Where(i => i.Type != "skill"))
-                skills.Add(new RepositorySkill(item.Id, item.Id, "", item.Path,
-                    [], false, null, true, item.Type, null, catalog.ItemCategories[item.Id], catalog.Catalog.DefaultLanguage));
+            {
+                SkillMetadataInfo? documentMetadata = null;
+                string? issue = null;
+                if (item.Type == "instruction")
+                {
+                    try
+                    {
+                        var document = InstructionDocument.Read(await BlobAsync(entries.Single(entry => entry.Path == item.Path), token, ct).ConfigureAwait(false));
+                        documentMetadata = document.Metadata;
+                        if (string.IsNullOrWhiteSpace(document.Body)) issue = "The instruction file has no instruction body.";
+                    }
+                    catch (Exception ex) when (ex is InvalidDataException or DecoderFallbackException or ArgumentException or YamlException)
+                    { issue = "Could not parse instruction metadata or content."; }
+                }
+                skills.Add(new RepositorySkill(item.Id, string.IsNullOrWhiteSpace(documentMetadata?.Name) ? item.Id : documentMetadata.Name,
+                    documentMetadata?.Description ?? "", item.Path,
+                    item.Type == "instruction" ? HarnessAdapter.Ids : [], item.Type == "instruction" && issue is null,
+                    issue, true, item.Type, documentMetadata?.Descriptions, catalog.ItemCategories[item.Id], catalog.Catalog.DefaultLanguage));
+            }
         return new RepositorySkillLibrary(commit, skills, catalog?.Categories, catalog?.Catalog.DefaultLanguage ?? "en", catalogError);
     }
 

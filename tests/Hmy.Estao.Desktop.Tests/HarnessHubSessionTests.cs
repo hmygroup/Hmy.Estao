@@ -512,7 +512,7 @@ public sealed class HarnessHubSessionTests
                 Assert.Empty(item.Description);
             }
             Assert.Null(item.Issue);
-            Assert.Equal(item.ItemType == "skill", item.Installable);
+            Assert.Equal(item.ItemType is "skill" or "instruction", item.Installable);
         });
     }
 
@@ -554,6 +554,50 @@ public sealed class HarnessHubSessionTests
         var artifact = Assert.Single(Assert.Single(session.State.Review!.Tools).Artifacts);
         Assert.Equal(item.Id, artifact.Id);
         Assert.All(artifact.Files, file => Assert.Contains(Path.Combine("sample", "SKILL.md"), file.Path));
+    }
+
+    [Fact]
+    public async Task InstructionsShowFrontmatterDescriptionsAndInstallForAllDetectedToolsFromPinnedCommit()
+    {
+        using var fixture = new Fixture { IncludeFileItems = true, IncludeOpenCode = true,
+            InstructionContent = "---\nname: tfvc-workspaces\ndescription: TFVC workspace rules.\ndescriptions:\n  es: Reglas TFVC.\n---\n# TFVC\nCheck out before editing.\n" };
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        var instruction = Assert.Single(session.State.Skills!, item => item.ItemType == "instruction");
+        Assert.Equal("TFVC workspace rules.", instruction.Description);
+        Assert.Equal("Reglas TFVC.", instruction.Descriptions!["es"]);
+        Assert.Equal("tfvc-workspaces", instruction.Name);
+        Assert.True(instruction.Installable);
+        fixture.Requests.Clear();
+        session.Command(new("install-instruction", SkillId: instruction.Id)); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        Assert.Equal(4, session.State.Results.Count);
+        Assert.All(session.State.Results, result => Assert.Equal("installed", result.Outcome));
+        Assert.DoesNotContain(fixture.Requests, path => path.EndsWith("/commits/main", StringComparison.Ordinal));
+        foreach (var id in HarnessAdapter.Ids)
+        {
+            var text = await File.ReadAllTextAsync(HubInstructionInstaller.Destination(fixture.Adapter(id)));
+            Assert.Contains("Check out before editing.", text);
+            Assert.DoesNotContain("description:", text);
+        }
+        Assert.Throws<ArgumentException>(() => session.Command(new("install-instruction", SkillId: "example-template")));
+        Assert.Throws<ArgumentException>(() => session.Command(new("install-instruction", SkillId: "sample")));
+    }
+
+    [Fact]
+    public async Task InstructionFailureIsReportedPerToolAndDoesNotHideOtherSuccessfulTargets()
+    {
+        using var fixture = new Fixture { IncludeFileItems = true };
+        var path = HubInstructionInstaller.Destination(fixture.Adapter("codex"));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, "<!-- estao-instruction:database-instructions:start -->\nLocal content\n<!-- estao-instruction:database-instructions:end -->\n");
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        session.Command(new("install-instruction", SkillId: "database-instructions")); await session.CurrentOperation;
+        Assert.Equal("failed", Assert.Single(session.State.Results, result => result.Id == "codex").Outcome);
+        Assert.Equal(2, session.State.Results.Count(result => result.Outcome == "installed"));
+        Assert.Contains("Local content", await File.ReadAllTextAsync(path));
+        Assert.False(File.Exists(HubInstructionInstaller.Destination(fixture.Adapter("opencode"))));
     }
 
     [Fact]
@@ -618,6 +662,7 @@ public sealed class HarnessHubSessionTests
         public bool IncludeExtraSkills { get; set; }
         public bool IncludeOpenCode { get; set; }
         public bool IncludeFileItems { get; set; }
+        public string InstructionContent { get; set; } = "Project database guidance. Never execute.";
         public bool LocalizedSkill { get; set; }
         public bool OmitManifest { get; set; }
         public bool InvalidManifest { get; set; }
@@ -651,7 +696,7 @@ public sealed class HarnessHubSessionTests
                 }
             if (IncludeFileItems)
             {
-                extras["instructions/database.md"] = Encoding.UTF8.GetBytes("Project database guidance. Never execute.");
+                extras["instructions/database.md"] = Encoding.UTF8.GetBytes(InstructionContent);
                 extras["templates/example.json"] = Encoding.UTF8.GetBytes("{\"sample\":true}");
                 items.Add(CatalogItem("database-instructions", "instruction", "instructions/database.md"));
                 items.Add(CatalogItem("example-template", "file", "templates/example.json"));
