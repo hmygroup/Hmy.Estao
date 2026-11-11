@@ -12,7 +12,8 @@ internal static class HubSkillInventory
     private const int MaxSkillFileBytes = 4 * 1024 * 1024;
 
     public static IReadOnlyList<HubSkill> Scan(IEnumerable<string> toolIds, Func<string, HarnessAdapter> adapterFactory,
-        Action<string, string>? reportError = null, CancellationToken cancellationToken = default)
+        Action<string, string>? reportError = null, CancellationToken cancellationToken = default,
+        IReadOnlySet<string>? skillDirectories = null)
     {
         var adapters = new List<(string ToolId, HarnessAdapter Adapter)>();
         foreach (var toolId in toolIds.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -36,14 +37,21 @@ internal static class HubSkillInventory
         }
 
         var occurrences = new List<(string Name, string Description, HubSkillOccurrence Occurrence)>();
-        foreach (var (toolId, adapter) in adapters)
+        foreach (var (fullRoot, observers) in rootObservers)
         {
-            foreach (var root in GetRoots(adapter))
+            cancellationToken.ThrowIfCancellationRequested();
+            var found = new List<(string Name, string Description, HubSkillOccurrence Occurrence)>();
+            void Report(string _, string error) { foreach (var observer in observers) reportError?.Invoke(observer, error); }
+            var directories = skillDirectories is null ? [fullRoot] : skillDirectories.Where(directory =>
+                directory.Equals(fullRoot, StringComparison.OrdinalIgnoreCase) ||
+                directory.StartsWith(Path.TrimEndingDirectorySeparator(fullRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+            foreach (var directory in directories)
+                ScanRoot("", directory, false, found, Report, cancellationToken);
+            foreach (var toolId in observers)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var fullRoot = Path.GetFullPath(root.Path);
-                var shared = root.Compatible || rootObservers[fullRoot].Count > 1;
-                ScanRoot(toolId, fullRoot, shared, occurrences, reportError, cancellationToken);
+                var adapter = adapters.First(item => item.ToolId == toolId).Adapter;
+                var shared = observers.Count > 1 || !fullRoot.Equals(Path.GetFullPath(adapter.SkillsRoot), StringComparison.OrdinalIgnoreCase);
+                occurrences.AddRange(found.Select(item => (item.Name, item.Description, item.Occurrence with { ToolId = toolId, Shared = shared })));
             }
         }
 

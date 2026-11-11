@@ -9,6 +9,101 @@ namespace Hmy.Estao.Desktop.Tests;
 
 public sealed class HarnessHubSessionTests
 {
+    [Fact]
+    public async Task MultiToolInstallationReusesImmutableDownloadsAndTheVerifiedCredential()
+    {
+        using var fixture = new Fixture { IncludeExtraSkills = true };
+        var credentialSearches = 0;
+        using var session = fixture.Session(candidates: _ =>
+        {
+            credentialSearches++;
+            return Task.FromResult<IReadOnlyList<string>>(["fixture-token"]);
+        });
+        session.Command(new("check")); await session.CurrentOperation;
+        fixture.Requests.Clear();
+        session.Command(new("install-skill", SkillId: "sample")); await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Equal(1, credentialSearches);
+        Assert.Equal(3, session.State.Results.Count(result => result.Outcome == "installed"));
+        Assert.Single(fixture.Requests, path => path.EndsWith("/commits/" + Fixture.Commit, StringComparison.Ordinal));
+        var gitObjects = fixture.Requests.Where(path => path.Contains("/git/", StringComparison.Ordinal)).GroupBy(path => path).ToArray();
+        Assert.NotEmpty(gitObjects);
+        Assert.All(gitObjects, requests => Assert.Single(requests));
+    }
+
+    [Fact]
+    public async Task RepositoryInventoryDownloadsSkillMetadataConcurrently()
+    {
+        using var fixture = new Fixture { IncludeExtraSkills = true };
+        var hashes = new[] { "base", "unrelated" }.Select(id => InstallerPaths.GitBlob(
+            Encoding.UTF8.GetBytes($"---\nname: {id}\ndescription: Test skill\n---\n"))).Append(InstallerPaths.GitBlob(
+            Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n---\nFixture, never execute.\n"))).ToHashSet();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var concurrentReads = 0;
+        fixture.BeforeRead = async (request, ct) =>
+        {
+            if (!hashes.Contains(request.RequestUri!.Segments.Last())) return;
+            if (Interlocked.Increment(ref concurrentReads) == 3) entered.TrySetResult();
+            await release.Task.WaitAsync(ct);
+        };
+        using var session = fixture.Session();
+        session.Command(new("check"));
+        try { await entered.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+        finally { release.TrySetResult(); }
+        await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.True(session.State.LibraryLoaded);
+        Assert.Equal(3, session.State.Skills!.Count);
+    }
+
+    [Fact]
+    public async Task InstallingOneSkillRefreshesOnlyItsDependenciesAndSharedOccurrences()
+    {
+        using var fixture = new Fixture { IncludeExtraSkills = true };
+        var local = Path.Combine(fixture.Adapter("claude").SkillsRoot, "personal", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(local)!);
+        await File.WriteAllTextAsync(local, "---\nname: personal\ndescription: Personal skill\n---\n");
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        var personal = Assert.Single(session.State.Skills!, skill => skill.Id == "personal");
+        var unrelated = Assert.Single(session.State.Skills!, skill => skill.Id == "unrelated");
+        await File.WriteAllTextAsync(local, "Changed externally; do not rescan this unrelated skill.");
+
+        session.Command(new("install-skill", "codex", SkillId: "sample"));
+        await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Same(personal, Assert.Single(session.State.Skills!, skill => skill.Id == "personal"));
+        Assert.Same(unrelated, Assert.Single(session.State.Skills!, skill => skill.Id == "unrelated"));
+        foreach (var id in new[] { "sample", "base" })
+        {
+            var installed = Assert.Single(session.State.Skills!, skill => skill.Id == id);
+            Assert.Contains(installed.Occurrences, occurrence => occurrence.ToolId == "codex");
+            Assert.Contains(installed.Occurrences, occurrence => occurrence.ToolId == "copilot");
+        }
+    }
+
+    [Fact]
+    public async Task TargetedRefreshRetainsOtherToolsCopiesOfTheInstalledSkill()
+    {
+        using var fixture = new Fixture();
+        var file = Path.Combine(fixture.Adapter("claude").SkillsRoot, "sample", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllTextAsync(file, "---\nname: sample\ndescription: Personal sample\n---\n");
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        session.Command(new("install-skill", "codex", SkillId: "sample")); await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        var skill = Assert.Single(session.State.Skills!, skill => skill.Id == "sample");
+        Assert.Contains(skill.Occurrences, occurrence => occurrence.ToolId == "claude" && occurrence.Path == file);
+        Assert.Contains(skill.Occurrences, occurrence => occurrence.ToolId == "codex");
+        Assert.NotNull(skill.Issue);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("codex")]
@@ -392,6 +487,7 @@ public sealed class HarnessHubSessionTests
         public List<string> Requests { get; } = [];
         public bool DenyAccess { get; set; }
         public bool BlockReads { get; set; }
+        public Func<HttpRequestMessage, CancellationToken, Task>? BeforeRead { get; set; }
         public bool FailTree { get; set; }
         public bool IncludeExtraSkills { get; set; }
         public bool IncludeFileItems { get; set; }
@@ -407,7 +503,7 @@ public sealed class HarnessHubSessionTests
         private HttpResponseMessage Respond(HttpRequestMessage request)
         {
             var path = request.RequestUri!.PathAndQuery;
-            Requests.Add(path);
+            lock (Requests) Requests.Add(path);
             if (DenyAccess) return new(HttpStatusCode.Forbidden) { Content = new StringContent("{}") };
             if (FailTree && path.Contains("/git/trees/", StringComparison.Ordinal)) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
             var skill = Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n---\nFixture, never execute.\n");
@@ -456,6 +552,7 @@ public sealed class HarnessHubSessionTests
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
             {
                 if (fixture.BlockReads) await Task.Delay(Timeout.Infinite, ct);
+                if (fixture.BeforeRead is { } beforeRead) await beforeRead(request, ct);
                 ct.ThrowIfCancellationRequested();
                 return fixture.Respond(request);
             }

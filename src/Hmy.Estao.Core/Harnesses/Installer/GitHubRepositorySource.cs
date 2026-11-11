@@ -1,4 +1,5 @@
 using System.Net;
+using System.Collections.Concurrent;
 using Hmy.Estao.Core.Models;
 using System.Net.Http.Headers;
 using System.Text;
@@ -14,6 +15,9 @@ public sealed class GitHubAccessException(string message, HttpStatusCode status)
 
 public sealed class GitHubRepositorySource(HttpClient client)
 {
+    // Source instances are operation-scoped. Only immutable Git objects are cached,
+    // separately for each credential; access checks and mutable refs stay live.
+    private readonly ConcurrentDictionary<(string Token, string Path), byte[]> _immutableResponses = new();
     public const string Repository = "hmygroup/hmy-prompt-engineer";
     public static HttpClient CreateClient() => new(new HttpClientHandler { AllowAutoRedirect = false })
         { Timeout = TimeSpan.FromSeconds(45) };
@@ -55,10 +59,13 @@ public sealed class GitHubRepositorySource(HttpClient client)
         var skills = new List<RepositorySkill>();
         var candidates = entries.Where(IsSkillEntry).ToArray();
         var skillIds = SkillIds(candidates, catalog);
-        foreach (var entry in candidates)
+        var metadata = new List<(SourceEntry Entry, byte[] Bytes)>();
+        foreach (var batch in candidates.Chunk(6))
+            metadata.AddRange(await Task.WhenAll(batch.Select(async entry =>
+                (Entry: entry, Bytes: await BlobAsync(entry, token, ct).ConfigureAwait(false)))).ConfigureAwait(false));
+        foreach (var (entry, bytes) in metadata)
         {
             ct.ThrowIfCancellationRequested();
-            var bytes = await BlobAsync(entry, token, ct).ConfigureAwait(false);
             var source = SkillSource(entry);
             var folder = SkillFolder(source);
             var id = skillIds[source];
@@ -271,6 +278,10 @@ public sealed class GitHubRepositorySource(HttpClient client)
 
     private async Task<JsonDocument> GetAsync(string path, string token, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+        var cacheable = path.StartsWith($"repos/{Repository}/git/", StringComparison.Ordinal) ||
+            (path.StartsWith($"repos/{Repository}/commits/", StringComparison.Ordinal) && SourceRevision.Sha().IsMatch(path[(path.LastIndexOf('/') + 1)..]));
+        if (cacheable && _immutableResponses.TryGetValue((token, path), out var cached)) return JsonDocument.Parse(cached);
         for (var attempt = 0; ; attempt++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/" + path);
@@ -325,7 +336,10 @@ public sealed class GitHubRepositorySource(HttpClient client)
                     if (buffer.Length + count > 8 * 1024 * 1024) throw new InvalidDataException("GitHub response exceeds the safe limit.");
                     buffer.Write(chunk, 0, count);
                 }
-                return JsonDocument.Parse(buffer.ToArray());
+                var bytes = buffer.ToArray();
+                var document = JsonDocument.Parse(bytes);
+                if (cacheable) _immutableResponses.TryAdd((token, path), bytes);
+                return document;
             }
         }
     }

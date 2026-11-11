@@ -172,12 +172,22 @@ internal sealed class HarnessHubSession : IDisposable
     private async Task<bool> FindAuthorizationAsync(CancellationToken ct)
     {
         Update(s => s with { CheckingAuthorization = true, Progress = "Checking access to the private GitHub repository…", ProgressMessage = new("hub.check_access") });
+        var previousToken = _token;
+        if (previousToken is not null)
+        {
+            try
+            {
+                await new GitHubRepositorySource(_client).VerifyAccessAsync(previousToken, ct);
+                Update(s => s with { Connected = true, AuthorizationChecked = true, CheckingAuthorization = false });
+                return true;
+            }
+            catch (GitHubAccessException ex) when (ex.Status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound) { }
+        }
         var candidates = (await _candidates(ct)).ToList();
-        if (_token is not null) candidates.Insert(0, _token);
         string? copilotToken = null;
         try { copilotToken = (await new SecureOAuthTokenStore(Path.Combine(_dataDirectory, "oauth-secrets.json")).ReadAsync("copilot", ct))?.AccessToken; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or System.Text.Json.JsonException or FormatException) { }
-        foreach (var candidate in candidates.Distinct(StringComparer.Ordinal))
+        foreach (var candidate in candidates.Distinct(StringComparer.Ordinal).Where(candidate => candidate != previousToken))
         {
             try
             {
@@ -240,7 +250,7 @@ internal sealed class HarnessHubSession : IDisposable
         _prepared.Clear();
         Update(s => s with { Review = null, Results = [] });
         await UpdateToolsAsync(ct);
-        await UpdateLocalInventoryAsync(ct);
+        if (skillId is null) await UpdateLocalInventoryAsync(ct);
         if (!State.Tools.Any(t => t.Detected && (harnessId is null || t.Id == harnessId)))
             throw new InvalidOperationException("No selected tool is installed. Use Go to website, then Check again.").WithUserMessage("hub.no_tools");
         if (!await FindAuthorizationAsync(ct)) throw new InvalidOperationException(State.Connection).WithUserMessage(State.ConnectionMessage?.Code ?? "hub.connect_required");
@@ -256,6 +266,7 @@ internal sealed class HarnessHubSession : IDisposable
         var reviews = new List<HubToolReview>();
         var results = new List<HubResult>();
         string? commit = State.LibraryCommit;
+        var source = new GitHubRepositorySource(_client);
         foreach (var target in targets)
         {
             ct.ThrowIfCancellationRequested();
@@ -264,7 +275,7 @@ internal sealed class HarnessHubSession : IDisposable
                 var adapter = _adapter(target.Id);
                 if (await _installer.GetInstallationStatusAsync(adapter) == HubOperationState.RecoveryRequired)
                     throw new InvalidOperationException("Recover the interrupted installation before reviewing this tool.").WithUserMessage("hub.recovery_required");
-                var snapshot = await new GitHubRepositorySource(_client).PrepareAsync(_token!, adapter, Progress(), ct,
+                var snapshot = await source.PrepareAsync(_token!, adapter, Progress(), ct,
                     commit ?? "main", sourcePath: librarySkill?.Source);
                 commit ??= snapshot.Commit; // Every subsequent tool reads the same immutable commit.
                 if (skillId is not null)
@@ -313,11 +324,15 @@ internal sealed class HarnessHubSession : IDisposable
     {
         var results = State.Results.ToList();
         var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var skillDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var tool in (review ?? State.Review!).Tools)
         {
             ct.ThrowIfCancellationRequested();
             if (!selection.TryGetValue(tool.Id, out var ids) || ids.Length == 0) continue;
             var prepared = _prepared[tool.Id];
+            foreach (var file in prepared.Plan.Files.Where(file => ids.Contains(file.ArtifactId) &&
+                Path.GetFileName(file.Path).Equals("SKILL.md", StringComparison.OrdinalIgnoreCase)))
+                skillDirectories.Add(Path.GetDirectoryName(Path.GetFullPath(file.Path))!);
             try
             {
                 if (!_detected(tool.Id)) throw new InvalidOperationException("Tool is no longer installed. Check again.").WithUserMessage("hub.no_tools");
@@ -342,20 +357,35 @@ internal sealed class HarnessHubSession : IDisposable
         _prepared.Clear();
         Update(s => s with { Review = null, Progress = "Finished. Local conflicts were preserved; downloaded scripts were not executed.", ProgressMessage = new("hub.finished") });
         await UpdateToolsAsync(ct);
-        await UpdateLocalInventoryAsync(ct);
+        await UpdateLocalInventoryAsync(ct, skillDirectories);
     }
 
-    private Task UpdateLocalInventoryAsync(CancellationToken ct)
+    private Task UpdateLocalInventoryAsync(CancellationToken ct, IReadOnlySet<string>? skillDirectories = null)
     {
+        if (skillDirectories is not null)
+        {
+            var names = skillDirectories.Select(directory => Path.GetFileName(directory)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            skillDirectories = skillDirectories.Concat(_localSkills.Where(skill => names.Contains(skill.Name))
+                .SelectMany(skill => skill.Occurrences).Select(occurrence => Path.GetDirectoryName(Path.GetFullPath(occurrence.Path))!))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
         var errors = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        _localSkills = HubSkillInventory.Scan(State.Tools.Where(t => t.Detected).Select(t => t.Id), _adapter,
+        var scanned = HubSkillInventory.Scan(State.Tools.Where(t => t.Detected).Select(t => t.Id), _adapter,
             (id, error) =>
             {
                 if (!errors.TryGetValue(id, out var messages)) errors[id] = messages = [];
                 if (messages.Count < 10) messages.Add(error);
                 else if (messages.Count == 10) messages.Add("Additional discovery errors omitted.");
-            }, ct);
-        var skills = MergeSkills(_localSkills, _librarySkills);
+            }, ct, skillDirectories);
+        if (skillDirectories is null) _localSkills = scanned;
+        else
+        {
+            var names = skillDirectories.Select(directory => Path.GetFileName(directory)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _localSkills = _localSkills.Where(skill => !names.Contains(skill.Name)).Concat(scanned).ToArray();
+        }
+        var previous = (State.Skills ?? []).ToDictionary(skill => skill.Id, StringComparer.OrdinalIgnoreCase);
+        var skills = MergeSkills(_localSkills, _librarySkills).Select(skill =>
+            previous.TryGetValue(skill.Id, out var existing) && existing == skill ? existing : skill).ToArray();
         Update(s => s with { Skills = skills, Tools = s.Tools.Select(tool => errors.TryGetValue(tool.Id, out var messages)
             ? tool with { Status = tool.Status == "RecoveryRequired" ? tool.Status : "Error",
                 Error = SafeError(new IOException(string.Join(" ", messages))), ErrorMessage = new("error.io") } : tool).ToArray() });

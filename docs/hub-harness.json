@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "defaultLanguage": "en",
+  "categories": {
+    "engineering": { "en": "Engineering", "es": "Desarrollo", "fr": "Développement" },
+    "design": { "en": "Design", "es": "Diseño", "fr": "Design" },
+    "product": { "en": "Product", "es": "Producto", "fr": "Produit" },
+    "database": { "en": "Database", "es": "Bases de datos", "fr": "Bases de données" },
+    "tooling": { "en": "Tools and environments", "es": "Herramientas y entornos", "fr": "Outils et environnements" }
+  },
+  "items": [
+    {
+      "id": "batukada",
+      "type": "skill",
+      "path": ".agents/skills/batukada",
+      "description": {
+        "en": "Prepare changes for review and run the Batukada bounded independent-review workflow when explicitly requested.",
+        "es": "Prepara cambios para revisión y ejecuta el flujo acotado de revisiones independientes de Batukada cuando se solicite explícitamente.",
+        "fr": "Prépare les changements et exécute le processus borné de revues indépendantes Batukada sur demande explicite."
+      },
+      "categories": "engineering"
+    },
+    {
+      "id": "itab-design",
+      "type": "skill",
+      "path": ".agents/skills/itab-design",
+      "description": {
+        "en": "Design and review interfaces, documents and corporate materials using the ITAB Group visual identity.",
+        "es": "Diseña y revisa interfaces, documentos y materiales corporativos con la identidad visual de ITAB Group.",
+        "fr": "Conçoit et révise les interfaces, documents et supports institutionnels selon l’identité visuelle d’ITAB Group."
+      },
+      "categories": "design"
+    },
+    {
+      "id": "prd",
+      "type": "skill",
+      "path": ".agents/skills/prd",
+      "description": {
+        "en": "Draft product requirements with scope, user needs and acceptance criteria.",
+        "es": "Redacta requisitos de producto con alcance, necesidades de usuario y criterios de aceptación.",
+        "fr": "Rédige les exigences produit avec le périmètre, les besoins utilisateurs et les critères d’acceptation."
+      },
+      "categories": "product,engineering"
+    },
+    {
+      "id": "sqlcmd-shofia-skill",
+      "type": "skill",
+      "path": ".agents/skills/sqlcmd-shofia-skill",
+      "description": {
+        "en": "Work with SHOFIA SQL Server databases using sqlcmd.",
+        "es": "Trabaja con las bases de datos SQL Server de SHOFIA mediante sqlcmd.",
+        "fr": "Travaille avec les bases SQL Server de SHOFIA à l’aide de sqlcmd."
+      },
+      "categories": "database,tooling"
+    },
+    {
+      "id": "tengu",
+      "type": "skill",
+      "path": ".agents/skills/tengu",
+      "description": {
+        "en": "Run Python or shell in isolated Tengu sandboxes and manage sessions, connectors, files and artifacts.",
+        "es": "Ejecuta Python o shell en sandboxes aisladas de Tengu y gestiona sesiones, conectores, archivos y artefactos.",
+        "fr": "Exécute Python ou le shell dans des environnements Tengu isolés et gère les sessions, connecteurs, fichiers et artefacts."
+      },
+      "categories": "tooling"
+    },
+    {
+      "id": "tfs-workspace",
+      "type": "skill",
+      "path": ".agents/skills/tfs-workspace",
+      "description": {
+        "en": "Manage TFVC workspaces with TF.exe from PowerShell, including status, history, differences and pre-edit checks.",
+        "es": "Gestiona espacios de trabajo TFVC con TF.exe desde PowerShell, incluyendo estado, historial, diferencias y comprobaciones previas a la edición.",
+        "fr": "Gère les espaces de travail TFVC avec TF.exe depuis PowerShell : état, historique, différences et vérifications avant modification."
+      },
+      "categories": "engineering,tooling"
+    }
+  ]
+}
