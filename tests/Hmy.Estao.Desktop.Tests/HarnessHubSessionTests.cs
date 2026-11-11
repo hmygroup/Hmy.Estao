@@ -10,6 +10,46 @@ namespace Hmy.Estao.Desktop.Tests;
 public sealed class HarnessHubSessionTests
 {
     [Fact]
+    public async Task UninstallWorksWithoutAuthorizationAndRefreshesAllSharedObservers()
+    {
+        using var fixture = new Fixture();
+        var file = Path.Combine(fixture.Adapter("codex").SkillsRoot, "personal", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllTextAsync(file, "---\nname: personal\ndescription: Offline personal skill\n---\n");
+        using var session = fixture.Session(candidates: _ => Task.FromResult<IReadOnlyList<string>>([]));
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.False(session.State.Connected);
+        Assert.NotEmpty(Assert.Single(session.State.Skills!).Occurrences);
+        fixture.Requests.Clear();
+
+        session.Command(new("uninstall-skill", SkillId: "personal")); await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.False(session.State.Busy);
+        Assert.Empty(session.State.Skills!);
+        Assert.Empty(fixture.Requests);
+        Assert.False(File.Exists(file));
+        Assert.Equal("hub.uninstall_complete", session.State.ProgressMessage?.Code);
+        Assert.Throws<ArgumentException>(() => session.Command(new("uninstall-skill", SkillId: "personal")));
+    }
+
+    [Fact]
+    public async Task CheckRefreshesExternallyAddedAndRemovedSkills()
+    {
+        using var fixture = new Fixture();
+        using var session = fixture.Session(candidates: _ => Task.FromResult<IReadOnlyList<string>>([]));
+        session.Command(new("check")); await session.CurrentOperation;
+        var directory = Path.Combine(fixture.Adapter("claude").SkillsRoot, "added");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, "SKILL.md"), "---\nname: added\ndescription: Added externally\n---\n");
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.Equal("added", Assert.Single(session.State.Skills!).Name);
+        Directory.Delete(directory, recursive: true);
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.Empty(session.State.Skills!);
+    }
+
+    [Fact]
     public async Task MultiToolInstallationReusesImmutableDownloadsAndTheVerifiedCredential()
     {
         using var fixture = new Fixture { IncludeExtraSkills = true };

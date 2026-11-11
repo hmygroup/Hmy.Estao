@@ -72,6 +72,10 @@ internal sealed class HarnessHubSession : IDisposable
         {
             case "check": Start("checking", CheckAsync); break;
             case "connect": Start("connecting", ConnectAsync); break;
+            case "uninstall-skill":
+                var installed = State.Skills?.SingleOrDefault(skill => skill.Id == command.SkillId && skill.Occurrences.Count > 0)
+                    ?? throw new ArgumentException("Select an installed skill.").WithUserMessage("hub.select_skill");
+                Start("uninstalling", ct => UninstallAsync(installed, ct)); break;
             case "export-item":
                 var item = _librarySkills.SingleOrDefault(item => item.Id == command.SkillId && item.Curated &&
                     item.ItemType is "instruction" or "file")
@@ -135,6 +139,26 @@ internal sealed class HarnessHubSession : IDisposable
                 }
                 finally { Update(s => s with { Busy = false, CheckingAuthorization = false, Phase = "idle", DeviceCode = null }); }
             });
+        }
+    }
+
+    private async Task UninstallAsync(HubSkill skill, CancellationToken ct)
+    {
+        _prepared.Clear();
+        Update(s => s with { Review = null, Results = [] });
+        try
+        {
+            foreach (var id in skill.Occurrences.Select(item => item.ToolId).Distinct())
+                if (await _installer.GetInstallationStatusAsync(_adapter(id)) == HubOperationState.RecoveryRequired)
+                    throw new InvalidOperationException("Recover interrupted installations before uninstalling.").WithUserMessage("hub.recovery_required");
+            HubSkillUninstaller.Uninstall(skill, _adapter, _dataDirectory, ct);
+            Update(s => s with { ProgressMessage = new("hub.uninstall_complete", skill.Name) });
+        }
+        finally
+        {
+            // Also refresh after a failed or cancelled multi-copy removal.
+            await UpdateToolsAsync(CancellationToken.None);
+            await UpdateLocalInventoryAsync(CancellationToken.None);
         }
     }
 

@@ -46,7 +46,8 @@ internal static class HubSkillInventory
                 directory.Equals(fullRoot, StringComparison.OrdinalIgnoreCase) ||
                 directory.StartsWith(Path.TrimEndingDirectorySeparator(fullRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
             foreach (var directory in directories)
-                ScanRoot("", directory, false, found, Report, cancellationToken);
+                if (!HubSkillSafety.IsProtectedWithin(fullRoot, directory))
+                    ScanRoot("", directory, false, found, Report, cancellationToken);
             foreach (var toolId in observers)
             {
                 var adapter = adapters.First(item => item.ToolId == toolId).Adapter;
@@ -93,6 +94,7 @@ internal static class HubSkillInventory
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var directory = pending.Pop();
+                if (HubSkillSafety.IsProtectedDirectory(directory)) continue;
                 if (++directoriesScanned > MaxDirectoriesPerRoot)
                 {
                     reportError?.Invoke(toolId, $"Skill root '{root}' exceeds the {MaxDirectoriesPerRoot} directory scan limit.");

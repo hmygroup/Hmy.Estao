@@ -30,3 +30,38 @@ test('details put categories beside the name and omit repository metadata', () =
 test('skill browser omits the shared-folder explanation and local skill label', () => {
   assert.doesNotMatch(source, /hub\.review_skill_hint|hub\.origin_local/);
 });
+
+test('refresh uses the activity slot while idle and preserves busy cancellation', () => {
+  const slot = source.slice(source.indexOf('className="hub-activity-slot"'), source.indexOf('{completedMessage &&'));
+  assert.match(slot, /!busy && <button[^>]*hub-refresh[^>]*aria-label=\{t\("hub.refresh"\)\}/);
+  assert.match(slot, /action: "check"/);
+  assert.match(slot, /busy && <span className="hub-activity"/);
+  assert.match(slot, /action: "cancel"/);
+});
+
+test('installed skills uninstall directly without confirmation or repository access', () => {
+  assert.match(source, /isSkill && skill\.occurrences\.length > 0 && <UninstallSkill/);
+  const uninstall = source.slice(source.indexOf('function UninstallSkill('));
+  assert.doesNotMatch(uninstall, /confirm|setConfirming/);
+  assert.match(uninstall, /action: "uninstall-skill", skillId: skill.id/);
+  assert.match(uninstall, /disabled=\{busy \|\| !canUninstall\}/);
+  assert.doesNotMatch(uninstall, /connected|harnessId|item\.path/);
+});
+
+test('install and uninstall share equal-width controls, with target only for installation', () => {
+  assert.match(css, /\.hub-skill-actions\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css, /\.hub-skill-actions>button:only-of-type\{grid-column:1\/-1\}/);
+  assert.match(source, /isSkill && skill.inLibrary && skill.installable && <div className="hub-skill-install">\s*<label>\{t\("hub.install_target"\)\}/);
+  const actions = source.slice(source.indexOf('className="hub-skill-actions"'));
+  assert.match(actions, /skill.inLibrary && skill.installable && <button type="button" className="primary"/);
+  const uninstall = source.slice(source.indexOf('function UninstallSkill('));
+  assert.match(uninstall, /<button type="button" className="secondary"[^>]*onClick=\{\(\) => void run\(\{ action: "uninstall-skill", skillId: skill.id \}\)\}/);
+  assert.doesNotMatch(uninstall, /className="primary"/);
+  assert.match(css, /\.hub-skill-actions \.secondary\{background:transparent;box-shadow:none\}/);
+  assert.doesNotMatch(uninstall, /install_target/);
+});
+
+test('installed skills use the update label without changing the install command', () => {
+  assert.match(source, /t\(skill.occurrences.length > 0 \? "hub.update_skill" : "hub.install_skill"\)/);
+  assert.match(source, /action: "install-skill", skillId: skill.id/);
+});

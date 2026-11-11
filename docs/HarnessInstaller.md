@@ -43,6 +43,17 @@ Los adapters validan el formato estándar de skills y conservan el contenido fue
 
 ## Política aditiva y recuperación
 
+### Skills de sistema y desinstalación en Desktop
+
+El inventario de Desktop recorre únicamente raíces personales explícitas, nunca los registros runtime, directorios de instalación, plugins ni fuentes administradas/remotas. La propiedad se determina por origen, no por nombres ni por campos YAML (una skill personal puede sobrescribir una integrada):
+
+- **Codex:** las skills integradas se extraen a `<CODEX_HOME>/skills/.system`, con `.codex-system-skills.marker`. Se excluyen directorios ocultos y subárboles con ese marcador, también al actualizar parcialmente y al desinstalar. [Fuente oficial](https://github.com/openai/codex/blob/main/codex-rs/skills/src/lib.rs).
+- **Claude Code:** las bundled skills pertenecen al runtime; `<CLAUDE_CONFIG_DIR>/skills` es una fuente personal distinta. No se descubren las bundled ni los plugins ni las raíces enterprise. [Documentación oficial](https://code.claude.com/docs/en/skills).
+- **Copilot CLI:** distingue fuentes personales (`~/.copilot/skills`, `~/.agents/skills`), plugins y bundled con CLI. Solo las personales entran en este inventario. [Referencia oficial](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#skills-reference).
+- **OpenCode V2:** registra built-ins antes y por separado de las fuentes de archivos personales/compatibles; no son archivos personales desinstalables. No se enumeran skills proporcionadas por plugins, Console ni catálogos HTTP. [Documentación oficial](https://opencode.ai/docs/skills#precedence).
+
+Actualizar vuelve a comprobar herramientas, inventario local, autorización y catálogo. Desinstalar actúa directamente, sin confirmación, y retira **todas las copias mostradas**, también las observadas por varias herramientas. Se valida cada ruta y hash antes de mover carpetas completas a `<datos Estao>/uninstalled-skills/<operación>/<índice>/<nombre>`, sin ejecutar scripts ni eliminar recursos definitivamente. Cada ruta física compartida se mueve una sola vez. Se rechazan enlaces, rutas ajenas, caches de sistema, inventarios obsoletos e instalaciones con recuperación pendiente. Si un movimiento falla, se intenta restaurar los anteriores sin sobrescribir cambios externos; los backups restantes se conservan. `Directory.Move` no cruza volúmenes: si el perfil y los datos están en volúmenes distintos, la operación falla sin borrar la skill. No se eliminan dependencias automáticamente.
+
 1. Preparar snapshot completo, validar formatos y construir plan antes de escribir.
 2. Detectar también skills coincidentes en ubicaciones compatibles: equivalentes no se duplican; diferentes no se ocultan mediante una nueva copia.
 3. Crear archivos nuevos; no reescribir idénticos ni reclamar su propiedad. Actualizar solo archivos previamente administrados e intactos.

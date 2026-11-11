@@ -21,7 +21,7 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
   const changeView = (next: SkillView) => { setView(next); setSelectedId(undefined); setCategory(""); setType("all"); };
   const catalogFilter = view === "library";
   const progress = message(state?.progressMessage) || t("hub.working");
-  const completedMessage = !busy && (state?.progressMessage?.code === "hub.export_complete" || state?.progressMessage?.code === "hub.cancelled") ? progress : "";
+  const completedMessage = !busy && (state?.progressMessage?.code === "hub.export_complete" || state?.progressMessage?.code === "hub.uninstall_complete" || state?.progressMessage?.code === "hub.cancelled") ? progress : "";
 
   return <section className="hub-browser" aria-label={t("hub.browser")}>
     <div className="hub-browser-heading">
@@ -35,6 +35,9 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
           {busy && <span className="hub-activity" role="status" title={progress}>
             <span className="hub-spinner" aria-hidden="true" /><span className="hub-visually-hidden">{progress}</span>
           </span>}
+          {!busy && <button type="button" className="secondary hub-refresh" aria-label={t("hub.refresh")} title={t("hub.refresh")} onClick={() => void run({ action: "check" })}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 6a5.2 5.2 0 1 0 .1 4M13 2v4H9" /></svg>
+          </button>}
           {state?.busy && <button type="button" className="secondary hub-cancel" aria-label={t("cancel")} title={t("cancel")} onClick={() => void run({ action: "cancel" })}>
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg>
           </button>}
@@ -125,14 +128,23 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
     })}</div>}
     </div>
     <div className="hub-skill-details-footer">
-    {isSkill && skill.inLibrary && skill.installable ? <div className="hub-skill-install">
+    {isSkill && skill.inLibrary && skill.installable && <div className="hub-skill-install">
       <label>{t("hub.install_target")}<select aria-label={t("hub.install_target")} value={effectiveTarget} onChange={event => setTarget(event.target.value)} disabled={busy || !compatible.length}>
         <option value="">{t("hub.all_compatible_tools")}</option>{compatible.map(tool => <option key={tool.id} value={tool.id}>{tool.name}</option>)}
       </select></label>
-      <button type="button" className="primary" disabled={busy || !connected || !compatible.length} onClick={() => void run({ action: "install-skill", skillId: skill.id, ...(effectiveTarget ? { harnessId: effectiveTarget } : {}) })}>{t("hub.install_skill")}</button>
-    </div> : isSkill && skill.inLibrary ? <p className="hub-helper">{t("hub.not_installable")}</p>
-      : !isSkill ? <div className="hub-skill-install"><button type="button" className="secondary" disabled={busy || !connected} onClick={() => void run({ action: "export-item", skillId: skill.id })}>{t("hub.export_item")}</button><p className="hub-helper">{t("hub.export_hint")}</p></div>
-        : <p className="hub-helper">{t("hub.local_read_only")}</p>}
+    </div>}
+    {isSkill ? <>
+      {skill.inLibrary && !skill.installable && <p className="hub-helper">{t("hub.not_installable")}</p>}
+      <div className="hub-skill-actions">
+        {skill.inLibrary && skill.installable && <button type="button" className="primary" disabled={busy || !connected || !compatible.length} onClick={() => void run({ action: "install-skill", skillId: skill.id, ...(effectiveTarget ? { harnessId: effectiveTarget } : {}) })}>{t(skill.occurrences.length > 0 ? "hub.update_skill" : "hub.install_skill")}</button>}
+        {isSkill && skill.occurrences.length > 0 && <UninstallSkill skill={skill} busy={busy} run={run} />}
+      </div>
+    </> : <div className="hub-skill-install"><button type="button" className="secondary" disabled={busy || !connected} onClick={() => void run({ action: "export-item", skillId: skill.id })}>{t("hub.export_item")}</button><p className="hub-helper">{t("hub.export_hint")}</p></div>}
     </div>
   </section>;
+}
+
+function UninstallSkill({ skill, busy, run }: { skill: HubSkill; busy: boolean; run: (command: HubCommand) => Promise<void> }) {
+  const canUninstall = skill.occurrences.every(item => item.hash && !item.error);
+  return <button type="button" className="secondary" disabled={busy || !canUninstall} onClick={() => void run({ action: "uninstall-skill", skillId: skill.id })}>{t("hub.uninstall_skill")}</button>;
 }

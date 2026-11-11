@@ -67,7 +67,7 @@ public sealed class HubSkillInventoryTests
     }
 
     [Fact]
-    public void FindsNestedSystemSkillsAndStopsAtTheSkillFolder()
+    public void FiltersSystemSkillsAndStopsAtPersonalSkillFolders()
     {
         using var fixture = new Fixture();
         fixture.Skill(Path.Combine(".system", "tools", "nested"), "---\nname: nested\ndescription: Nested\n---\n");
@@ -76,9 +76,11 @@ public sealed class HubSkillInventoryTests
         File.WriteAllText(Path.Combine(assets, "SKILL.md"),
             "---\nname: assets\ndescription: Must not be visited\n---\n");
 
+        fixture.Skill(Path.Combine("tools", "personal"), "---\nname: personal\ndescription: Personal\n---\n");
+        fixture.Skill(Path.Combine("tools", "personal", "assets"), "---\nname: assets\ndescription: Must not be visited\n---\n");
         var skill = Assert.Single(Scan(fixture));
 
-        Assert.Equal("nested", skill.Name);
+        Assert.Equal("personal", skill.Name);
         Assert.Single(skill.Occurrences);
     }
 
