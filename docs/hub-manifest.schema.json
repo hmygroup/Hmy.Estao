@@ -20,7 +20,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "type", "path", "description", "categories"],
+        "required": ["id", "type", "path", "categories"],
         "properties": {
           "id": { "$ref": "#/$defs/id" },
           "type": { "enum": ["skill", "instruction", "file"] },
@@ -28,9 +28,8 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 240,
-            "description": "Repository-relative forward-slash path. Skill: whole folder containing SKILL.md. Other types: one file. Runtime validation rejects unsafe, missing or overlapping paths."
+            "description": "Repository-relative forward-slash path. Skill: whole folder containing SKILL.md. Other types: one file. Runtime validation rejects unsafe or overlapping paths; entries with missing source files are omitted individually."
           },
-          "description": { "$ref": "#/$defs/translations" },
           "categories": {
             "type": "string",
             "maxLength": 4096,
@@ -61,7 +60,7 @@
       "maxProperties": 20,
       "propertyNames": { "pattern": "^[a-z]{2}$" },
       "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 1024 },
-      "description": "Lowercase ISO 639-1 language codes. The defaultLanguage translation is mandatory; runtime validation checks supported ISO codes."
+      "description": "Category labels keyed by lowercase ISO 639-1 language codes. The defaultLanguage translation is mandatory; runtime validation checks supported ISO codes."
     }
   }
 }

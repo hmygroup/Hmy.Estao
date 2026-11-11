@@ -6,6 +6,34 @@ namespace Hmy.Estao.Desktop.Tests;
 public sealed class HubSkillInventoryTests
 {
     [Fact]
+    public void LocalSkillsExposeFrontmatterTranslationsAndKeepTheStandardFallback()
+    {
+        using var fixture = new Fixture();
+        fixture.Skill("translated", "---\nname: translated\ndescription: Standard fallback\ndescriptions:\n  es: Descripción traducida\n  fr: Description traduite\n---\n");
+        fixture.Skill("legacy", "---\nname: legacy\ndescription: Legacy description\n---\n");
+
+        var skills = Scan(fixture);
+        var translated = Assert.Single(skills, skill => skill.Name == "translated");
+        Assert.Null(translated.Issue);
+        Assert.Equal("Standard fallback", translated.Description);
+        Assert.Equal("Descripción traducida", translated.Descriptions!["es"]);
+        var legacy = Assert.Single(skills, skill => skill.Name == "legacy");
+        Assert.Equal("Legacy description", legacy.Description);
+        Assert.Empty(legacy.Descriptions!);
+    }
+
+    [Fact]
+    public void InvalidTranslationMetadataIsReportedWithoutHidingOtherSkills()
+    {
+        using var fixture = new Fixture();
+        fixture.Skill("broken", "---\nname: broken\ndescription: Fallback\ndescriptions: [Not a mapping]\n---\n");
+        fixture.Skill("healthy", "---\nname: healthy\ndescription: Healthy\n---\n");
+        var skills = Scan(fixture);
+        Assert.NotNull(Assert.Single(skills, skill => skill.Name == "broken").Issue);
+        Assert.Null(Assert.Single(skills, skill => skill.Name == "healthy").Issue);
+    }
+
+    [Fact]
     public void MalformedYamlIsKeptAsAnIssueOccurrenceAndDoesNotStopOtherSkills()
     {
         using var fixture = new Fixture();

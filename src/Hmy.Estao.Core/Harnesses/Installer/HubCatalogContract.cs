@@ -26,8 +26,6 @@ public sealed class HubCatalogItem
     [JsonRequired]
     public string Path { get; set; } = "";
     [JsonRequired]
-    public Dictionary<string, string> Description { get; set; } = [];
-    [JsonRequired]
     public string Categories { get; set; } = "";
     public List<string> Dependencies { get; set; } = [];
 }
@@ -35,7 +33,8 @@ public sealed class HubCatalogItem
 internal sealed record ValidatedCatalog(HubCatalog Catalog,
     IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Categories,
     IReadOnlyDictionary<string, HubCatalogItem> ById,
-    IReadOnlyDictionary<string, IReadOnlyList<string>> ItemCategories);
+    IReadOnlyDictionary<string, IReadOnlyList<string>> ItemCategories,
+    IReadOnlySet<string> UnavailableSkills);
 
 internal static partial class HubCatalogContract
 {
@@ -72,11 +71,12 @@ internal static partial class HubCatalogContract
         var ids = new Dictionary<string, HubCatalogItem>(StringComparer.OrdinalIgnoreCase);
         var paths = new List<string>();
         var normalizedCategories = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var missingItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in catalog.Items)
         {
             if (item is null || item.Id is null || item.Type is null || item.Path is null || item.Categories is null ||
-                !ValidId(item.Id) || !ids.TryAdd(item.Id, item) || item.Type is not ("skill" or "instruction" or "file") || item.Description is null ||
-                !item.Description.ContainsKey(catalog.DefaultLanguage) || item.Dependencies is null || item.Dependencies.Count > 50 ||
+                !ValidId(item.Id) || !ids.TryAdd(item.Id, item) || item.Type is not ("skill" or "instruction" or "file") ||
+                item.Dependencies is null || item.Dependencies.Count > 50 ||
                 (item.Type != "skill" && item.Dependencies.Count > 0))
                 throw new InvalidDataException("Invalid catalog item identity or fields.");
             if (item.Categories.Length > 4096) throw new InvalidDataException("Catalog categories exceed the safe limit.");
@@ -86,7 +86,6 @@ internal static partial class HubCatalogContract
                                   item.Path.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException("Catalog paths must be unique and non-overlapping.");
             paths.Add(item.Path);
-            ValidateTranslations(item.Description, catalog.DefaultLanguage);
             var categories = item.Categories.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Distinct(StringComparer.Ordinal).ToArray();
             if (categories.Any(category => !categoryLabels.ContainsKey(category)))
@@ -95,10 +94,10 @@ internal static partial class HubCatalogContract
             if (item.Type == "skill")
             {
                 if (!entries.Any(entry => entry.Path == item.Path + "/SKILL.md"))
-                    throw new InvalidDataException("Curated skill path must identify an existing SKILL.md file.");
+                    missingItems.Add(item.Id);
             }
             else if (!entries.Any(entry => entry.Path == item.Path))
-                throw new InvalidDataException("Curated file does not exist in the source tree.");
+                missingItems.Add(item.Id);
         }
         foreach (var item in catalog.Items)
         {
@@ -119,7 +118,21 @@ internal static partial class HubCatalogContract
             visited.Add(item.Id);
         }
         foreach (var item in catalog.Items) Visit(item);
-        return new ValidatedCatalog(catalog, categoryLabels, ids, normalizedCategories);
+        var unavailableSkills = catalog.Items.Where(item => item.Type == "skill" && missingItems.Contains(item.Id))
+            .Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (var item in catalog.Items.Where(item => item.Type == "skill"))
+                if (item.Dependencies.Any(unavailableSkills.Contains)) changed |= unavailableSkills.Add(item.Id);
+        } while (changed);
+        var availableCatalog = new HubCatalog
+        {
+            SchemaVersion = catalog.SchemaVersion, DefaultLanguage = catalog.DefaultLanguage,
+            Categories = catalog.Categories, Items = catalog.Items.Where(item => !missingItems.Contains(item.Id)).ToList()
+        };
+        return new ValidatedCatalog(availableCatalog, categoryLabels, ids, normalizedCategories, unavailableSkills);
     }
 
     private static void ValidateTranslations(IReadOnlyDictionary<string, string> translations, string fallback)
@@ -131,6 +144,8 @@ internal static partial class HubCatalogContract
     }
 
     private static bool IsIso639TwoLetter(string code) => IsoLanguages.Contains(code);
+
+    internal static bool IsLanguage(string code) => Language().IsMatch(code) && IsIso639TwoLetter(code);
 
     private static bool ValidId(string? id) => id is { Length: <= 80 } && Id().IsMatch(id);
 

@@ -67,11 +67,38 @@ public sealed class HarnessInstallerTests : IDisposable
     }
 
     [Fact]
+    public void reads_optional_skill_translations_without_changing_the_standard_description()
+    {
+        var bytes = Bytes("---\nname: sample\ndescription: Standard fallback\ndescriptions:\n  en: English translation\n  es: Descripción española\n  fr: >-\n    Description\n    française\n---\nBody\n");
+        var metadata = HarnessAdapter.ReadSkillMetadata(bytes);
+        Assert.Equal("sample", metadata.Name);
+        Assert.Equal("Standard fallback", metadata.Description);
+        Assert.Equal("Descripción española", metadata.Descriptions["es"]);
+        Assert.Equal("Description française", metadata.Descriptions["fr"]);
+        Assert.Equal(("sample", "Standard fallback"), HarnessAdapter.SkillMetadata(bytes));
+        Assert.Empty(HarnessAdapter.ReadSkillMetadata(Bytes("---\nname: legacy\ndescription: Legacy fallback\n---\n")).Descriptions);
+    }
+
+    [Theory]
+    [InlineData("descriptions: invalid")]
+    [InlineData("descriptions: [English, Spanish]")]
+    [InlineData("descriptions:\n  EN: Invalid language")]
+    [InlineData("descriptions:\n  zz: Unknown language")]
+    [InlineData("descriptions:\n  es: ''")]
+    [InlineData("descriptions:\n  es: [Nested, text]")]
+    [InlineData("descriptions:\n  es: &text Spanish\n  fr: *text")]
+    public void rejects_invalid_skill_translation_metadata(string translations)
+    {
+        Assert.Throws<InvalidDataException>(() => HarnessAdapter.ReadSkillMetadata(
+            Bytes("---\nname: sample\ndescription: Fallback\n" + translations + "\n---\n")));
+    }
+
+    [Fact]
     public void preserves_native_skill_bytes_and_rejects_yaml_aliases()
     {
         var adapter = Adapter();
         var artifact = new SourceArtifact { Id = "sample", Source = "skills/sample", Harnesses = ["claude"] };
-        var bytes = Bytes("---\nname: sample\ndescription: Explicit workflow\n---\n# Original body\nKeep all meaning.\n");
+        var bytes = Bytes("---\nname: sample\ndescription: Explicit workflow\ndescriptions:\n  es: Flujo explícito\n---\n# Original body\nKeep all meaning.\n");
         var entry = new SourceEntry("skills/sample/SKILL.md", InstallerPaths.GitBlob(bytes), bytes.Length, "100644");
         Assert.Equal(bytes, Assert.Single(adapter.Prepare(artifact, [(entry, bytes)])).Content);
         var unsafeYaml = Bytes("---\nname: &loop [*loop]\ndescription: Unsafe\n---\n");

@@ -189,6 +189,12 @@ public sealed class HarnessAdapter
 
     public static (string Name, string Description) SkillMetadata(byte[] bytes)
     {
+        var metadata = ReadSkillMetadata(bytes);
+        return (metadata.Name, metadata.Description);
+    }
+
+    public static SkillMetadataInfo ReadSkillMetadata(byte[] bytes)
+    {
         try
         {
             var yaml = ReadFrontmatter(bytes);
@@ -196,7 +202,20 @@ public sealed class HarnessAdapter
                 ? nameScalar.Value ?? string.Empty : string.Empty;
             var descriptionText = yaml.Children.TryGetValue(new YamlScalarNode("description"), out var description)
                 && description is YamlScalarNode scalar ? scalar.Value ?? string.Empty : string.Empty;
-            return (name, descriptionText);
+            var descriptions = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (yaml.Children.TryGetValue(new YamlScalarNode("descriptions"), out var translations))
+            {
+                if (translations is not YamlMappingNode mapping || mapping.Children.Count > 20)
+                    throw new InvalidDataException("Skill descriptions must be a language-to-text mapping with at most 20 translations.");
+                foreach (var (key, value) in mapping.Children)
+                {
+                    if (key is not YamlScalarNode { Value: { } language } || !HubCatalogContract.IsLanguage(language) ||
+                        value is not YamlScalarNode { Value: { } text } || string.IsNullOrWhiteSpace(text) || text.Length > 1024)
+                        throw new InvalidDataException("Skill descriptions require lowercase ISO 639-1 language codes and text of at most 1024 characters.");
+                    descriptions.Add(language, text);
+                }
+            }
+            return new(name, descriptionText, descriptions);
         }
         catch (Exception ex) when (ex is YamlDotNet.Core.YamlException or InvalidOperationException)
         { throw new InvalidDataException("Invalid YAML skill metadata.", ex); }

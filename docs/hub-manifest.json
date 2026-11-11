@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "defaultLanguage": "en",
+  "categories": {
+    "engineering": { "en": "Engineering", "es": "Desarrollo", "fr": "Développement" },
+    "design": { "en": "Design", "es": "Diseño", "fr": "Design" },
+    "product": { "en": "Product", "es": "Producto", "fr": "Produit" },
+    "database": { "en": "Database", "es": "Bases de datos", "fr": "Bases de données" },
+    "tooling": { "en": "Tools and environments", "es": "Herramientas y entornos", "fr": "Outils et environnements" }
+  },
+  "items": [
+    {
+      "id": "batukada",
+      "type": "skill",
+      "path": ".agents/skills/batukada",
+      "categories": "engineering"
+    },
+    {
+      "id": "itab-design",
+      "type": "skill",
+      "path": ".agents/skills/itab-design",
+      "categories": "design"
+    },
+    {
+      "id": "tengu",
+      "type": "skill",
+      "path": ".agents/skills/tengu",
+      "categories": "tooling"
+    },
+    {
+      "id": "tfs-workspace",
+      "type": "skill",
+      "path": ".agents/skills/tfs-workspace",
+      "categories": "engineering,tooling"
+    }
+  ]
+}

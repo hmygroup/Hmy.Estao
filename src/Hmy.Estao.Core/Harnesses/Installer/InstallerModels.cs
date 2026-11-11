@@ -41,6 +41,8 @@ public sealed record PreparedSnapshot(string Commit, string Tree, string Manifes
 public sealed record PreparedArtifact(string Id, string Category, string Source, string Description,
     IReadOnlyList<string> Requirements);
 
+public sealed record SkillMetadataInfo(string Name, string Description, IReadOnlyDictionary<string, string> Descriptions);
+
 public sealed record RepositorySkill(string Id, string Name, string Description, string Source,
     IReadOnlyList<string> CompatibleHarnesses, bool Installable, string? Issue = null,
     bool Curated = false, string ItemType = "skill", IReadOnlyDictionary<string, string>? Descriptions = null,

@@ -35,7 +35,7 @@ export type CatalogItemType = "all" | "skill" | "instruction" | "file";
 export function detectedTools(tools: HubTool[]): HubTool[] { return tools.filter(tool => tool.detected); }
 export function isCurated(skill: HubSkill): boolean { return skill.curated ?? skill.inLibrary; }
 export function localizedDescription(skill: HubSkill, language: string): string {
-  return skill.descriptions?.[language] || skill.descriptions?.[skill.defaultLanguage || "en"] || skill.description || "";
+  return skill.descriptions?.[language] || skill.description || "";
 }
 export function localizedCategory(category: string, catalogCategories: HubState["catalogCategories"], language: string, defaultLanguage = "en"): string {
   const labels = catalogCategories?.[category];

@@ -36,11 +36,11 @@ internal static class HubSkillInventory
             }
         }
 
-        var occurrences = new List<(string Name, string Description, HubSkillOccurrence Occurrence)>();
+        var occurrences = new List<(SkillMetadataInfo Metadata, HubSkillOccurrence Occurrence)>();
         foreach (var (fullRoot, observers) in rootObservers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var found = new List<(string Name, string Description, HubSkillOccurrence Occurrence)>();
+            var found = new List<(SkillMetadataInfo Metadata, HubSkillOccurrence Occurrence)>();
             void Report(string _, string error) { foreach (var observer in observers) reportError?.Invoke(observer, error); }
             var directories = skillDirectories is null ? [fullRoot] : skillDirectories.Where(directory =>
                 directory.Equals(fullRoot, StringComparison.OrdinalIgnoreCase) ||
@@ -51,23 +51,22 @@ internal static class HubSkillInventory
             {
                 var adapter = adapters.First(item => item.ToolId == toolId).Adapter;
                 var shared = observers.Count > 1 || !fullRoot.Equals(Path.GetFullPath(adapter.SkillsRoot), StringComparison.OrdinalIgnoreCase);
-                occurrences.AddRange(found.Select(item => (item.Name, item.Description, item.Occurrence with { ToolId = toolId, Shared = shared })));
+                occurrences.AddRange(found.Select(item => (item.Metadata, item.Occurrence with { ToolId = toolId, Shared = shared })));
             }
         }
 
-        return occurrences.GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase).Select(group =>
+        return occurrences.GroupBy(x => x.Metadata.Name, StringComparer.OrdinalIgnoreCase).Select(group =>
         {
             var valid = group.Where(x => x.Occurrence.Hash is not null).ToArray();
             var differing = valid.Select(x => x.Occurrence.Hash).Distinct(StringComparer.Ordinal).Count() > 1;
             var entries = group.ToArray();
             var errors = entries.Where(x => x.Occurrence.Error is not null)
                 .Select(x => $"{x.Occurrence.ToolId}: {x.Occurrence.Error}").ToArray();
-            var descriptions = valid.Select(x => x.Description).Where(x => x.Length > 0)
-                .Distinct(StringComparer.Ordinal).ToArray();
+            var metadata = valid.Select(x => x.Metadata).FirstOrDefault();
             var issue = differing ? "Copies with this name have different SKILL.md metadata/content." :
                 errors.Length > 0 ? string.Join(" ", errors) : null;
-            return new HubSkill(group.Key, group.Key, descriptions.FirstOrDefault() ?? "", false, false, [],
-                entries.Select(x => x.Occurrence).ToArray(), null, issue);
+            return new HubSkill(group.Key, group.Key, metadata?.Description ?? "", false, false, [],
+                entries.Select(x => x.Occurrence).ToArray(), null, issue, Descriptions: metadata?.Descriptions);
         }).OrderBy(skill => skill.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
@@ -80,7 +79,7 @@ internal static class HubSkillInventory
     }
 
     private static void ScanRoot(string toolId, string root, bool shared,
-        List<(string Name, string Description, HubSkillOccurrence Occurrence)> occurrences,
+        List<(SkillMetadataInfo Metadata, HubSkillOccurrence Occurrence)> occurrences,
         Action<string, string>? reportError, CancellationToken cancellationToken)
     {
         var directoriesScanned = 0;
@@ -116,7 +115,8 @@ internal static class HubSkillInventory
 
                     try
                     {
-                        var (metadataName, description) = HarnessAdapter.SkillMetadata(bytes);
+                        var metadata = HarnessAdapter.ReadSkillMetadata(bytes);
+                        var (metadataName, description) = (metadata.Name, metadata.Description);
                         if (string.IsNullOrWhiteSpace(metadataName))
                             throw new InvalidDataException("SKILL.md metadata must include a name.");
                         if (metadataName.Contains('/') || metadataName.Contains('\\'))
@@ -128,11 +128,11 @@ internal static class HubSkillInventory
                         if (string.IsNullOrWhiteSpace(description) || description.Length > 1024)
                             throw new InvalidDataException("SKILL.md metadata requires a description of at most 1024 characters.");
                         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-                        occurrences.Add((name, description, new(toolId, skillFile, shared, hash)));
+                        occurrences.Add((metadata, new(toolId, skillFile, shared, hash)));
                     }
                     catch (Exception ex) when (ex is InvalidDataException or DecoderFallbackException or YamlException or ArgumentException)
                     {
-                        occurrences.Add((name, "", new(toolId, skillFile, shared, null, SafeError(ex))));
+                        occurrences.Add((new(name, "", new Dictionary<string, string>()), new(toolId, skillFile, shared, null, SafeError(ex))));
                     }
 
                     // A folder containing SKILL.md is the skill boundary; assets are not recursively inspected.

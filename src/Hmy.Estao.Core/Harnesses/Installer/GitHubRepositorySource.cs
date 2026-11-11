@@ -70,11 +70,14 @@ public sealed class GitHubRepositorySource(HttpClient client)
             var folder = SkillFolder(source);
             var id = skillIds[source];
             string name = id, description;
+            IReadOnlyDictionary<string, string> descriptions = new Dictionary<string, string>();
             var metadataValid = false;
             string? issue = null;
             try
             {
-                (name, description) = HarnessAdapter.SkillMetadata(bytes);
+                var skillMetadata = HarnessAdapter.ReadSkillMetadata(bytes);
+                (name, description) = (skillMetadata.Name, skillMetadata.Description);
+                descriptions = skillMetadata.Descriptions;
                 metadataValid = source != "." && name == folder && !string.IsNullOrWhiteSpace(description) && description.Length <= 1024;
                 if (!metadataValid) issue = source == "." ? "Root SKILL.md has no installable skill folder. Curate it as a file to export it."
                     : "Invalid skill identity or description in repository metadata.";
@@ -85,14 +88,16 @@ public sealed class GitHubRepositorySource(HttpClient client)
             HubCatalogItem? item = null;
             var curated = catalog is not null && curatedByPath.TryGetValue(source, out item);
             if (!curated) item = null;
+            var dependencyMissing = curated && catalog!.UnavailableSkills.Contains(item!.Id);
+            if (dependencyMissing) issue = "A required catalog skill or transitive dependency is missing from the repository.";
             skills.Add(new RepositorySkill(curated ? item!.Id : id, name, description, source,
-                metadataValid ? HarnessAdapter.Ids : [], metadataValid, issue, curated, "skill",
-                item?.Description, item is null ? [] : catalog!.ItemCategories[item.Id], catalog?.Catalog.DefaultLanguage ?? "en"));
+                metadataValid ? HarnessAdapter.Ids : [], metadataValid && !dependencyMissing, issue, curated, "skill",
+                descriptions, item is null ? [] : catalog!.ItemCategories[item.Id], catalog?.Catalog.DefaultLanguage ?? "en"));
         }
         if (catalog is not null)
             foreach (var item in catalog.Catalog.Items.Where(i => i.Type != "skill"))
-                skills.Add(new RepositorySkill(item.Id, item.Id, item.Description[catalog.Catalog.DefaultLanguage], item.Path,
-                    [], false, null, true, item.Type, item.Description, catalog.ItemCategories[item.Id], catalog.Catalog.DefaultLanguage));
+                skills.Add(new RepositorySkill(item.Id, item.Id, "", item.Path,
+                    [], false, null, true, item.Type, null, catalog.ItemCategories[item.Id], catalog.Catalog.DefaultLanguage));
         return new RepositorySkillLibrary(commit, skills, catalog?.Categories, catalog?.Catalog.DefaultLanguage ?? "en", catalogError);
     }
 
@@ -126,13 +131,15 @@ public sealed class GitHubRepositorySource(HttpClient client)
         var files = new List<PreparedFile>();
         var artifacts = new List<PreparedArtifact>();
         var selected = new List<HubCatalogItem>();
-        if (sourcePath is null) selected.AddRange(catalog?.Catalog.Items.Where(i => i.Type == "skill") ?? []);
+        if (sourcePath is null) selected.AddRange(catalog?.Catalog.Items.Where(i => i.Type == "skill" && !catalog.UnavailableSkills.Contains(i.Id)) ?? []);
         else
         {
             InstallerPaths.Relative(sourcePath);
             var entry = entries.SingleOrDefault(e => e.Path == sourcePath + "/SKILL.md");
             if (entry is null) throw new InvalidDataException("Requested source is not a repository skill.");
             var declared = catalog?.Catalog.Items.SingleOrDefault(i => i.Type == "skill" && i.Path == sourcePath);
+            if (declared is not null && catalog!.UnavailableSkills.Contains(declared.Id))
+                throw new InvalidDataException("A required catalog skill or transitive dependency is missing from the repository.");
             if (declared is not null) AddDependencies(declared, catalog!, selected);
             else selected.Add(new HubCatalogItem { Id = SkillIds(entries.Where(IsSkillEntry), catalog)[sourcePath], Type = "skill", Path = sourcePath });
         }
@@ -179,8 +186,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
                 payloads.AddRange(downloaded);
             }
             files.AddRange(adapter.Prepare(artifact, payloads).Select(file => file with { ArtifactId = item.Id }));
-            var actualDescription = catalog?.ById.GetValueOrDefault(item.Id)?.Description.GetValueOrDefault(catalog.Catalog.DefaultLanguage) ?? description;
-            artifacts.Add(new(item.Id, "skill", source, actualDescription, []));
+            artifacts.Add(new(item.Id, "skill", source, description, []));
             coverage.Add(new(source, "installable", "Formato nativo; no se ejecutan scripts ni se instalan dependencias.", members.Count));
         }
         var dependencyMap = selected.ToDictionary(i => i.Id, i => (IReadOnlyList<string>)(catalog?.ById.GetValueOrDefault(i.Id)?.Dependencies ?? []), StringComparer.OrdinalIgnoreCase);

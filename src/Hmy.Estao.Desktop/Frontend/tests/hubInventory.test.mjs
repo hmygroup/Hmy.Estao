@@ -22,6 +22,15 @@ test('detectedTools hides absent tools', () => {
   assert.deepEqual(detectedTools(tools).map(item => item.id), ['codex', 'claude']);
 });
 
+test('skill translations fall back directly to the standard description, not the catalog language', () => {
+  const translated = skill('translated', { description: 'Standard fallback', descriptions: { en: 'English translation', es: 'Texto español' }, defaultLanguage: 'en' });
+  assert.equal(localizedDescription(translated, 'es'), 'Texto español');
+  assert.equal(localizedDescription(translated, 'en'), 'English translation');
+  assert.equal(localizedDescription(translated, 'fr'), 'Standard fallback');
+  assert.equal(localizedDescription(skill('legacy', { description: 'Legacy fallback' }), 'es'), 'Legacy fallback');
+  assert.equal(localizedDescription(skill('file', { itemType: 'file' }), 'es'), '');
+});
+
 test('installed and library views include their distinct inventory sets', () => {
   const entries = [
     skill('local', { occurrences: [occurrence('codex')] }),
@@ -60,7 +69,7 @@ test('search, tool and status filters combine', () => {
 
 test('localized description search, category selection, and type filters combine', () => {
   const entries = [
-    skill('guide', { curated: true, itemType: 'instruction', descriptions: { en: 'Build a garden', es: 'Crear jardines' }, defaultLanguage: 'en', categories: ['gardening'] }),
+    skill('guide', { curated: true, itemType: 'skill', description: 'Build a garden', descriptions: { es: 'Crear jardines' }, categories: ['gardening'] }),
     skill('asset', { curated: true, itemType: 'file', descriptions: { en: 'Garden template' }, categories: ['gardening'] }),
     skill('uncategorized', { curated: true, itemType: 'file', description: 'Garden notes' }),
   ];
@@ -69,8 +78,8 @@ test('localized description search, category selection, and type filters combine
   assert.equal(localizedDescription(entries[0], 'fr'), 'Build a garden');
   assert.equal(localizedCategory('gardening', labels, 'es', 'en'), 'Jardinería');
   assert.equal(localizedCategory('gardening', { gardening: { es: 'Jardinería' } }, 'fr', 'es'), 'Jardinería');
-  assert.deepEqual(filterSkills(entries, tools, 'library', 'jardinería', '', 'all', 'es', 'gardening', 'instruction', labels).map(item => item.id), ['guide']);
-  assert.deepEqual(filterSkills(entries, tools, 'library', 'jardinería', '', 'all', 'fr', 'gardening', 'instruction', labels, 'es').map(item => item.id), ['guide']);
+  assert.deepEqual(filterSkills(entries, tools, 'library', 'jardinería', '', 'all', 'es', 'gardening', 'skill', labels).map(item => item.id), ['guide']);
+  assert.deepEqual(filterSkills(entries, tools, 'library', 'jardinería', '', 'all', 'fr', 'gardening', 'skill', labels, 'es').map(item => item.id), ['guide']);
   assert.deepEqual(filterSkills(entries, tools, 'library', '', '', 'all', 'en', 'gardening', 'file', labels).map(item => item.id), ['asset']);
   assert.deepEqual(filterSkills(entries, tools, 'library', '', '', 'all', 'en', '__uncategorized', 'file', labels).map(item => item.id), ['uncategorized']);
 });

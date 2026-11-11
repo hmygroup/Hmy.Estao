@@ -340,8 +340,12 @@ internal sealed class CodexProvider(HttpClient httpClient, IOAuthTokenStore? oau
         var isSession = durationMinutes is > 0 and < 1000;
         var id = isWeekly ? "weekly" : isSession ? "session" : fallbackId;
         var title = id == "weekly" ? "Weekly" : id == "session" ? "Session" : fallbackTitle;
+        // The app-server reports whole percentages, including 1 for 1%,
+        // not normalized fractions. Keep other providers' legacy formats unchanged.
+        var usedPercent = ProviderHelpers.FirstNumber(element.Value, "usedPercent", "percentUsed", "usagePercent");
         var window = new RateWindow(id, title,
-            ProviderHelpers.PercentUsedFrom(element.Value), ProviderHelpers.ResetFrom(element.Value));
+            usedPercent is { } value ? ProviderHelpers.NormalizeWholePercent(value) : ProviderHelpers.PercentUsedFrom(element.Value),
+            ProviderHelpers.ResetFrom(element.Value));
 
         windows.RemoveAll(existing => string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase));
         windows.Add(window);

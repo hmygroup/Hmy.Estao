@@ -38,6 +38,42 @@ public sealed class CodexProviderTests
     }
 
     [Fact]
+    public async Task cli_displays_one_percent_weekly_usage_as_one_percent_not_one_hundred()
+    {
+        using var output = new StringReader("""
+            {"id":1,"result":{}}
+            {"id":2,"result":{"account":{"type":"chatgpt","email":"fixture@example.test","planType":"plus"}}}
+            {"id":3,"result":{"rateLimits":{"primary":{"usedPercent":13,"windowDurationMins":300},"secondary":{"usedPercent":1,"windowDurationMins":10080}}}}
+            """);
+        using var input = new StringWriter();
+        var snapshot = await CodexProvider.ReadCliUsageAsync(output, input, "Default", CancellationToken.None);
+
+        Assert.Null(snapshot.Error);
+        Assert.Equal(.13D, snapshot.Windows.Single(window => window.Id == "session").PercentUsed);
+        Assert.Equal(.01D, snapshot.Windows.Single(window => window.Id == "weekly").PercentUsed);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(.5, .005)]
+    [InlineData(1, .01)]
+    [InlineData(2, .02)]
+    [InlineData(100, 1)]
+    public void cli_percentage_scale_is_consistent_below_at_and_above_one(double reported, double expected)
+    {
+        foreach (var field in new[] { "usedPercent", "percentUsed", "usagePercent" })
+        {
+            var window = new Dictionary<string, object> { [field] = reported, ["windowDurationMins"] = 10080 };
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                result = new { rateLimits = new { secondary = window } }
+            }));
+            var snapshot = CodexProvider.ParseRateLimits(document.RootElement, "cli", null);
+            Assert.Equal(expected, Assert.Single(snapshot.Windows).PercentUsed);
+        }
+    }
+
+    [Fact]
     public async Task cli_errors_do_not_expose_raw_server_details()
     {
         using var output = new StringReader("""

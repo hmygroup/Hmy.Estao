@@ -372,7 +372,7 @@ public sealed class HarnessHubSessionTests
     [Fact]
     public async Task CatalogIncludesLocalizedSkillsInstructionsAndFilesWithoutInventedCompatibilityWarnings()
     {
-        using var fixture = new Fixture { IncludeFileItems = true };
+        using var fixture = new Fixture { IncludeFileItems = true, LocalizedSkill = true };
         using var session = fixture.Session();
         session.Command(new("check")); await session.CurrentOperation;
         Assert.Null(session.State.Error);
@@ -384,7 +384,12 @@ public sealed class HarnessHubSessionTests
         {
             Assert.True(item.Curated);
             Assert.Equal(["core"], item.Categories);
-            Assert.NotNull(item.Descriptions!["es"]);
+            if (item.ItemType == "skill") Assert.Equal("Skill de prueba", item.Descriptions!["es"]);
+            else
+            {
+                Assert.Null(item.Descriptions);
+                Assert.Empty(item.Description);
+            }
             Assert.Null(item.Issue);
             Assert.Equal(item.ItemType == "skill", item.Installable);
         });
@@ -491,6 +496,7 @@ public sealed class HarnessHubSessionTests
         public bool FailTree { get; set; }
         public bool IncludeExtraSkills { get; set; }
         public bool IncludeFileItems { get; set; }
+        public bool LocalizedSkill { get; set; }
         public bool OmitManifest { get; set; }
         public bool InvalidManifest { get; set; }
         public string SampleId { get; set; } = "sample";
@@ -506,11 +512,11 @@ public sealed class HarnessHubSessionTests
             lock (Requests) Requests.Add(path);
             if (DenyAccess) return new(HttpStatusCode.Forbidden) { Content = new StringContent("{}") };
             if (FailTree && path.Contains("/git/trees/", StringComparison.Ordinal)) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
-            var skill = Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n---\nFixture, never execute.\n");
+            var skill = Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n" +
+                (LocalizedSkill ? "descriptions:\n  es: Skill de prueba\n  fr: Compétence de test\n" : "") + "---\nFixture, never execute.\n");
             object CatalogItem(string id, string type, string source, string[]? dependencies = null) => new
             {
                 id, type, path = source, categories = "core",
-                description = new Dictionary<string, string> { ["en"] = "Catalog " + id, ["es"] = "Catálogo " + id },
                 dependencies = dependencies ?? []
             };
             var items = new List<object> { CatalogItem(SampleId, "skill", "skills/sample", IncludeExtraSkills ? ["base"] : []) };

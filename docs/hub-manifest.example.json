@@ -10,11 +10,6 @@
       "id": "analisto",
       "type": "skill",
       "path": ".agents/skills/analisto",
-      "description": {
-        "en": "Analyze improvements and incidents before implementation.",
-        "es": "Analiza mejoras e incidencias antes de implementarlas.",
-        "fr": "Analyse les améliorations et incidents avant leur mise en œuvre."
-      },
       "categories": "core,database"
     }
   ]

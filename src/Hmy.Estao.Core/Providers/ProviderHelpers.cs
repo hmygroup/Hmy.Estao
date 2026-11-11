@@ -209,7 +209,7 @@ internal static partial class ProviderHelpers
         return Math.Clamp(value > 1 ? value / 100 : value, 0, 1);
     }
 
-    private static double? NormalizeWholePercent(double value)
+    public static double? NormalizeWholePercent(double value)
     {
         if (double.IsNaN(value) || double.IsInfinity(value))
         {

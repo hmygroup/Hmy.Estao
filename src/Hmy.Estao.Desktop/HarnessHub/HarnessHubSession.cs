@@ -298,8 +298,7 @@ internal sealed class HarnessHubSession : IDisposable
                 {
                     var item = _librarySkills.FirstOrDefault(item => item.Id == artifact.Id && item.Source == artifact.Source);
                     if (item?.Descriptions is not { } descriptions) return artifact;
-                    var translated = descriptions.GetValueOrDefault(DesktopLocalization.Language)
-                        ?? descriptions.GetValueOrDefault(item.DefaultLanguage);
+                    var translated = descriptions.GetValueOrDefault(DesktopLocalization.Language);
                     return translated is null ? artifact : artifact with { Description = translated };
                 }).ToArray() });
             }

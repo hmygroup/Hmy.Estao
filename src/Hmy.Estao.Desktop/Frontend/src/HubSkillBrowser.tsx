@@ -62,7 +62,6 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
       {catalogFilter && <button type="button" className="secondary hub-repository-button" onClick={() => void run({ action: "open-repo" })}>{t("hub.open_repo")}</button>}
       </div>
     </div>
-    <p className="hub-helper">{t("hub.scope_hint")}</p>
     {catalogFilter && showHubConnect(state) && <div className="hub-auth-notice" role="status">
       <span>{message(state?.connectionMessage) || t("hub.connect_required")}</span>
       <button type="button" className="primary" disabled={busy} onClick={() => void run({ action: "connect" })}>{t("hub.connect")}</button>
