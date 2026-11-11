@@ -32,8 +32,8 @@ public sealed class HarnessInstallerTests : IDisposable
     [Theory]
     [InlineData("codex", ".agents")]
     [InlineData("claude", ".claude")]
-    [InlineData("copilot", ".copilot")]
-    [InlineData("opencode", ".config")]
+    [InlineData("copilot", ".agents")]
+    [InlineData("opencode", ".agents")]
     public void resolves_native_personal_skill_locations(string id, string folder)
     {
         var adapter = Adapter(id);
@@ -52,7 +52,46 @@ public sealed class HarnessInstallerTests : IDisposable
         var profile = Path.Combine(_root, "custom");
         var adapter = new HarnessAdapter(id, Path.Combine(_root, "home"), name => name == key ? profile : null);
         Assert.Equal(profile, adapter.Profile);
+        Assert.Equal(id == "claude" ? Path.Combine(profile, "skills") : Path.Combine(_root, "home", ".agents", "skills"), adapter.SkillsRoot);
+        Assert.Equal(Path.Combine(profile, "agents"), adapter.AgentsRoot);
+        if (id != "claude")
+        {
+            var legacy = Path.Combine(profile, "skills", "sample", "SKILL.md");
+            Assert.Contains(Path.Combine(profile, "skills"), adapter.CompatibleSkillsRoots);
+            Assert.True(adapter.IsObservedDestination(legacy));
+            Assert.False(adapter.IsAllowedDestination(legacy));
+        }
         Assert.Throws<InvalidDataException>(() => new HarnessAdapter(id, _root, name => name == key ? "relative" : null));
+    }
+
+    [Fact]
+    public void opencode_xdg_override_changes_only_the_native_profile_not_shared_skills()
+    {
+        var home = Path.Combine(_root, "home");
+        var xdg = Path.Combine(_root, "xdg");
+        var adapter = new HarnessAdapter("opencode", home, key => key == "XDG_CONFIG_HOME" ? xdg : null);
+        Assert.Equal(Path.Combine(xdg, "opencode"), adapter.Profile);
+        Assert.Equal(Path.Combine(home, ".agents", "skills"), adapter.SkillsRoot);
+        Assert.Equal(new[] { Path.Combine(xdg, "opencode", "skills"), Path.Combine(home, ".claude", "skills") }, adapter.CompatibleSkillsRoots);
+        Assert.True(adapter.IsHistoricalManagedDestination(Path.Combine(xdg, "opencode", "skills", "sample", "SKILL.md")));
+        Assert.False(adapter.IsHistoricalManagedDestination(Path.Combine(xdg, "opencode", "skills-other", "SKILL.md")));
+    }
+
+    [Fact]
+    public async Task opencode_reuses_identical_claude_compatibility_skills_without_claiming_or_copying_them()
+    {
+        var adapter = Adapter("opencode");
+        var legacy = Path.Combine(_root, "home", ".claude", "skills", "sample", "SKILL.md");
+        Write(legacy, "same");
+        var service = Service();
+        var plan = await service.PlanAsync(adapter, Snapshot(FileFor(adapter, "same")));
+        Assert.Equal(legacy, Assert.Single(plan.Files).Path);
+        Assert.Equal(InstallAction.AlreadyPresent, plan.Files[0].Action);
+        await service.ApplyAsync(adapter, plan, false);
+        Assert.Equal(HubOperationState.Installed, await service.GetInstallationStatusAsync(adapter));
+        Assert.False(System.IO.File.Exists(FileFor(adapter, "same").RelativePath));
+        Assert.Equal(InstallAction.Conflict, Assert.Single((await service.PlanAsync(adapter, Snapshot(FileFor(adapter, "new")))).Files).Action);
+        Assert.Equal("same", await System.IO.File.ReadAllTextAsync(legacy));
     }
 
     [Fact]
@@ -184,12 +223,15 @@ public sealed class HarnessInstallerTests : IDisposable
         Assert.Equal("concurrent", await System.IO.File.ReadAllTextAsync(file.RelativePath));
     }
 
-    [Fact]
-    public async Task compatible_discovery_roots_do_not_create_duplicate_skills_or_shadow_user_content()
+    [Theory]
+    [InlineData("codex")]
+    [InlineData("copilot")]
+    [InlineData("opencode")]
+    public async Task compatible_discovery_roots_do_not_create_duplicate_skills_or_shadow_user_content(string id)
     {
-        var adapter = Adapter("copilot");
+        var adapter = Adapter(id);
         var file = FileFor(adapter, "same");
-        var shadow = Path.Combine(_root, "home", ".agents", "skills", "sample", "SKILL.md");
+        var shadow = Path.Combine(adapter.Profile, "skills", "sample", "SKILL.md");
         Write(shadow, "same");
         var plan = await Service().PlanAsync(adapter, Snapshot(file));
         Assert.Equal(InstallAction.AlreadyPresent, Assert.Single(plan.Files).Action);
@@ -199,6 +241,171 @@ public sealed class HarnessInstallerTests : IDisposable
         var conflict = await Service().PlanAsync(adapter, Snapshot(file));
         Assert.Equal(InstallAction.Conflict, conflict.Files[0].Action);
         Assert.False(System.IO.File.Exists(file.RelativePath));
+    }
+
+    [Fact]
+    public void overlapping_profile_roots_are_not_their_own_shadows_or_duplicate_compatibility_roots()
+    {
+        var home = Path.Combine(_root, "home");
+        var shared = Path.Combine(home, ".agents");
+        foreach (var id in new[] { "codex", "copilot", "opencode" })
+        {
+            var adapter = new HarnessAdapter(id, home, key => key is "CODEX_HOME" or "COPILOT_HOME" or "OPENCODE_CONFIG_DIR" ? shared : null);
+            var file = FileFor(adapter, "same");
+            Write(file.RelativePath, "same");
+            Assert.DoesNotContain(adapter.SkillsRoot, adapter.CompatibleSkillsRoots);
+            Assert.Empty(adapter.ShadowPaths(file.RelativePath));
+        }
+        var compatible = new HarnessAdapter("opencode", home, key => key == "OPENCODE_CONFIG_DIR" ? Path.Combine(home, ".claude") : null);
+        Assert.Single(compatible.CompatibleSkillsRoots);
+    }
+
+    [Theory]
+    [InlineData("codex")]
+    [InlineData("copilot")]
+    [InlineData("opencode")]
+    public async Task legacy_resources_are_observed_but_never_completed_or_overwritten(string id)
+    {
+        var adapter = Adapter(id);
+        var skill = FileFor(adapter, "same");
+        var resource = FileFor(adapter, "resource", leaf: "reference.md");
+        var legacy = Path.Combine(adapter.Profile, "skills", "sample", "SKILL.md");
+        Write(legacy, "same");
+        var plan = await Service().PlanAsync(adapter, Snapshot(skill, resource));
+        Assert.All(plan.Files, file => Assert.Equal(InstallAction.Conflict, file.Action));
+        await Service().ApplyAsync(adapter, plan, true);
+        Assert.Equal("same", await System.IO.File.ReadAllTextAsync(legacy));
+        Assert.False(System.IO.File.Exists(skill.RelativePath));
+        Assert.False(System.IO.File.Exists(Path.Combine(adapter.Profile, "skills", "sample", "reference.md")));
+    }
+
+    [Fact]
+    public async Task shared_skill_installs_are_reused_without_ownership_transfer_and_detect_cross_harness_changes()
+    {
+        var service = Service();
+        var codex = Adapter("codex");
+        var copilot = Adapter("copilot");
+        var opencode = Adapter("opencode");
+        var file = FileFor(codex, "v1");
+        await service.ApplyAsync(codex, await service.PlanAsync(codex, Snapshot(file)), false);
+        var timestamp = System.IO.File.GetLastWriteTimeUtc(file.RelativePath);
+        foreach (var adapter in new[] { copilot, opencode })
+        {
+            Assert.Equal(codex.SkillsRoot, adapter.SkillsRoot);
+            var plan = await service.PlanAsync(adapter, Snapshot(FileFor(adapter, "v1")));
+            Assert.Equal(InstallAction.AlreadyPresent, Assert.Single(plan.Files).Action);
+            await service.ApplyAsync(adapter, plan, false);
+            Assert.Equal(timestamp, System.IO.File.GetLastWriteTimeUtc(file.RelativePath));
+            Assert.Equal(InstallAction.Conflict, Assert.Single((await service.PlanAsync(adapter, Snapshot(FileFor(adapter, "v2")))).Files).Action);
+        }
+        await service.ApplyAsync(codex, await service.PlanAsync(codex, Snapshot(FileFor(codex, "v2"))), false);
+        Assert.Equal(HubOperationState.Conflict, await service.GetInstallationStatusAsync(copilot));
+        Assert.Equal(HubOperationState.Conflict, await service.GetInstallationStatusAsync(opencode));
+        Assert.Equal("v2", await System.IO.File.ReadAllTextAsync(file.RelativePath));
+    }
+
+    [Fact]
+    public async Task shared_install_rollback_preserves_the_other_harness_state_and_content()
+    {
+        var codex = Adapter("codex");
+        var copilot = Adapter("copilot");
+        var service = Service();
+        var file = FileFor(codex, "v1");
+        await service.ApplyAsync(codex, await service.PlanAsync(codex, Snapshot(file)), false);
+        var failing = Service(point => { if (point == "before-state") throw new IOException("Interrupted"); });
+        var plan = await failing.PlanAsync(copilot, Snapshot(FileFor(copilot, "v1"), FileFor(copilot, "new", "new")));
+        await Assert.ThrowsAsync<IOException>(() => failing.ApplyAsync(copilot, plan, false));
+        Assert.Equal("v1", await System.IO.File.ReadAllTextAsync(file.RelativePath));
+        Assert.False(System.IO.File.Exists(FileFor(copilot, "new", "new").RelativePath));
+        Assert.Equal(HubOperationState.Installed, await service.GetInstallationStatusAsync(codex));
+        Assert.Equal(HubOperationState.Ready, await service.GetInstallationStatusAsync(copilot));
+    }
+
+    [Theory]
+    [InlineData("copilot", "COPILOT_HOME", false)]
+    [InlineData("copilot", "COPILOT_HOME", true)]
+    [InlineData("opencode", "OPENCODE_CONFIG_DIR", false)]
+    [InlineData("opencode", "OPENCODE_CONFIG_DIR", true)]
+    public async Task historical_managed_state_remains_readable_without_authorizing_new_legacy_writes(string id, string key, bool overridden)
+    {
+        var adapter = new HarnessAdapter(id, Path.Combine(_root, "home"), name => overridden && name == key ? Path.Combine(_root, "custom") : null);
+        var legacy = Path.Combine(adapter.Profile, "skills", "sample", "SKILL.md");
+        Write(legacy, "v1");
+        var state = new InstallerState { HarnessId = id, Profile = adapter.Profile,
+            Files = [new("sample", legacy, InstallerPaths.Hash(Bytes("v1")))] };
+        var statePath = Path.Combine(_root, "data", "harness-installer",
+            id + "-" + InstallerPaths.Hash(Bytes(adapter.Profile.ToUpperInvariant()))[..20] + ".json");
+        Write(statePath, JsonSerializer.Serialize(state, InstallerJson.Options));
+        var service = Service();
+        Assert.Equal(HubOperationState.Installed, await service.GetInstallationStatusAsync(adapter));
+        Assert.True(adapter.IsHistoricalManagedDestination(legacy));
+        Assert.False(adapter.IsAllowedDestination(legacy));
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.PlanAsync(adapter, Snapshot(new PreparedFile("sample", legacy, Bytes("v2")))));
+        var normal = await service.PlanAsync(adapter, Snapshot(FileFor(adapter, "v1")));
+        Assert.Equal(InstallAction.AlreadyPresent, Assert.Single(normal.Files).Action);
+        await service.ApplyAsync(adapter, normal, false);
+        var saved = InstallerJson.Read<InstallerState>(await System.IO.File.ReadAllBytesAsync(statePath));
+        Assert.False(Assert.Single(saved.Files).Managed);
+        var forged = normal with { Files = [normal.Files[0] with { Action = InstallAction.Update, Content = Bytes("v2"), AfterHash = InstallerPaths.Hash(Bytes("v2")) }] };
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.ApplyAsync(adapter, forged with { StateBeforeHash = InstallerPaths.FileHash(statePath) }, false));
+        Assert.Equal(InstallAction.Conflict, Assert.Single((await service.PlanAsync(adapter, Snapshot(FileFor(adapter, "v2")))).Files).Action);
+        Assert.Equal("v1", await System.IO.File.ReadAllTextAsync(legacy));
+        Assert.False(System.IO.File.Exists(FileFor(adapter, "v1").RelativePath));
+    }
+
+    [Theory]
+    [InlineData("copilot", false, false)]
+    [InlineData("copilot", true, false)]
+    [InlineData("copilot", true, true)]
+    [InlineData("opencode", false, false)]
+    [InlineData("opencode", true, false)]
+    [InlineData("opencode", true, true)]
+    public async Task historical_recovery_restores_only_installer_changes_in_resolved_native_roots(string id, bool updated, bool userEdited)
+    {
+        var adapter = new HarnessAdapter(id, Path.Combine(_root, "home"), key => key is "COPILOT_HOME" or "OPENCODE_CONFIG_DIR" ? Path.Combine(_root, "custom") : null);
+        var legacy = Path.Combine(adapter.Profile, "skills", "sample", "SKILL.md");
+        Write(legacy, userEdited ? "user" : "installed");
+        var directory = Path.Combine(_root, "data", "harness-installer", "transactions", "historical");
+        Directory.CreateDirectory(directory);
+        if (updated) Write(Path.Combine(directory, "0.before"), "before");
+        var journal = new TransactionJournal { HarnessId = id, Profile = adapter.Profile, Status = "applying",
+            Entries = [new(legacy, updated ? InstallerPaths.Hash(Bytes("before")) : null, InstallerPaths.Hash(Bytes("installed")), "0.before")] };
+        Write(Path.Combine(directory, "journal.json"), JsonSerializer.Serialize(journal, InstallerJson.Options));
+        var issues = await Service().RecoverAsync(adapter);
+        if (userEdited)
+        {
+            Assert.Equal(legacy, Assert.Single(issues));
+            Assert.Equal("user", await System.IO.File.ReadAllTextAsync(legacy));
+        }
+        else
+        {
+            Assert.Empty(issues);
+            if (updated) Assert.Equal("before", await System.IO.File.ReadAllTextAsync(legacy));
+            else Assert.False(System.IO.File.Exists(legacy));
+        }
+    }
+
+    [Fact]
+    public async Task opencode_compatibility_only_claude_skills_cannot_be_managed_or_recovered()
+    {
+        var adapter = Adapter("opencode");
+        var path = Path.Combine(_root, "home", ".claude", "skills", "sample", "SKILL.md");
+        Write(path, "user");
+        Assert.True(adapter.IsObservedDestination(path));
+        Assert.False(adapter.IsHistoricalManagedDestination(path));
+        Assert.False(adapter.IsAllowedDestination(path));
+        var state = new InstallerState { HarnessId = adapter.Id, Profile = adapter.Profile,
+            Files = [new("sample", path, InstallerPaths.Hash(Bytes("user")))] };
+        var statePath = Path.Combine(_root, "data", "harness-installer",
+            adapter.Id + "-" + InstallerPaths.Hash(Bytes(adapter.Profile.ToUpperInvariant()))[..20] + ".json");
+        Write(statePath, JsonSerializer.Serialize(state, InstallerJson.Options));
+        await Assert.ThrowsAsync<InvalidDataException>(() => Service().GetInstallationStatusAsync(adapter));
+        var directory = Path.Combine(_root, "data", "harness-installer", "transactions", "unsafe");
+        var journal = new TransactionJournal { HarnessId = adapter.Id, Profile = adapter.Profile, Status = "applying",
+            Entries = [new(path, null, InstallerPaths.Hash(Bytes("user")), "0.before")] };
+        Write(Path.Combine(directory, "journal.json"), JsonSerializer.Serialize(journal, InstallerJson.Options));
+        await Assert.ThrowsAsync<InvalidDataException>(() => Service().RecoverAsync(adapter));
+        Assert.Equal("user", await System.IO.File.ReadAllTextAsync(path));
     }
 
     [Theory]

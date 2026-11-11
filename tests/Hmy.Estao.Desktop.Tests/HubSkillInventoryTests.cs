@@ -83,20 +83,107 @@ public sealed class HubSkillInventoryTests
     }
 
     [Fact]
-    public void CodexPrimaryRootIsSharedWhenAnotherDetectedToolObservesIt()
+    public void SharedRootFansOutOnceToEachDetectedObserverButNotClaude()
+    {
+        using var fixture = new Fixture();
+        var shared = Path.Combine(fixture.Home, ".agents", "skills", "shared");
+        Directory.CreateDirectory(shared);
+        var file = Path.Combine(shared, "SKILL.md");
+        File.WriteAllText(file, "---\nname: shared\ndescription: Shared skill\n---\n");
+
+        var skills = HubSkillInventory.Scan(["codex", "claude", "copilot", "opencode", "copilot"],
+            id => new HarnessAdapter(id, fixture.Home, _ => null));
+
+        var skill = Assert.Single(skills);
+        Assert.Equal(["codex", "copilot", "opencode"], skill.Occurrences.Select(occurrence => occurrence.ToolId).Order());
+        Assert.All(skill.Occurrences, occurrence =>
+        {
+            Assert.True(occurrence.Shared);
+            Assert.Equal(file, occurrence.Path);
+        });
+        Assert.Null(skill.Issue);
+        Assert.False(Directory.Exists(fixture.Adapter.SkillsRoot));
+    }
+
+    [Fact]
+    public void SharedRootDoesNotInventOccurrencesForUndetectedTools()
+    {
+        using var fixture = new Fixture();
+        var adapter = new HarnessAdapter("copilot", fixture.Home, _ => null);
+        var directory = Path.Combine(adapter.SkillsRoot, "shared");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "SKILL.md"), "---\nname: shared\ndescription: Shared skill\n---\n");
+
+        var skill = Assert.Single(HubSkillInventory.Scan(["copilot", "copilot"], _ => adapter));
+
+        Assert.Equal("copilot", Assert.Single(skill.Occurrences).ToolId);
+        Assert.Null(skill.Issue);
+    }
+
+    [Theory]
+    [InlineData("codex")]
+    [InlineData("copilot")]
+    [InlineData("opencode")]
+    public void NativeLegacySkillsRemainDiscoverableWithoutCreatingASharedCopy(string toolId)
+    {
+        using var fixture = new Fixture();
+        var adapter = new HarnessAdapter(toolId, fixture.Home, _ => null);
+        var directory = Path.Combine(adapter.Profile, "skills", "legacy");
+        Directory.CreateDirectory(directory);
+        var file = Path.Combine(directory, "SKILL.md");
+        const string content = "---\nname: legacy\ndescription: Native legacy skill\n---\n";
+        File.WriteAllText(file, content);
+
+        var skill = Assert.Single(HubSkillInventory.Scan([toolId], _ => adapter));
+
+        var occurrence = Assert.Single(skill.Occurrences);
+        Assert.Equal(toolId, occurrence.ToolId);
+        Assert.Equal(file, occurrence.Path);
+        Assert.Null(skill.Issue);
+        Assert.Equal(content, File.ReadAllText(file));
+        Assert.False(Directory.Exists(Path.Combine(fixture.Home, ".agents", "skills")));
+    }
+
+    [Fact]
+    public void ClaudeProfileSkillsStaySeparateFromTheSharedInstallRoot()
+    {
+        using var fixture = new Fixture();
+        fixture.Skill("personal", "---\nname: personal\ndescription: Claude skill\n---\n");
+
+        var skill = Assert.Single(HubSkillInventory.Scan(["codex", "claude", "copilot"],
+            id => new HarnessAdapter(id, fixture.Home, _ => null)));
+
+        var occurrence = Assert.Single(skill.Occurrences);
+        Assert.Equal("claude", occurrence.ToolId);
+        Assert.Equal(Path.Combine(fixture.Adapter.Profile, "skills", "personal", "SKILL.md"), occurrence.Path);
+        Assert.False(occurrence.Shared);
+        Assert.False(Directory.Exists(Path.Combine(fixture.Home, ".agents", "skills")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SharedAndLegacyCopiesAreCountedByRealToolAndPathPairs(bool differing)
     {
         using var fixture = new Fixture();
         var copilot = new HarnessAdapter("copilot", fixture.Home, _ => null);
-        var codex = new HarnessAdapter("codex", fixture.Home, _ => null);
-        var shared = Path.Combine(codex.SkillsRoot, "shared");
-        Directory.CreateDirectory(shared);
-        File.WriteAllText(Path.Combine(shared, "SKILL.md"), "---\nname: shared\ndescription: Shared skill\n---\n");
+        var shared = Path.Combine(fixture.Home, ".agents", "skills", "sample", "SKILL.md");
+        var legacy = Path.Combine(copilot.Profile, "skills", "sample", "SKILL.md");
+        const string content = "---\nname: sample\ndescription: Shared skill\n---\n";
+        Directory.CreateDirectory(Path.GetDirectoryName(shared)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(legacy)!);
+        File.WriteAllText(shared, content);
+        File.WriteAllText(legacy, differing ? content + "Different local body." : content);
 
-        var skills = HubSkillInventory.Scan(["codex", "copilot"], id => id == "codex" ? codex : copilot);
+        var skill = Assert.Single(HubSkillInventory.Scan(["codex", "copilot", "opencode", "copilot"],
+            id => new HarnessAdapter(id, fixture.Home, _ => null)));
 
-        var skill = Assert.Single(skills);
-        Assert.Equal(2, skill.Occurrences.Count);
-        Assert.All(skill.Occurrences, occurrence => Assert.True(occurrence.Shared));
+        Assert.Equal(4, skill.Occurrences.Count);
+        Assert.Equal(4, skill.Occurrences.Select(occurrence => (occurrence.ToolId, occurrence.Path)).Distinct().Count());
+        Assert.Equal(3, skill.Occurrences.Count(occurrence => occurrence.Path == shared));
+        Assert.Equal("copilot", Assert.Single(skill.Occurrences, occurrence => occurrence.Path == legacy).ToolId);
+        if (differing) Assert.Contains("different", skill.Issue, StringComparison.OrdinalIgnoreCase);
+        else Assert.Null(skill.Issue);
     }
 
     [Fact]

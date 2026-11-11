@@ -107,6 +107,7 @@ public sealed class HarnessHubSessionTests
     [Theory]
     [InlineData(null)]
     [InlineData("codex")]
+    [InlineData("claude")]
     public async Task DirectSkillInstallationUsesTheChosenTargetsAndIncludesDependencies(string? target)
     {
         using var fixture = new Fixture { IncludeExtraSkills = true };
@@ -142,6 +143,85 @@ public sealed class HarnessHubSessionTests
         Assert.Null(session.State.Review);
         Assert.Equal("Personal skill", await File.ReadAllTextAsync(file));
         Assert.Contains(session.State.Results, result => result.Id == "claude" && result.Outcome == "partial" && result.Conflicts == 1);
+    }
+
+    [Theory]
+    [InlineData("codex")]
+    [InlineData("copilot")]
+    [InlineData("opencode")]
+    public async Task SelectingOneSharedToolRefreshesAllThreeObserversWithoutInstallingForClaude(string target)
+    {
+        using var fixture = new Fixture { IncludeOpenCode = true, IncludeExtraSkills = true };
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        session.Command(new("install-skill", target, SkillId: "sample")); await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        var result = Assert.Single(session.State.Results);
+        Assert.Equal(target, result.Id);
+        Assert.Equal("installed", result.Outcome);
+        Assert.Equal(2, result.Created);
+        foreach (var id in new[] { "sample", "base" })
+        {
+            var skill = Assert.Single(session.State.Skills!, skill => skill.Id == id);
+            Assert.Equal(["codex", "copilot", "opencode"], skill.Occurrences.Select(occurrence => occurrence.ToolId).Order());
+            Assert.All(skill.Occurrences, occurrence =>
+            {
+                Assert.True(occurrence.Shared);
+                Assert.Equal(Path.Combine(fixture.Directory, "home", ".agents", "skills", id, "SKILL.md"), occurrence.Path);
+            });
+            Assert.Null(skill.Issue);
+        }
+        Assert.False(Directory.Exists(fixture.Adapter("claude").SkillsRoot));
+        foreach (var id in new[] { "codex", "copilot", "opencode" })
+            Assert.False(Directory.Exists(Path.Combine(fixture.Adapter(id).Profile, "skills")));
+    }
+
+    [Fact]
+    public async Task InstallingForAllFourToolsWritesTheSharedSkillOnlyOnce()
+    {
+        using var fixture = new Fixture { IncludeOpenCode = true };
+        using var session = fixture.Session();
+        session.Command(new("install-skill", SkillId: "sample")); await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Equal(4, session.State.Results.Count);
+        Assert.All(session.State.Results, result => Assert.Equal("installed", result.Outcome));
+        Assert.Equal(2, session.State.Results.Sum(result => result.Created));
+        foreach (var id in new[] { "copilot", "opencode" })
+            Assert.Contains(session.State.Results, result => result.Id == id && result.Created == 0 && result.Unchanged == 1);
+        var skill = Assert.Single(session.State.Skills!);
+        Assert.Equal(2, skill.Occurrences.Select(occurrence => occurrence.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Contains(skill.Occurrences, occurrence => occurrence.ToolId == "claude" &&
+            occurrence.Path == Path.Combine(fixture.Adapter("claude").Profile, "skills", "sample", "SKILL.md"));
+    }
+
+    [Theory]
+    [InlineData("codex")]
+    [InlineData("copilot")]
+    [InlineData("opencode")]
+    public async Task SharedRootConflictsArePreservedRegardlessOfSelectedTool(string target)
+    {
+        using var fixture = new Fixture { IncludeOpenCode = true };
+        var file = Path.Combine(fixture.Directory, "home", ".agents", "skills", "sample", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        const string content = "---\nname: sample\ndescription: Personal shared skill\n---\nDo not replace.";
+        await File.WriteAllTextAsync(file, content);
+        using var session = fixture.Session();
+        session.Command(new("install-skill", target, SkillId: "sample")); await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Equal(content, await File.ReadAllTextAsync(file));
+        var result = Assert.Single(session.State.Results);
+        Assert.Equal(target, result.Id);
+        Assert.Equal("partial", result.Outcome);
+        Assert.Equal(1, result.Conflicts);
+        Assert.Equal(0, result.Created);
+        var skill = Assert.Single(session.State.Skills!);
+        Assert.Equal(["codex", "copilot", "opencode"], skill.Occurrences.Select(occurrence => occurrence.ToolId).Order());
+        Assert.False(Directory.Exists(fixture.Adapter("claude").SkillsRoot));
+        foreach (var id in new[] { "codex", "copilot", "opencode" })
+            Assert.False(Directory.Exists(Path.Combine(fixture.Adapter(id).Profile, "skills")));
     }
 
     [Theory]
@@ -255,7 +335,8 @@ public sealed class HarnessHubSessionTests
         Assert.Contains(session.State.Results, r => r.Id == "claude" && r.Outcome == "partial" && r.Conflicts == 1);
         Assert.Contains(session.State.Results, r => r.Id == "copilot" && r.Outcome == "installed" && r.Created == 0 && r.Unchanged == 1);
         Assert.Equal("Personal skill. Must not be overwritten.", await File.ReadAllTextAsync(existing));
-        Assert.False(File.Exists(Path.Combine(fixture.Adapter("copilot").SkillsRoot, "sample", "SKILL.md")));
+        Assert.True(File.Exists(Path.Combine(fixture.Adapter("copilot").SkillsRoot, "sample", "SKILL.md")));
+        Assert.False(Directory.Exists(Path.Combine(fixture.Adapter("copilot").Profile, "skills")));
         var sample = Assert.Single(session.State.Skills!, skill => skill.Id == "sample");
         Assert.True(sample.InLibrary);
         Assert.Contains(sample.Occurrences, occurrence => occurrence.ToolId == "codex");
@@ -495,6 +576,7 @@ public sealed class HarnessHubSessionTests
         public Func<HttpRequestMessage, CancellationToken, Task>? BeforeRead { get; set; }
         public bool FailTree { get; set; }
         public bool IncludeExtraSkills { get; set; }
+        public bool IncludeOpenCode { get; set; }
         public bool IncludeFileItems { get; set; }
         public bool LocalizedSkill { get; set; }
         public bool OmitManifest { get; set; }
@@ -503,7 +585,7 @@ public sealed class HarnessHubSessionTests
         public HarnessAdapter Adapter(string id) => new(id, Path.Combine(Directory, "home"), _ => null);
         public HarnessHubSession Session(string token = "fake-test-token", Func<CancellationToken, Task<IReadOnlyList<string>>>? candidates = null,
             Func<HubSkill, string?>? exportDestination = null) => new(Path.Combine(Directory, "config.json"),
-            new HttpClient(new Handler(this)), id => id != "opencode", Adapter,
+            new HttpClient(new Handler(this)), id => IncludeOpenCode || id != "opencode", Adapter,
             candidates ?? (_ => Task.FromResult<IReadOnlyList<string>>([token])), exportDestination);
 
         private HttpResponseMessage Respond(HttpRequestMessage request)

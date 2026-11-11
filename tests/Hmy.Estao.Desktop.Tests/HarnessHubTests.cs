@@ -120,17 +120,27 @@ public sealed class HarnessHubTests
         try
         {
             var codex = new HarnessAdapter("codex", dir, _ => null);
-            var copilot = new HarnessAdapter("copilot", dir, _ => null);
             var bytes = Encoding.UTF8.GetBytes("same complete skill");
             var first = new PreparedSnapshot("commit", "tree", "1", [new("shared", Path.Combine(codex.SkillsRoot, "shared", "SKILL.md"), bytes)], []);
-            var second = first with { Files = [new("shared", Path.Combine(copilot.SkillsRoot, "shared", "SKILL.md"), bytes)] };
             var service = new HarnessInstallationService(Path.Combine(dir, "data"));
             var firstPlan = await service.PlanAsync(codex, first);
             Assert.Equal(1, (await service.ApplyAsync(codex, firstPlan, true)).Created);
-            var secondPlan = await service.PlanAsync(copilot, second);
-            Assert.Equal(InstallAction.AlreadyPresent, Assert.Single(secondPlan.Files).Action);
-            Assert.Equal(0, (await service.ApplyAsync(copilot, secondPlan, true)).Created);
-            Assert.False(File.Exists(Path.Combine(copilot.SkillsRoot, "shared", "SKILL.md")));
+            var file = Assert.Single(first.Files).RelativePath;
+            var timestamp = File.GetLastWriteTimeUtc(file);
+            foreach (var id in new[] { "copilot", "opencode" })
+            {
+                var adapter = new HarnessAdapter(id, dir, _ => null);
+                var snapshot = first with { Files = [new("shared", Path.Combine(adapter.SkillsRoot, "shared", "SKILL.md"), bytes)] };
+                var plan = await service.PlanAsync(adapter, snapshot);
+                Assert.Equal(InstallAction.AlreadyPresent, Assert.Single(plan.Files).Action);
+                var result = await service.ApplyAsync(adapter, plan, true);
+                Assert.Equal(0, result.Created);
+                Assert.Equal(1, result.Unchanged);
+                Assert.Equal(file, Assert.Single(snapshot.Files).RelativePath);
+                Assert.Equal(bytes, await File.ReadAllBytesAsync(file));
+                Assert.Equal(timestamp, File.GetLastWriteTimeUtc(file));
+                Assert.False(Directory.Exists(Path.Combine(adapter.Profile, "skills")));
+            }
         }
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
     }

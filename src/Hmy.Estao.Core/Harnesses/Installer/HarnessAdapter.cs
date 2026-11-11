@@ -43,14 +43,15 @@ public sealed class HarnessAdapter
             _ => Resolve(environment("OPENCODE_CONFIG_DIR"), Path.Combine(Resolve(environment("XDG_CONFIG_HOME"), Path.Combine(home, ".config")), "opencode"))
         };
         _configurationConflict = id == "opencode" && !string.IsNullOrWhiteSpace(environment("OPENCODE_CONFIG_CONTENT"));
-        SkillsRoot = id == "codex" ? Path.Combine(home, ".agents", "skills") : Path.Combine(Profile, "skills");
-        CompatibleSkillsRoots = id switch
+        SkillsRoot = Path.GetFullPath(id == "claude" ? Path.Combine(Profile, "skills") : Path.Combine(home, ".agents", "skills"));
+        CompatibleSkillsRoots = (id switch
         {
-            "copilot" => [Path.Combine(home, ".agents", "skills")],
-            "opencode" => [Path.Combine(home, ".agents", "skills"), Path.Combine(home, ".claude", "skills")],
-            "codex" => [Path.Combine(Profile, "skills")],
-            _ => []
-        };
+            "opencode" => new[] { Path.Combine(Profile, "skills"), Path.Combine(home, ".claude", "skills") },
+            "codex" or "copilot" => new[] { Path.Combine(Profile, "skills") },
+            _ => Array.Empty<string>()
+        }).Select(Path.GetFullPath)
+            .Where(root => !Path.TrimEndingDirectorySeparator(root).Equals(Path.TrimEndingDirectorySeparator(SkillsRoot), StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         AgentsRoot = Path.Combine(Profile, "agents");
         McpPath = id switch
         {
@@ -231,6 +232,12 @@ public sealed class HarnessAdapter
 
     public bool IsObservedDestination(string path) => IsAllowedDestination(path) || CompatibleSkillsRoots.Any(root =>
         Path.GetFullPath(path).StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+
+    // Only these native roots were writable by earlier installer versions. Compatibility-only
+    // roots (notably OpenCode's ~/.claude/skills) must never authorize recovery writes.
+    public bool IsHistoricalManagedDestination(string path) => IsAllowedDestination(path) ||
+        Id is "copilot" or "opencode" && Path.GetFullPath(path).StartsWith(
+            Path.Combine(Profile, "skills") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
     public IReadOnlyList<string> ShadowPaths(string path)
     {

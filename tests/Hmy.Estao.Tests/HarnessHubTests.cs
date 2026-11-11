@@ -51,7 +51,7 @@ public sealed class HarnessHubTests : IDisposable
         var target = HarnessCatalog.CreateDefaultProfile("copilot", targetRoot);
         var result = await new HarnessPackageInstaller().InstallAsync(published.Path, target);
 
-        Assert.True(File.Exists(Path.Combine(targetRoot, ".copilot", "skills", "review", "SKILL.md")));
+        Assert.True(File.Exists(Path.Combine(targetRoot, ".agents", "skills", "review", "SKILL.md")));
         var convertedAgent = await File.ReadAllTextAsync(Path.Combine(targetRoot, ".copilot", "agents", "reviewer.md"));
         Assert.Contains("name: \"reviewer\"", convertedAgent);
         Assert.Contains("Review changes for correctness", convertedAgent);
@@ -84,6 +84,55 @@ public sealed class HarnessHubTests : IDisposable
 
         Assert.Empty(result.InstalledFiles);
         Assert.Contains(result.SkippedArtifacts, item => item.Contains("(disabled)", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("codex")]
+    [InlineData("copilot")]
+    [InlineData("opencode")]
+    [InlineData("claude")]
+    public async Task user_skill_discovery_matches_install_root_and_retains_legacy_roots_without_duplicates(string id)
+    {
+        var root = Path.Combine(_directory, id);
+        var profile = HarnessCatalog.CreateDefaultProfile(id, root);
+        profile.Features = [HarnessFeatureIds.Skills];
+        var primary = HarnessPaths.FeatureDirectory(profile, HarnessFeatureIds.Skills);
+        var adapter = new Hmy.Estao.Core.Harnesses.Installer.HarnessAdapter(id, root, _ => null);
+        Assert.Equal(adapter.SkillsRoot, primary);
+        var roots = new[] { primary }.Concat(HarnessPaths.CompatibleSkillsDirectories(profile)).ToArray();
+        for (var index = 0; index < roots.Length; index++)
+        {
+            var unique = Path.Combine(roots[index], "unique-" + index);
+            var duplicate = Path.Combine(roots[index], "duplicate");
+            Directory.CreateDirectory(unique);
+            Directory.CreateDirectory(duplicate);
+            await File.WriteAllTextAsync(Path.Combine(unique, "SKILL.md"), "unique " + index);
+            await File.WriteAllTextAsync(Path.Combine(duplicate, "SKILL.md"), "root " + index);
+        }
+        var package = await new HarnessHubService().PublishAsync(Path.Combine(_directory, "hub-" + id), profile,
+            new HarnessPackageDraft("skills", "Skills", "", "1.0.0", "Tests"));
+        Assert.Equal(roots.Length + 1, package.Manifest.Artifacts.Count);
+        Assert.Single(package.Manifest.Artifacts, item => item.LogicalPath == "duplicate/SKILL.md");
+        using var archive = ZipFile.OpenRead(package.Path);
+        var duplicateArtifact = package.Manifest.Artifacts.Single(item => item.LogicalPath == "duplicate/SKILL.md");
+        using var reader = new StreamReader(archive.GetEntry(duplicateArtifact.ArchivePath)!.Open());
+        Assert.Equal("root 0", await reader.ReadToEndAsync());
+        // Publishing/discovery is additive and never migrates or removes any source file.
+        foreach (var directory in roots)
+            Assert.True(File.Exists(Path.Combine(directory, "duplicate", "SKILL.md")));
+    }
+
+    [Theory]
+    [InlineData("copilot", ".github")]
+    [InlineData("opencode", ".opencode")]
+    [InlineData("claude", ".claude")]
+    [InlineData("codex", ".agents")]
+    public void project_skill_destinations_remain_native(string id, string folder)
+    {
+        var profile = HarnessCatalog.CreateDefaultProfile(id, _directory);
+        profile.Scope = "project";
+        Assert.Equal(Path.Combine(_directory, folder, "skills"), HarnessPaths.FeatureDirectory(profile, HarnessFeatureIds.Skills));
+        if (id != "codex") Assert.Empty(HarnessPaths.CompatibleSkillsDirectories(profile));
     }
 
     [Fact]
@@ -177,8 +226,8 @@ public sealed class HarnessHubTests : IDisposable
             new HarnessPackageDraft("restore", "Restore test", "", "1.0.0", "Tests"));
 
         var targetRoot = Path.Combine(_directory, "target-restore");
-        var existing = Path.Combine(targetRoot, ".copilot", "skills", "changed", "SKILL.md");
-        var created = Path.Combine(targetRoot, ".copilot", "skills", "new-skill", "SKILL.md");
+        var existing = Path.Combine(targetRoot, ".agents", "skills", "changed", "SKILL.md");
+        var created = Path.Combine(targetRoot, ".agents", "skills", "new-skill", "SKILL.md");
         Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
         await File.WriteAllTextAsync(existing, "original content");
         var target = HarnessCatalog.CreateDefaultProfile("copilot", targetRoot);

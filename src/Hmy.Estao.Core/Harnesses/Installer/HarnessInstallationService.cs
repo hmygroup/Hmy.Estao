@@ -107,7 +107,8 @@ public sealed class HarnessInstallationService
         foreach (var file in plan.Files.Where(f => f.Action != InstallAction.Conflict))
         {
             var previous = state.Files.FirstOrDefault(f => f.Path.Equals(file.Path, StringComparison.OrdinalIgnoreCase));
-            var managed = file.Action != InstallAction.AlreadyPresent || previous is { Managed: true } && previous.Hash == file.BeforeHash;
+            var managed = adapter.IsAllowedDestination(file.Path) &&
+                (file.Action != InstallAction.AlreadyPresent || previous is { Managed: true } && previous.Hash == file.BeforeHash);
             state.Files.RemoveAll(f => f.Path.Equals(file.Path, StringComparison.OrdinalIgnoreCase));
             state.Files.Add(new InstalledFile(file.ArtifactId, file.Path, file.AfterHash, managed, file.StructuredNodes));
         }
@@ -205,7 +206,7 @@ public sealed class HarnessInstallationService
         var issues = new List<string>();
         foreach (var entry in journal.Entries.AsEnumerable().Reverse())
         {
-            if (!adapter.IsAllowedDestination(entry.Path) && entry.Path != StatePath(adapter)) throw new InvalidDataException("Unsafe recovery destination.");
+            if (!adapter.IsHistoricalManagedDestination(entry.Path) && entry.Path != StatePath(adapter)) throw new InvalidDataException("Unsafe recovery destination.");
             try
             {
                 var current = InstallerPaths.FileHash(entry.Path);
@@ -235,7 +236,7 @@ public sealed class HarnessInstallationService
         if (InstallerPaths.FileHash(path) is null) return new() { HarnessId = adapter.Id, Profile = adapter.Profile };
         var state = InstallerJson.Read<InstallerState>(File.ReadAllBytes(path));
         if (state.SchemaVersion != 1 || state.Repository != GitHubRepositorySource.Repository || state.HarnessId != adapter.Id || state.Profile != adapter.Profile ||
-            state.Files.Count > 5000 || state.Files.Any(f => !(f.Managed ? adapter.IsAllowedDestination(f.Path) : adapter.IsObservedDestination(f.Path))) ||
+            state.Files.Count > 5000 || state.Files.Any(f => !(f.Managed ? adapter.IsHistoricalManagedDestination(f.Path) : adapter.IsObservedDestination(f.Path))) ||
             state.Files.Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() != state.Files.Count)
             throw new InvalidDataException("Invalid installer state. Legacy state has not been changed.");
         return state;

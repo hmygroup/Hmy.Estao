@@ -29,10 +29,11 @@ internal static partial class HarnessArtifactDiscovery
                     .ConfigureAwait(false);
         }
 
-        if (enabled.Contains(HarnessFeatureIds.Skills) && profile.Id == "codex")
-            await AddDirectoryAsync(HarnessPaths.CodexLegacySkills(profile), HarnessFeatureIds.Skills, result,
-                cancellationToken, excludedRootDirectories: new HashSet<string>([".system"], StringComparer.OrdinalIgnoreCase))
-                .ConfigureAwait(false);
+        if (enabled.Contains(HarnessFeatureIds.Skills))
+            foreach (var directory in HarnessPaths.CompatibleSkillsDirectories(profile).Distinct(StringComparer.OrdinalIgnoreCase))
+                await AddDirectoryAsync(directory, HarnessFeatureIds.Skills, result, cancellationToken,
+                    excludedRootDirectories: new HashSet<string>([".system"], StringComparer.OrdinalIgnoreCase))
+                    .ConfigureAwait(false);
 
         if (enabled.Contains(HarnessFeatureIds.Hooks))
             await DiscoverHooksAsync(profile, result, cancellationToken).ConfigureAwait(false);

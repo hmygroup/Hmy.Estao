@@ -30,10 +30,12 @@ Si el administrador configura `HMY_ESTAO_GITHUB_APP_CLIENT_ID`, Conectar GitHub 
 
 ## Destinos y capacidades
 
-- Codex: skills en `~/.agents/skills`; `CODEX_HOME` para configuración y agentes nativos. Se detectan skills legacy coincidentes bajo el perfil Codex.
-- Claude: `CLAUDE_CONFIG_DIR` o `~/.claude`; skills/agents/commands personales. MCP user en el JSON del perfil.
-- Copilot CLI: `COPILOT_HOME` o `~/.copilot`; skills, agents `.agent.md`, MCP en `mcp-config.json`. No se usan `.prompt.md` de VS Code como comandos CLI.
-- OpenCode: `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` y `OPENCODE_CONFIG`, según corresponda. Se conserva JSONC existente y se bloquea ambigüedad JSON/JSONC. Agentes/MCP requieren versión V2 verificada; skills usan formato estándar.
+- Codex: nuevas skills en `~/.agents/skills`; `CODEX_HOME` para configuración y agentes nativos. Se detectan también skills legacy bajo `<perfil Codex>/skills`.
+- Claude: nuevas skills en `<perfil Claude>/skills` (`~/.claude/skills` por defecto); `CLAUDE_CONFIG_DIR` determina el perfil. Mantiene su destino separado de `~/.agents/skills`. MCP user en el JSON del perfil.
+- Copilot CLI: nuevas skills en `~/.agents/skills`; `COPILOT_HOME` o `~/.copilot` sigue siendo el perfil para agents `.agent.md` y MCP en `mcp-config.json`. Se siguen descubriendo skills legacy en `<perfil Copilot>/skills`. No se usan `.prompt.md` de VS Code como comandos CLI.
+- OpenCode: nuevas skills en `~/.agents/skills`; `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` y `OPENCODE_CONFIG` siguen determinando el perfil/configuración, no este destino compartido. Se siguen descubriendo skills legacy en `<perfil OpenCode>/skills` y ubicaciones compatibles, incluido `~/.claude/skills`. Se conserva JSONC existente y se bloquea ambigüedad JSON/JSONC. Agentes/MCP requieren versión V2 verificada; skills usan formato estándar.
+
+Instalar en `~/.agents/skills` hace disponible la skill a todas las herramientas que lean esa carpeta, **aunque se seleccione una sola herramienta**. El inventario atribuye una ocurrencia a cada herramienta detectada que la observe; no representa copias físicas adicionales. Instalar para varias herramientas evita escrituras redundantes de contenido idéntico y conserva los conflictos locales. Este cambio solo fija el destino de nuevas instalaciones: no migra, mueve ni elimina archivos existentes. Las copias legacy siguen descubriéndose y participando en las comprobaciones de equivalencia/conflicto.
 
 Los overrides deben ser rutas locales absolutas sin enlaces. El instalador no deduce un proyecto desde el directorio de trabajo de la bandeja. La detección PATH es indicativa: no ejecuta ni instala el harness. Las herramientas no detectadas no se muestran ni se seleccionan para instalar.
 

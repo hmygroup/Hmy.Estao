@@ -65,12 +65,12 @@ public static class HarnessPaths
             ("claude", HarnessFeatureIds.Prompts) => Path.Combine(root, ".claude", "commands"),
             ("claude", HarnessFeatureIds.Hooks) => Path.Combine(root, ".claude"),
 
-            ("copilot", HarnessFeatureIds.Skills) => Path.Combine(root, personal ? ".copilot" : ".github", "skills"),
+            ("copilot", HarnessFeatureIds.Skills) => Path.Combine(root, personal ? ".agents" : ".github", "skills"),
             ("copilot", HarnessFeatureIds.Agents) => Path.Combine(root, personal ? ".copilot" : ".github", "agents"),
             ("copilot", HarnessFeatureIds.Prompts) => Path.Combine(root, personal ? ".copilot" : ".github", "prompts"),
             ("copilot", HarnessFeatureIds.Hooks) => Path.Combine(root, personal ? ".copilot" : ".github", "hooks"),
 
-            ("opencode", HarnessFeatureIds.Skills) => OpenCodeDirectory(root, personal, "skills"),
+            ("opencode", HarnessFeatureIds.Skills) => personal ? Path.Combine(root, ".agents", "skills") : OpenCodeDirectory(root, false, "skills"),
             ("opencode", HarnessFeatureIds.Agents) => OpenCodeDirectory(root, personal, "agents"),
             ("opencode", HarnessFeatureIds.Prompts) => OpenCodeDirectory(root, personal, "commands"),
             ("opencode", HarnessFeatureIds.Hooks) => OpenCodeDirectory(root, personal, "plugins"),
@@ -122,6 +122,18 @@ public static class HarnessPaths
 
     public static string CodexLegacySkills(HarnessProfileConfig profile) =>
         Path.Combine(ResolveBasePath(profile), ".codex", "skills");
+
+    public static IReadOnlyList<string> CompatibleSkillsDirectories(HarnessProfileConfig profile)
+    {
+        var root = ResolveBasePath(profile);
+        return profile.Id switch
+        {
+            "codex" => [CodexLegacySkills(profile)],
+            "copilot" when IsPersonal(profile) => [Path.Combine(root, ".copilot", "skills")],
+            "opencode" when IsPersonal(profile) => [OpenCodeDirectory(root, true, "skills"), Path.Combine(root, ".claude", "skills")],
+            _ => []
+        };
+    }
 
     private static IReadOnlyList<string> CodexSettingsFiles(string root)
     {
