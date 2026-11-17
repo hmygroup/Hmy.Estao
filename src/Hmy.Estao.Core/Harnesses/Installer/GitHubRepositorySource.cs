@@ -49,8 +49,14 @@ public sealed class GitHubRepositorySource(HttpClient client)
         string? catalogError = null;
         try
         {
-            if (manifestEntry is null) throw new InvalidDataException("hub-manifest.json is missing.");
-            catalog = HubCatalogContract.Read(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false), entries);
+            var localManifestPath = Path.Combine(AppContext.BaseDirectory, "hub-manifest.json");
+            if (File.Exists(localManifestPath))
+                catalog = HubCatalogContract.Read(await File.ReadAllBytesAsync(localManifestPath, ct).ConfigureAwait(false), entries);
+            else
+            {
+                if (manifestEntry is null) throw new InvalidDataException("hub-manifest.json is missing.");
+                catalog = HubCatalogContract.Read(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false), entries);
+            }
         }
         catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException)
         { catalogError = ex.Message; }
