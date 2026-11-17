@@ -46,6 +46,7 @@ export function skillCategories(skill: HubSkill[]): string[] {
   return [...new Set(skill.flatMap(item => item.categories ?? []))].sort((a, b) => a.localeCompare(b));
 }
 export function itemType(skill: HubSkill): string { return skill.itemType || "skill"; }
+export function hasToolInventory(skill: HubSkill): boolean { return ["skill", "mcp", "cli"].includes(itemType(skill)); }
 export function skillToolStatus(skill: HubSkill, tool: HubTool): "present" | "missing" | "unknown" | "unsupported" {
   const occurrences = skill.occurrences.filter(item => item.toolId === tool.id);
   if (occurrences.some(item => item.error)) return "unknown";
@@ -60,28 +61,27 @@ export function filterSkills(skills: HubSkill[], tools: HubTool[], view: SkillVi
   const selected = visible.filter(tool => !toolId || tool.id === toolId);
   const text = query.trim().toLocaleLowerCase();
   return skills.filter(skill => {
-    const installed = skill.occurrences.some(item => visible.some(tool => tool.id === item.toolId));
-    if (view === "installed" ? (!installed || itemType(skill) !== "skill")
-      : view === "library" ? !isCurated(skill) : (isCurated(skill) || itemType(skill) !== "skill")) return false;
-    if (view !== "installed" && type !== "all" && itemType(skill) !== type) return false;
+    const installed = skill.occurrences.some(item => item.path && visible.some(tool => tool.id === item.toolId));
+    if (view === "installed" ? (!installed || !hasToolInventory(skill))
+      : view === "library" ? !isCurated(skill) : (isCurated(skill) || !hasToolInventory(skill))) return false;
+    if (type !== "all" && itemType(skill) !== type) return false;
     if (category === "__uncategorized" && (skill.categories ?? []).length > 0) return false;
     if (category && category !== "__uncategorized" && !(skill.categories ?? []).includes(category)) return false;
     if (text && !`${skill.name} ${skill.id} ${localizedDescription(skill, language)} ${(skill.categories ?? []).map(value => localizedCategory(value, catalogCategories, language, catalogDefaultLanguage)).join(" ")}`.toLocaleLowerCase(language).includes(text)) return false;
-    if ((itemType(skill) === "mcp" || itemType(skill) === "cli") && (toolId || status !== "all")) return false;
     if (toolId && itemType(skill) === "file") return false;
     if (toolId && itemType(skill) === "instruction" && !selected.some(tool => skill.compatibleTools.includes(tool.id))) return false;
-    if (itemType(skill) === "skill" && toolId && !selected.some(tool => view === "installed"
-      ? skill.occurrences.some(item => item.toolId === tool.id)
+    if (hasToolInventory(skill) && toolId && !selected.some(tool => view === "installed"
+      ? skill.occurrences.some(item => item.path && item.toolId === tool.id)
       : skill.compatibleTools.includes(tool.id) || skill.occurrences.some(item => item.toolId === tool.id))) return false;
     if (status === "installable" && (itemType(skill) === "file" || !skill.installable || !selected.some(tool => skill.compatibleTools.includes(tool.id)))) return false;
     if (status === "attention") {
-      if (itemType(skill) !== "skill") return false;
+      if (!hasToolInventory(skill)) return false;
       const local = skill.occurrences.filter(item => selected.some(tool => tool.id === item.toolId));
       const differing = local.some(item => item.hash && skill.occurrences.some(other => other.hash && other.hash !== item.hash));
       const issue = skill.issue && (!toolId || differing || (isCurated(skill) && !skill.installable));
       if (!issue && !selected.some(tool => skillToolStatus(skill, tool) === "unknown")) return false;
     }
-    if (status === "missing" && (itemType(skill) !== "skill" || !selected.some(tool => skillToolStatus(skill, tool) === "missing"))) return false;
+    if (status === "missing" && (!hasToolInventory(skill) || !selected.some(tool => skillToolStatus(skill, tool) === "missing"))) return false;
     return true;
   }).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }

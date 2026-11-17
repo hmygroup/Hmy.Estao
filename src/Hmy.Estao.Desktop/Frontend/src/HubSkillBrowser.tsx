@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { detectedTools, filterSkills, isCurated, itemType, localizedCategory, localizedDescription, showHubConnect, skillCategories, skillToolStatus, type CatalogItemType, type HubCommand, type HubSkill, type HubState, type HubTool, type SkillStatus, type SkillView } from "./hubTypes";
+import { detectedTools, filterSkills, hasToolInventory, isCurated, itemType, localizedCategory, localizedDescription, showHubConnect, skillCategories, skillToolStatus, type CatalogItemType, type HubCommand, type HubSkill, type HubState, type HubTool, type SkillStatus, type SkillView } from "./hubTypes";
 import { currentLanguage, t, plural, message } from "./i18n";
 
 export default function HubSkillBrowser({ state, busy, run }: { state?: HubState; busy: boolean; run: (command: HubCommand) => Promise<void> }) {
@@ -53,11 +53,9 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
       <label>{t("hub.status_filter")}<select aria-label={t("hub.status_filter")} value={status} onChange={event => setStatus(event.target.value as SkillStatus)}>
         {["all", "missing", "attention", "installable"].map(value => <option key={value} value={value}>{t(`hub.filter.${value}`)}</option>)}
       </select></label>
-      {catalogFilter && <>
         <label>{t("hub.type_filter")}<select aria-label={t("hub.type_filter")} value={type} onChange={event => setType(event.target.value as CatalogItemType)}>
           {(["all", "skill", "instruction", "file", "mcp", "cli"] as CatalogItemType[]).map(value => <option key={value} value={value}>{t(`hub.type.${value}`)}</option>)}
         </select></label>
-      </>}
       <div className={`hub-category-filter${catalogFilter ? " with-repository" : ""}`}><label>{t("hub.category_filter")}<select aria-label={t("hub.category_filter")} value={effectiveCategory} onChange={event => setCategory(event.target.value)}>
           <option value="">{t("hub.category_all")}</option>{categories.map(value => <option key={value} value={value}>{localizedCategory(value, catalogCategories, language, state?.catalogDefaultLanguage)}</option>)}
           <option value="__uncategorized">{t("hub.category_uncategorized")}</option>
@@ -81,7 +79,7 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
               <span className="hub-skill-origin" title={isCurated(skill) ? t("hub.origin_hmy") : skill.inLibrary ? t("hub.origin_repo") : undefined}>· {t(isCurated(skill) ? "hub.hmy_badge" : skill.inLibrary ? "hub.repo_skill" : "hub.local_source")}</span>
               {itemType(skill) !== "skill" && <span className="hub-badge">{t(`hub.type.${itemType(skill)}`)}</span>}{skill.issue && <span className="hub-badge conflict">{t("hub.attention")}</span>}</span>
             <span className="hub-skill-description">{localizedDescription(skill, language) || t("hub.no_description")}</span>
-            {itemType(skill) === "skill" && <span className="hub-tool-indicators">{tools.map(tool => <ToolIndicator key={tool.id} skill={skill} tool={tool} />)}</span>}
+            {hasToolInventory(skill) && <span className="hub-tool-indicators">{tools.map(tool => <ToolIndicator key={tool.id} skill={skill} tool={tool} />)}</span>}
           </button>)}
       </div>
       {selected && <SkillDetails key={selected.id} skill={selected} tools={tools} connected={state?.connected === true} busy={busy} run={run} language={language} catalogCategories={catalogCategories} catalogDefaultLanguage={state?.catalogDefaultLanguage} />}
@@ -116,17 +114,17 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
       </div>
     </div>
     <p>{description || t("hub.no_description")}</p>
-    {isNetworkItem && <p className="hub-network-path"><strong>{t("hub.network_folder")}</strong> <code>{skill.source}</code></p>}
+    {isNetworkItem && skill.source && <p className="hub-network-path"><strong>{t("hub.network_folder")}</strong> <code>{skill.source}</code></p>}
     {!isCurated(skill) && skill.inLibrary && <small>{t("hub.origin_repo")}</small>}
     {skill.issue && <p className="inline-warning">{t("hub.attention")} <span className="hub-diagnostic">{skill.issue}</span></p>}
-    {isSkill && <div className="hub-skill-locations">{tools.map(tool => {
+    {hasToolInventory(skill) && <div className="hub-skill-locations">{tools.map(tool => {
       const status = skillToolStatus(skill, tool);
       const occurrences = skill.occurrences.filter(item => item.toolId === tool.id);
       return <div key={tool.id} className="hub-skill-location">
         <div><ToolIndicator skill={skill} tool={tool} /><strong>{tool.name}</strong></div>
         {status !== "present" && <small>{t(`hub.tool_state.${status}`, tool.name)}</small>}
         {tool.error && <p className="hub-diagnostic">{tool.error}</p>}
-        {occurrences.map(item => <div key={item.path} className="hub-occurrence">{t("hub.installed_location")} <code>{item.path}</code>{item.error && <p className="hub-diagnostic">{item.error}</p>}</div>)}
+        {occurrences.map(item => <div key={item.path} className="hub-occurrence">{item.path && <>{t("hub.installed_location")} <code>{item.path}</code></>}{item.error && <p className="hub-diagnostic">{item.error}</p>}</div>)}
       </div>;
     })}</div>}
     </div>

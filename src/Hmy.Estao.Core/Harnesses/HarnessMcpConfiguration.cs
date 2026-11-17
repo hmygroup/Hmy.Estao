@@ -21,13 +21,19 @@ internal static partial class HarnessMcpConfiguration
         HarnessProfileConfig profile, CancellationToken cancellationToken = default)
     {
         var path = HarnessPaths.McpConfiguration(profile);
+        return await ReadAsync(profile.Id, path, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static async Task<PortableMcpReadResult?> ReadAsync(string harnessId, string path,
+        CancellationToken cancellationToken = default)
+    {
         if (!File.Exists(path)) return null;
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidOperationException($"Refusing to publish reparse-point MCP file '{path}'.");
         var text = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        var configuration = string.Equals(profile.Id, "codex", StringComparison.Ordinal)
+        var configuration = string.Equals(harnessId, "codex", StringComparison.Ordinal)
             ? ParseCodexToml(text)
-            : ParseJson(profile.Id, text);
+            : ParseJson(harnessId, text);
         if (configuration.Servers.Count == 0) return null;
         var redacted = RedactSecrets(configuration);
         return new PortableMcpReadResult(configuration, redacted);
@@ -106,6 +112,7 @@ internal static partial class HarnessMcpConfiguration
 
     private static PortableMcpConfiguration ParseCodexToml(string text)
     {
+        if (Tomlyn.Toml.Parse(text).HasErrors) throw new InvalidDataException("Invalid MCP TOML configuration.");
         var result = new PortableMcpConfiguration();
         string? serverName = null;
         string? subsection = null;

@@ -72,6 +72,15 @@ public sealed class HarnessAdapter
         foreach (var path in new[] { Profile, SkillsRoot, AgentsRoot, McpPath }) InstallerPaths.CheckLocal(path);
     }
 
+    public async Task<IReadOnlyList<string>> ReadMcpServerNamesAsync(CancellationToken cancellationToken = default)
+    {
+        InstallerPaths.CheckLocal(McpPath);
+        if (File.Exists(McpPath) && new FileInfo(McpPath).Length > 4 * 1024 * 1024)
+            throw new InvalidDataException("MCP configuration exceeds the 4 MB scan limit.");
+        var result = await HarnessMcpConfiguration.ReadAsync(Id, McpPath, cancellationToken).ConfigureAwait(false);
+        return result?.Configuration.Servers.Keys.ToArray() ?? [];
+    }
+
     public void CheckCapabilities(SourceArtifact artifact)
     {
         if (artifact.Category == "mcp")

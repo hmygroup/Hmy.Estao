@@ -28,6 +28,7 @@ internal sealed class HarnessHubSession : IDisposable
     private string? _token;
     private IReadOnlyList<HubSkill> _localSkills = [];
     private IReadOnlyList<HubSkill> _librarySkills = [];
+    private IReadOnlyList<HubSkill> _toolItems = [];
     private bool _disposed;
     private HubState _state = new(false, "idle", "Check your tools to get started.", false, "Not connected", [], null, [], null, null);
 
@@ -82,7 +83,7 @@ internal sealed class HarnessHubSession : IDisposable
                     throw new InvalidOperationException("Refresh the repository catalog before installing.").WithUserMessage("hub.review_changed");
                 Start("installing", ct => InstallInstructionAsync(instruction, instructionCommit, ct)); break;
             case "uninstall-skill":
-                var installed = State.Skills?.SingleOrDefault(skill => skill.Id == command.SkillId && skill.Occurrences.Count > 0)
+                var installed = State.Skills?.SingleOrDefault(skill => skill.Id == command.SkillId && skill.ItemType == "skill" && skill.Occurrences.Count > 0)
                     ?? throw new ArgumentException("Select an installed skill.").WithUserMessage("hub.select_skill");
                 Start("uninstalling", ct => UninstallAsync(installed, ct)); break;
             case "export-item":
@@ -435,7 +436,7 @@ internal sealed class HarnessHubSession : IDisposable
         await UpdateLocalInventoryAsync(ct, skillDirectories);
     }
 
-    private Task UpdateLocalInventoryAsync(CancellationToken ct, IReadOnlySet<string>? skillDirectories = null)
+    private async Task UpdateLocalInventoryAsync(CancellationToken ct, IReadOnlySet<string>? skillDirectories = null)
     {
         if (skillDirectories is not null)
         {
@@ -459,13 +460,21 @@ internal sealed class HarnessHubSession : IDisposable
             _localSkills = _localSkills.Where(skill => !names.Contains(skill.Name)).Concat(scanned).ToArray();
         }
         var previous = (State.Skills ?? []).ToDictionary(skill => skill.Id, StringComparer.OrdinalIgnoreCase);
-        var skills = MergeSkills(_localSkills, _librarySkills).Select(skill =>
+        await UpdateToolInventoryAsync(ct);
+        var skills = MergeInventory().Select(skill =>
             previous.TryGetValue(skill.Id, out var existing) && existing == skill ? existing : skill).ToArray();
         Update(s => s with { Skills = skills, Tools = s.Tools.Select(tool => errors.TryGetValue(tool.Id, out var messages)
             ? tool with { Status = tool.Status == "RecoveryRequired" ? tool.Status : "Error",
                 Error = SafeError(new IOException(string.Join(" ", messages))), ErrorMessage = new("error.io") } : tool).ToArray() });
-        return Task.CompletedTask;
     }
+
+    private async Task UpdateToolInventoryAsync(CancellationToken ct) =>
+        _toolItems = await HubToolInventory.ScanAsync(State.Tools.Where(tool => tool.Detected).Select(tool => tool.Id),
+            _adapter, _librarySkills, ct);
+
+    private IReadOnlyList<HubSkill> MergeInventory() => MergeSkills(_localSkills,
+        _librarySkills.Where(item => item.ItemType is not ("mcp" or "cli"))).Concat(_toolItems)
+        .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
 
     private async Task UpdateRepositoryLibraryAsync(CancellationToken ct)
     {
@@ -476,9 +485,10 @@ internal sealed class HarnessHubSession : IDisposable
             _librarySkills = library.Skills.Select(item => new HubSkill(item.Id, item.Name, item.Description, true,
                 item.Installable, item.CompatibleHarnesses, [], item.Source, item.Issue, item.Curated, item.ItemType,
                 item.Descriptions, item.Categories, item.DefaultLanguage)).ToArray();
+            await UpdateToolInventoryAsync(ct);
             Update(s => s with { LibraryCommit = library.Commit, LibraryLoaded = true, LibraryError = null,
                 CatalogCategories = library.Categories, CatalogDefaultLanguage = library.DefaultLanguage, CatalogError = library.CatalogError,
-                Skills = MergeSkills(_localSkills, _librarySkills) });
+                Skills = MergeInventory() });
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)

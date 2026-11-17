@@ -25,9 +25,24 @@ for (const itemType of ['mcp', 'cli']) {
     assert.equal(localizedDescription(entries[0], 'es'), 'English network utility');
     assert.equal(filterSkills(entries, [], 'library', 'network utility', '', 'all', 'es', 'tooling', itemType).length, 1);
     for (const view of ['installed', 'other']) assert.deepEqual(filterSkills(entries, tools, view, '', '', 'all'), []);
-    assert.deepEqual(filterSkills(entries, tools, 'library', '', 'codex', 'all'), []);
-    for (const status of ['missing', 'attention', 'installable'])
+    entries[0].compatibleTools = ['codex', 'claude'];
+    assert.deepEqual(filterSkills(entries, tools, 'library', '', 'codex', 'all'), entries);
+    assert.deepEqual(filterSkills(entries, tools, 'library', '', '', 'missing'), entries);
+    for (const status of ['attention', 'installable'])
       assert.deepEqual(filterSkills(entries, tools, 'library', '', '', status), []);
+  });
+  test(`${itemType} reuses installed, missing, attention and per-tool inventory`, () => {
+    const entry = skill('utility', { itemType, curated: true, compatibleTools: ['codex', 'claude'],
+      occurrences: [occurrence('codex', '/local/utility')] });
+    assert.deepEqual(filterSkills([entry], tools, 'installed', '', 'codex', 'all'), [entry]);
+    assert.deepEqual(filterSkills([entry], tools, 'installed', '', 'claude', 'all'), []);
+    assert.deepEqual(filterSkills([entry], tools, 'library', '', 'claude', 'missing'), [entry]);
+    assert.equal(skillToolStatus(entry, tools[0]), 'present');
+    assert.equal(skillToolStatus(entry, tools[1]), 'missing');
+    entry.occurrences = [occurrence('claude', '', false, 'configuration unreadable')];
+    assert.deepEqual(filterSkills([entry], tools, 'installed', '', '', 'all'), []);
+    assert.deepEqual(filterSkills([entry], tools, 'library', '', 'claude', 'attention'), [entry]);
+    assert.equal(skillToolStatus(entry, tools[1]), 'unknown');
   });
 }
 

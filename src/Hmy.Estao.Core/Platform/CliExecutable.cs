@@ -6,7 +6,8 @@ public static class CliExecutable
 {
     public static string? Find(string name)
     {
-        if (name is not ("claude" or "gh")) return null;
+        // Only executable names, never paths or shell commands (including catalog input).
+        if (string.IsNullOrWhiteSpace(name) || name.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_' or '.')) || name is "." or "..") return null;
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var paths = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Concat([
