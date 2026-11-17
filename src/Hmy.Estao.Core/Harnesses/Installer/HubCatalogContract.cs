@@ -5,6 +5,9 @@ using System.Text.RegularExpressions;
 
 namespace Hmy.Estao.Core.Harnesses.Installer;
 
+public sealed class HubCatalogUnsupportedFeatureException() : NotSupportedException(
+    "Unsupported feature: MCP/CLI catalog installation is not available. Leave mcps and clis empty or omitted.");
+
 public sealed class HubCatalog
 {
     [JsonRequired]
@@ -13,24 +16,46 @@ public sealed class HubCatalog
     public string DefaultLanguage { get; set; } = "";
     [JsonRequired]
     public Dictionary<string, Dictionary<string, string>> Categories { get; set; } = [];
-    [JsonRequired]
-    public List<HubCatalogItem> Items { get; set; } = [];
+    public List<HubSkillEntry> Skills { get; set; } = [];
+    public List<HubInstructionEntry> Instructions { get; set; } = [];
+    public List<HubFileEntry> Files { get; set; } = [];
+    public List<HubMcpEntry> Mcps { get; set; } = [];
+    public List<HubCliEntry> Clis { get; set; } = [];
 }
 
-public sealed class HubCatalogItem
+public abstract class HubCatalogEntry
 {
     [JsonRequired]
     public string Id { get; set; } = "";
     [JsonRequired]
-    public string Type { get; set; } = "";
-    [JsonRequired]
     public string Path { get; set; } = "";
     [JsonRequired]
     public string Categories { get; set; } = "";
+}
+
+public sealed class HubSkillEntry : HubCatalogEntry
+{
     public List<string> Dependencies { get; set; } = [];
 }
 
-internal sealed record ValidatedCatalog(HubCatalog Catalog,
+public sealed class HubInstructionEntry : HubCatalogEntry;
+public sealed class HubFileEntry : HubCatalogEntry;
+public sealed class HubMcpEntry : HubCatalogEntry;
+public sealed class HubCliEntry : HubCatalogEntry;
+
+// Only the validated, normalized catalog reaches discovery and installation.
+internal sealed class HubCatalogItem
+{
+    public string Id { get; init; } = "";
+    public string Type { get; init; } = "";
+    public string Path { get; init; } = "";
+    public string Categories { get; init; } = "";
+    public List<string> Dependencies { get; init; } = [];
+}
+
+internal sealed record TypedHubCatalog(string DefaultLanguage, IReadOnlyList<HubCatalogItem> Items);
+
+internal sealed record ValidatedCatalog(TypedHubCatalog Catalog,
     IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Categories,
     IReadOnlyDictionary<string, HubCatalogItem> ById,
     IReadOnlyDictionary<string, IReadOnlyList<string>> ItemCategories,
@@ -53,11 +78,30 @@ internal static partial class HubCatalogContract
 
     public static ValidatedCatalog Validate(HubCatalog catalog, IReadOnlyList<SourceEntry> entries)
     {
-        if (catalog.SchemaVersion != 1 || catalog.DefaultLanguage is null || !Language().IsMatch(catalog.DefaultLanguage) ||
+        if (catalog.SchemaVersion != 2)
+            throw new InvalidDataException("Unsupported hub catalog schema version. Expected schemaVersion 2.");
+        if (catalog.DefaultLanguage is null || !Language().IsMatch(catalog.DefaultLanguage) ||
             !IsIso639TwoLetter(catalog.DefaultLanguage) ||
-            catalog.Categories is null || catalog.Items is null || catalog.Categories.Count > MaxCategories ||
-            catalog.Items.Count > MaxItems)
+            catalog.Categories is null || catalog.Categories.Count > MaxCategories ||
+            catalog.Skills is null || catalog.Instructions is null || catalog.Files is null ||
+            catalog.Mcps is null || catalog.Clis is null)
             throw new InvalidDataException("Unsupported or unsafe hub catalog.");
+        var items = new List<HubCatalogItem>();
+        void Add<T>(IEnumerable<T> section, string type) where T : HubCatalogEntry
+        {
+            foreach (var entry in section)
+            {
+                if (entry is null) throw new InvalidDataException($"Invalid {type} catalog entry.");
+                items.Add(new HubCatalogItem { Id = entry.Id, Type = type, Path = entry.Path,
+                    Categories = entry.Categories, Dependencies = entry is HubSkillEntry skill ? skill.Dependencies : [] });
+            }
+        }
+        Add(catalog.Skills, "skill");
+        Add(catalog.Instructions, "instruction");
+        Add(catalog.Files, "file");
+        Add(catalog.Mcps, "mcp");
+        Add(catalog.Clis, "cli");
+        if (items.Count > MaxItems) throw new InvalidDataException("Catalog items exceed the safe limit.");
         var categoryLabels = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         foreach (var (key, labels) in catalog.Categories)
         {
@@ -72,10 +116,10 @@ internal static partial class HubCatalogContract
         var paths = new List<string>();
         var normalizedCategories = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         var missingItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in catalog.Items)
+        foreach (var item in items)
         {
             if (item is null || item.Id is null || item.Type is null || item.Path is null || item.Categories is null ||
-                !ValidId(item.Id) || !ids.TryAdd(item.Id, item) || item.Type is not ("skill" or "instruction" or "file") ||
+                !ValidId(item.Id) || !ids.TryAdd(item.Id, item) ||
                 item.Dependencies is null || item.Dependencies.Count > 50 ||
                 (item.Type != "skill" && item.Dependencies.Count > 0))
                 throw new InvalidDataException("Invalid catalog item identity or fields.");
@@ -99,7 +143,7 @@ internal static partial class HubCatalogContract
             else if (!entries.Any(entry => entry.Path == item.Path))
                 missingItems.Add(item.Id);
         }
-        foreach (var item in catalog.Items)
+        foreach (var item in items)
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var dependency in item.Dependencies)
@@ -117,21 +161,20 @@ internal static partial class HubCatalogContract
             visiting.Remove(item.Id);
             visited.Add(item.Id);
         }
-        foreach (var item in catalog.Items) Visit(item);
-        var unavailableSkills = catalog.Items.Where(item => item.Type == "skill" && missingItems.Contains(item.Id))
+        foreach (var item in items) Visit(item);
+        if (catalog.Mcps.Count > 0 || catalog.Clis.Count > 0)
+            throw new HubCatalogUnsupportedFeatureException();
+        var unavailableSkills = items.Where(item => item.Type == "skill" && missingItems.Contains(item.Id))
             .Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         bool changed;
         do
         {
             changed = false;
-            foreach (var item in catalog.Items.Where(item => item.Type == "skill"))
+            foreach (var item in items.Where(item => item.Type == "skill"))
                 if (item.Dependencies.Any(unavailableSkills.Contains)) changed |= unavailableSkills.Add(item.Id);
         } while (changed);
-        var availableCatalog = new HubCatalog
-        {
-            SchemaVersion = catalog.SchemaVersion, DefaultLanguage = catalog.DefaultLanguage,
-            Categories = catalog.Categories, Items = catalog.Items.Where(item => !missingItems.Contains(item.Id)).ToList()
-        };
+        var availableCatalog = new TypedHubCatalog(catalog.DefaultLanguage,
+            items.Where(item => !missingItems.Contains(item.Id)).ToList());
         return new ValidatedCatalog(availableCatalog, categoryLabels, ids, normalizedCategories, unavailableSkills);
     }
 

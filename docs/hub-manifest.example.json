@@ -1,16 +1,19 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "defaultLanguage": "en",
   "categories": {
     "core": { "en": "Core", "es": "General", "fr": "Général" },
     "database": { "en": "Database", "es": "Bases de datos", "fr": "Bases de données" }
   },
-  "items": [
+  "skills": [
     {
       "id": "analisto",
-      "type": "skill",
       "path": ".agents/skills/analisto",
       "categories": "core,database"
     }
-  ]
+  ],
+  "instructions": [],
+  "files": [],
+  "mcps": [],
+  "clis": []
 }

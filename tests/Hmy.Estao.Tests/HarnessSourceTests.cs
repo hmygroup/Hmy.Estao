@@ -56,16 +56,16 @@ public sealed class HarnessSourceTests
         fixture.File("assets/license.txt", "License");
         fixture.Catalog(new HubCatalog
         {
-            SchemaVersion = 1,
+            SchemaVersion = 2,
             DefaultLanguage = "en",
             Categories = new() { ["core"] = new() { ["en"] = "Core", ["es"] = "General" }, ["database"] = new() { ["en"] = "Database" } },
-            Items =
+            Skills =
             [
-                new() { Id = "curated-a", Type = "skill", Path = "skills/a", Categories = " core, database,core " },
-                new() { Id = "curated-b", Type = "skill", Path = "skills/b", Categories = "core" },
-                new() { Id = "howto", Type = "instruction", Path = "docs/howto.md", Categories = "core" },
-                new() { Id = "license", Type = "file", Path = "assets/license.txt", Categories = "core" }
-            ]
+                new() { Id = "curated-a", Path = "skills/a", Categories = " core, database,core " },
+                new() { Id = "curated-b", Path = "skills/b", Categories = "core" }
+            ],
+            Instructions = [new() { Id = "howto", Path = "docs/howto.md", Categories = "core" }],
+            Files = [new() { Id = "license", Path = "assets/license.txt", Categories = "core" }]
         });
         using var client = fixture.Client();
         var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
@@ -110,8 +110,8 @@ public sealed class HarnessSourceTests
     {
         var fixture = new Fixture();
         fixture.Skill("skills/a", "a");
-        fixture.RawCatalog("{\"schemaVersion\":1,\"defaultLanguage\":\"en\",\"categories\":{},\"items\":[" +
-            "{\"id\":\"a\",\"type\":\"skill\",\"path\":\"skills/a\",\"categories\":\"\",\"" + field + "\":{\"en\":\"Override\"}}]}");
+        fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{},\"skills\":[" +
+            "{\"id\":\"a\",\"path\":\"skills/a\",\"categories\":\"\",\"" + field + "\":{\"en\":\"Override\"}}]}");
         using var client = fixture.Client();
         var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
         Assert.NotNull(library.CatalogError);
@@ -145,16 +145,16 @@ public sealed class HarnessSourceTests
         fixture.File("docs/available.md", "Available instructions");
         fixture.Catalog(new HubCatalog
         {
-            SchemaVersion = 1, DefaultLanguage = "en", Categories = [],
-            Items =
+            SchemaVersion = 2, DefaultLanguage = "en", Categories = [],
+            Skills =
             [
-                new() { Id = "available", Type = "skill", Path = "skills/available", Categories = "" },
-                new() { Id = "available-guide", Type = "instruction", Path = "docs/available.md", Categories = "" },
-                new() { Id = "prd", Type = "skill", Path = ".agents/skills/prd", Categories = "" },
-                new() { Id = "sqlcmd-shofia-skill", Type = "skill", Path = ".agents/skills/sqlcmd-shofia-skill", Categories = "" },
-                new() { Id = "missing-guide", Type = "instruction", Path = "docs/missing.md", Categories = "" },
-                new() { Id = "missing-file", Type = "file", Path = "templates/missing.json", Categories = "" }
-            ]
+                new() { Id = "available", Path = "skills/available", Categories = "" },
+                new() { Id = "prd", Path = ".agents/skills/prd", Categories = "" },
+                new() { Id = "sqlcmd-shofia-skill", Path = ".agents/skills/sqlcmd-shofia-skill", Categories = "" }
+            ],
+            Instructions = [new() { Id = "available-guide", Path = "docs/available.md", Categories = "" },
+                new() { Id = "missing-guide", Path = "docs/missing.md", Categories = "" }],
+            Files = [new() { Id = "missing-file", Path = "templates/missing.json", Categories = "" }]
         });
         using var client = fixture.Client();
         var source = new GitHubRepositorySource(client);
@@ -176,8 +176,8 @@ public sealed class HarnessSourceTests
     {
         var fixture = new Fixture();
         fixture.Skill("skills/other", "other");
-        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en", Categories = new() { ["core"] = new() { ["en"] = "Core" } },
-            Items = [new() { Id = "bad", Type = "skill", Path = "skills/missing", Categories = "core" }] });
+        fixture.Catalog(new HubCatalog { SchemaVersion = 2, DefaultLanguage = "en", Categories = new() { ["core"] = new() { ["en"] = "Core" } },
+            Skills = [new() { Id = "bad", Path = "skills/missing", Categories = "core" }] });
         using var client = fixture.Client();
         var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
         Assert.Null(library.CatalogError);
@@ -191,13 +191,13 @@ public sealed class HarnessSourceTests
         foreach (var id in new[] { "available", "dependent", "transitive" }) fixture.Skill("skills/" + id, id);
         fixture.Catalog(new HubCatalog
         {
-            SchemaVersion = 1, DefaultLanguage = "en", Categories = [],
-            Items =
+            SchemaVersion = 2, DefaultLanguage = "en", Categories = [],
+            Skills =
             [
-                new() { Id = "available", Type = "skill", Path = "skills/available", Categories = "" },
-                new() { Id = "missing", Type = "skill", Path = "skills/missing", Categories = "" },
-                new() { Id = "dependent", Type = "skill", Path = "skills/dependent", Categories = "", Dependencies = ["missing"] },
-                new() { Id = "transitive", Type = "skill", Path = "skills/transitive", Categories = "", Dependencies = ["dependent"] }
+                new() { Id = "available", Path = "skills/available", Categories = "" },
+                new() { Id = "missing", Path = "skills/missing", Categories = "" },
+                new() { Id = "dependent", Path = "skills/dependent", Categories = "", Dependencies = ["missing"] },
+                new() { Id = "transitive", Path = "skills/transitive", Categories = "", Dependencies = ["dependent"] }
             ]
         });
         using var client = fixture.Client();
@@ -239,9 +239,9 @@ public sealed class HarnessSourceTests
 
         static HubCatalog Catalog(string language, string labelLanguage, string itemCategory, List<string> dependencies) => new()
         {
-            SchemaVersion = 1, DefaultLanguage = language,
+            SchemaVersion = 2, DefaultLanguage = language,
             Categories = new() { ["core"] = new() { [labelLanguage] = "Core" } },
-            Items = [new() { Id = "a", Type = "skill", Path = "skills/a",
+            Skills = [new() { Id = "a", Path = "skills/a",
                 Categories = itemCategory, Dependencies = dependencies }]
         };
     }
@@ -251,24 +251,28 @@ public sealed class HarnessSourceTests
     {
         var fixture = new Fixture();
         fixture.Skill("skills/a", "a"); fixture.Skill("skills/b", "b"); fixture.Skill("skills/other", "other");
+        fixture.File("skills/a/references/guide.md", "A reference");
+        fixture.File("skills/b/scripts/helper.py", "# Dependency resource; never executed");
         fixture.File("docs/readme.md", "not installed");
-        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en",
+        fixture.Catalog(new HubCatalog { SchemaVersion = 2, DefaultLanguage = "en",
             Categories = new() { ["core"] = new() { ["en"] = "Core" } },
-            Items =
+            Skills =
             [
-                new() { Id = "registered-a", Type = "skill", Path = "skills/a", Categories = "core", Dependencies = ["registered-b"] },
-                new() { Id = "registered-b", Type = "skill", Path = "skills/b", Categories = "core" },
-                new() { Id = "doc", Type = "file", Path = "docs/readme.md", Categories = "core" }
-            ] });
+                new() { Id = "registered-a", Path = "skills/a", Categories = "core", Dependencies = ["registered-b"] },
+                new() { Id = "registered-b", Path = "skills/b", Categories = "core" }
+            ], Files = [new() { Id = "doc", Path = "docs/readme.md", Categories = "core" }] });
         using var client = fixture.Client();
         var source = new GitHubRepositorySource(client);
         var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
         var curated = await source.PrepareAsync("fake-token", adapter);
         Assert.Equal(Commit, curated.Commit);
+        Assert.Equal("2", curated.ManifestVersion);
         Assert.Equal(new[] { "registered-a", "registered-b" }, curated.Artifacts!.Select(a => a.Id));
         Assert.All(curated.Files, file => Assert.Contains(file.ArtifactId, new[] { "registered-a", "registered-b" }));
         var dependencyClosure = await source.PrepareAsync("fake-token", adapter, sourcePath: "skills/a");
         Assert.Equal(new[] { "registered-b", "registered-a" }, dependencyClosure.Artifacts!.Select(a => a.Id));
+        Assert.Contains(dependencyClosure.Files, file => file.ArtifactId == "registered-a" && file.Content.SequenceEqual(Bytes("A reference")));
+        Assert.Contains(dependencyClosure.Files, file => file.ArtifactId == "registered-b" && file.Content.SequenceEqual(Bytes("# Dependency resource; never executed")));
         var explicitItem = await source.PrepareAsync("fake-token", adapter, sourcePath: "skills/other");
         Assert.Equal(new[] { "other" }, explicitItem.Artifacts!.Select(a => a.Id));
         Assert.All(explicitItem.Files, file => Assert.Equal("other", file.ArtifactId));
@@ -281,9 +285,9 @@ public sealed class HarnessSourceTests
         fixture.Skill("skills/a", "a");
         fixture.File("docs/howto.md", "Safe export bytes");
         fixture.File("docs/unlisted.md", "Must not export");
-        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en",
+        fixture.Catalog(new HubCatalog { SchemaVersion = 2, DefaultLanguage = "en",
             Categories = new() { ["core"] = new() { ["en"] = "Core" } },
-            Items = [new() { Id = "howto", Type = "instruction", Path = "docs/howto.md", Categories = "core" }] });
+            Instructions = [new() { Id = "howto", Path = "docs/howto.md", Categories = "core" }] });
         using var client = fixture.Client();
         var source = new GitHubRepositorySource(client);
         Assert.Equal(Bytes("Safe export bytes"), await source.ReadCatalogFileAsync("fake-token", "docs/howto.md", Commit));
@@ -298,8 +302,8 @@ public sealed class HarnessSourceTests
         fixture.Skill("skills/a", "a");
         fixture.Skill("plugins/a", "a");
         fixture.Skill("skills/custom-id", "custom-id");
-        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en", Categories = [],
-            Items = [new() { Id = "custom-id", Type = "skill", Path = "skills/a", Categories = "" }] });
+        fixture.Catalog(new HubCatalog { SchemaVersion = 2, DefaultLanguage = "en", Categories = [],
+            Skills = [new() { Id = "custom-id", Path = "skills/a", Categories = "" }] });
         using var client = fixture.Client();
         var source = new GitHubRepositorySource(client);
         var library = await source.DiscoverSkillsAsync("fake-token");
@@ -323,12 +327,12 @@ public sealed class HarnessSourceTests
     public async Task malformed_catalog_fields_do_not_abort_other_skill_discovery(string failure)
     {
         var fixture = new Fixture(); fixture.Skill("skills/a", "a");
-        var catalog = new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en", Categories = [],
-            Items = [new() { Id = "a", Type = "skill", Path = "skills/a", Categories = "" }] };
+        var catalog = new HubCatalog { SchemaVersion = 2, DefaultLanguage = "en", Categories = [],
+            Skills = [new() { Id = "a", Path = "skills/a", Categories = "" }] };
         if (failure == "unknown-language") catalog.DefaultLanguage = "zz";
-        if (failure == "null-categories") catalog.Items[0].Categories = null!;
+        if (failure == "null-categories") catalog.Skills[0].Categories = null!;
         if (failure == "null-default") catalog.DefaultLanguage = null!;
-        if (failure == "null-dependency") catalog.Items[0].Dependencies = [null!];
+        if (failure == "null-dependency") catalog.Skills[0].Dependencies = [null!];
         fixture.Catalog(catalog);
         using var client = fixture.Client();
         var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
@@ -380,9 +384,9 @@ public sealed class HarnessSourceTests
     {
         var fixture = new Fixture();
         fixture.File("skills/a/SKILL.md", "---\nname: not-a\ndescription: Bad identity\n---\n");
-        fixture.Catalog(new HubCatalog { SchemaVersion = 1, DefaultLanguage = "en",
+        fixture.Catalog(new HubCatalog { SchemaVersion = 2, DefaultLanguage = "en",
             Categories = new() { ["core"] = new() { ["en"] = "Core" } },
-            Items = [new() { Id = "a-registered-id", Type = "skill", Path = "skills/a", Categories = "core" }] });
+            Skills = [new() { Id = "a-registered-id", Path = "skills/a", Categories = "core" }] });
         using var client = fixture.Client();
         var source = new GitHubRepositorySource(client);
         var library = await source.DiscoverSkillsAsync("fake-token");
@@ -396,6 +400,132 @@ public sealed class HarnessSourceTests
         await Assert.ThrowsAsync<InvalidDataException>(() => source.PrepareAsync("fake-token", adapter, sourcePath: "skills/a"));
     }
 
+    [Theory]
+    [InlineData(1, "")]
+    [InlineData(2, ",\"items\":[]")]
+    [InlineData(2, ",\"skills\":[{\"id\":\"a\",\"type\":\"skill\",\"path\":\"skills/a\",\"categories\":\"\"}]")]
+    public async Task legacy_format_is_rejected_without_curated_fallback(int version, string sections)
+    {
+        var fixture = new Fixture();
+        fixture.Skill("skills/a", "a");
+        fixture.RawCatalog($"{{\"schemaVersion\":{version},\"defaultLanguage\":\"en\",\"categories\":{{}}{sections}}}");
+        using var client = fixture.Client();
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+        Assert.NotNull(library.CatalogError);
+        Assert.Contains(version == 1 ? "schemaVersion 2" : sections.Contains("items") ? "items" : "type", library.CatalogError);
+        Assert.False(Assert.Single(library.Skills).Curated);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(",\"skills\":[],\"instructions\":[],\"files\":[],\"mcps\":[],\"clis\":[]")]
+    [InlineData(",\"instructions\":[{\"id\":\"guide\",\"path\":\"guide.md\",\"categories\":\"\"}]")]
+    [InlineData(",\"files\":[{\"id\":\"template\",\"path\":\"template.json\",\"categories\":\"\"}]")]
+    public async Task omitted_sections_are_empty_and_single_sections_work(string sections)
+    {
+        var fixture = new Fixture();
+        fixture.File("guide.md", "Guide body");
+        fixture.File("template.json", "{}");
+        fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{}" + sections + "}");
+        using var client = fixture.Client();
+        var source = new GitHubRepositorySource(client);
+        var library = await source.DiscoverSkillsAsync("fake-token");
+        Assert.Null(library.CatalogError);
+        if (sections.Contains("guide") || sections.Contains("template"))
+        {
+            var item = Assert.Single(library.Skills);
+            Assert.True(item.Curated);
+            Assert.Equal(fixture.Content(item.Source), await source.ReadCatalogFileAsync("fake-token", item.Source, library.Commit));
+        }
+        else Assert.Empty(library.Skills);
+    }
+
+    public static IEnumerable<object[]> InvalidSectionFields()
+    {
+        foreach (var section in new[] { "skills", "instructions", "files", "mcps", "clis" })
+        {
+            foreach (var field in new[] { "id", "path", "categories" })
+            {
+                var entry = new Dictionary<string, object?> { ["id"] = "a", ["path"] = "source", ["categories"] = "" };
+                entry.Remove(field);
+                yield return [section, JsonSerializer.Serialize(entry)];
+                entry[field] = null;
+                yield return [section, JsonSerializer.Serialize(entry)];
+            }
+            yield return [section, "{\"id\":\"a\",\"path\":\"source\",\"categories\":\"\",\"type\":\"skill\"}"];
+            yield return [section, "null"];
+            yield return [section, "{\"id\":\"a\",\"path\":\"../unsafe\",\"categories\":\"\"}"];
+            yield return [section, "{\"id\":\"a\",\"path\":\"source\",\"categories\":\"unknown\"}"];
+            if (section != "skills")
+                yield return [section, "{\"id\":\"a\",\"path\":\"source\",\"categories\":\"\",\"dependencies\":[]}"];
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidSectionFields))]
+    public async Task required_and_allowed_fields_are_checked_per_section(string section, string entry)
+    {
+        var fixture = new Fixture();
+        fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{},\"" + section + "\":[" + entry + "]}");
+        using var client = fixture.Client();
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+        Assert.NotNull(library.CatalogError);
+        Assert.Empty(library.Skills);
+    }
+
+    [Theory]
+    [InlineData("instructions")]
+    [InlineData("files")]
+    [InlineData("mcps")]
+    [InlineData("clis")]
+    public async Task ids_are_unique_across_sections_even_with_missing_sources(string section)
+    {
+        var fixture = new Fixture();
+        fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{}," +
+            "\"skills\":[{\"id\":\"duplicate\",\"path\":\"skills/a\",\"categories\":\"\"}],\"" + section +
+            "\":[{\"id\":\"duplicate\",\"path\":\"other\",\"categories\":\"\"}]}");
+        using var client = fixture.Client();
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+        Assert.Contains("identity", library.CatalogError);
+    }
+
+    [Theory]
+    [InlineData("mcps")]
+    [InlineData("clis")]
+    public async Task unsupported_sections_report_catalog_error_and_cannot_be_prepared_or_exported(string section)
+    {
+        var fixture = new Fixture();
+        fixture.Skill("skills/a", "a");
+        fixture.File("guide.md", "Guide");
+        fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{},\"" + section +
+            "\":[{\"id\":\"unsupported\",\"path\":\"missing-source\",\"categories\":\"\"}]," +
+            "\"instructions\":[{\"id\":\"guide\",\"path\":\"guide.md\",\"categories\":\"\"}]}");
+        using var client = fixture.Client();
+        var source = new GitHubRepositorySource(client);
+        var library = await source.DiscoverSkillsAsync("fake-token");
+        Assert.Contains("Unsupported feature: MCP/CLI", library.CatalogError);
+        Assert.False(Assert.Single(library.Skills).Curated);
+        var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
+        await Assert.ThrowsAsync<HubCatalogUnsupportedFeatureException>(() => source.PrepareAsync("fake-token", adapter));
+        await Assert.ThrowsAsync<HubCatalogUnsupportedFeatureException>(() => source.PrepareAsync("fake-token", adapter, sourcePath: "skills/a"));
+        await Assert.ThrowsAsync<HubCatalogUnsupportedFeatureException>(() => source.ReadCatalogFileAsync("fake-token", "guide.md", Commit));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task cyclic_or_non_skill_dependencies_invalidate_catalog(bool cycle)
+    {
+        var fixture = new Fixture();
+        fixture.Catalog(new HubCatalog { SchemaVersion = 2, DefaultLanguage = "en", Categories = [],
+            Skills = [new() { Id = "a", Path = "skills/a", Categories = "", Dependencies = ["b"] },
+                new() { Id = "b", Path = "skills/b", Categories = "", Dependencies = cycle ? ["a"] : ["guide"] }],
+            Instructions = [new() { Id = "guide", Path = "guide.md", Categories = "" }] });
+        using var client = fixture.Client();
+        var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
+        Assert.Contains(cycle ? "Cyclic" : "dependency", library.CatalogError);
+    }
+
     private sealed class Fixture
     {
         private readonly Dictionary<string, byte[]> _blobs = new(StringComparer.Ordinal);
@@ -406,6 +536,7 @@ public sealed class HarnessSourceTests
         private static byte[] CatalogBytes(HubCatalog catalog) => JsonSerializer.SerializeToUtf8Bytes(catalog, InstallerJson.Options);
         public void Skill(string path, string name) => File(path + "/SKILL.md", $"---\nname: {name}\ndescription: {name} skill\n---\nBody\n");
         public void File(string path, string text) => _blobs[path] = Bytes(text);
+        public byte[] Content(string path) => _blobs[path];
         public void Catalog(HubCatalog catalog) => RawCatalog(Encoding.UTF8.GetString(CatalogBytes(catalog)));
         public void RawCatalog(string text) => File("hub-manifest.json", text);
         public HttpClient Client() => new(new Handler(Respond));

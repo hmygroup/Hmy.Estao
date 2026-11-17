@@ -745,35 +745,32 @@ public sealed class HarnessHubSessionTests
             if (FailTree && path.Contains("/git/trees/", StringComparison.Ordinal)) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
             var skill = Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n" +
                 (LocalizedSkill ? "descriptions:\n  es: Skill de prueba\n  fr: Compétence de test\n" : "") + "---\nFixture, never execute.\n");
-            object CatalogItem(string id, string type, string source, string[]? dependencies = null) => new
-            {
-                id, type, path = source, categories = "core",
-                dependencies = dependencies ?? []
-            };
-            var items = new List<object> { CatalogItem(SampleId, "skill", "skills/sample", IncludeExtraSkills ? ["base"] : []) };
+            var skills = new List<HubSkillEntry> { new() { Id = SampleId, Path = "skills/sample", Categories = "core", Dependencies = IncludeExtraSkills ? ["base"] : [] } };
+            var instructions = new List<HubInstructionEntry>();
+            var files = new List<HubFileEntry>();
             var extras = new Dictionary<string, byte[]>();
             if (IncludeExtraSkills)
                 foreach (var id in new[] { "base", "unrelated" })
                 {
                     extras["skills/" + id + "/SKILL.md"] = Encoding.UTF8.GetBytes($"---\nname: {id}\ndescription: Test skill\n---\n");
-                    items.Add(CatalogItem(id, "skill", "skills/" + id));
+                    skills.Add(new() { Id = id, Path = "skills/" + id, Categories = "core" });
                 }
             if (IncludeFileItems)
             {
                 extras["instructions/database.md"] = Encoding.UTF8.GetBytes(InstructionContent);
                 extras["templates/example.json"] = Encoding.UTF8.GetBytes("{\"sample\":true}");
-                items.Add(CatalogItem("database-instructions", "instruction", "instructions/database.md"));
-                items.Add(CatalogItem("example-template", "file", "templates/example.json"));
+                instructions.Add(new() { Id = "database-instructions", Path = "instructions/database.md", Categories = "core" });
+                files.Add(new() { Id = "example-template", Path = "templates/example.json", Categories = "core" });
             }
             extras["skills/sample/SKILL.md"] = skill;
             if (!OmitManifest)
                 extras["hub-manifest.json"] = InvalidManifest ? Encoding.UTF8.GetBytes("{invalid-json") :
                     JsonSerializer.SerializeToUtf8Bytes(new
                     {
-                        schemaVersion = 1, defaultLanguage = "en",
+                        schemaVersion = 2, defaultLanguage = "en",
                         categories = new Dictionary<string, Dictionary<string, string>> { ["core"] = new() { ["en"] = "Core", ["es"] = "General" } },
-                        items
-                    });
+                        skills, instructions, files
+                    }, InstallerJson.Options);
             var entries = extras.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" }).ToArray();
             var blob = extras.Values.FirstOrDefault(bytes => path.EndsWith("/" + InstallerPaths.GitBlob(bytes), StringComparison.Ordinal));
             object body = path.Contains("/contents/", StringComparison.Ordinal) ? Array.Empty<object>()

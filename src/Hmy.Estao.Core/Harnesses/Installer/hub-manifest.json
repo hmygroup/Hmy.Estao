@@ -1,15 +1,18 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "defaultLanguage": "en",
   "categories": {
     "core": { "en": "Core", "es": "General" }
   },
-  "items": [
+  "skills": [
     {
       "id": "example-skill",
-      "type": "skill",
       "path": "skills/example-skill",
       "categories": "core"
     }
-  ]
+  ],
+  "instructions": [],
+  "files": [],
+  "mcps": [],
+  "clis": []
 }

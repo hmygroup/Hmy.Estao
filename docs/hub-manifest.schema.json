@@ -4,9 +4,9 @@
   "description": "Publish as hub-manifest.json at the root of hmygroup/hmy-prompt-engineer. Curation and metadata, not executable policy.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "defaultLanguage", "categories", "items"],
+  "required": ["schemaVersion", "defaultLanguage", "categories"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "defaultLanguage": { "type": "string", "pattern": "^[a-z]{2}$" },
     "categories": {
       "type": "object",
@@ -14,16 +14,30 @@
       "propertyNames": { "$ref": "#/$defs/id" },
       "additionalProperties": { "$ref": "#/$defs/translations" }
     },
-    "items": {
-      "type": "array",
-      "maxItems": 500,
-      "items": {
+    "skills": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/skill" } },
+    "instructions": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" } },
+    "files": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" } },
+    "mcps": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" }, "description": "Reserved; nonempty sections produce an unsupported-feature error." },
+    "clis": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" }, "description": "Reserved; nonempty sections produce an unsupported-feature error." }
+  },
+  "$defs": {
+    "entry": { "$ref": "#/$defs/entryFields", "unevaluatedProperties": false },
+    "skill": {
+      "$ref": "#/$defs/entryFields",
+      "properties": {
+        "dependencies": {
+          "type": "array", "maxItems": 50, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" },
+          "description": "Required catalog skill IDs. References and cycles are checked by Estao."
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "entryFields": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "type", "path", "categories"],
+        "required": ["id", "path", "categories"],
         "properties": {
           "id": { "$ref": "#/$defs/id" },
-          "type": { "enum": ["skill", "instruction", "file"] },
           "path": {
             "type": "string",
             "minLength": 1,
@@ -34,25 +48,9 @@
             "type": "string",
             "maxLength": 4096,
             "description": "Comma-separated registered category IDs, or empty for Uncategorized. Whitespace is trimmed; repeated IDs are deduplicated."
-          },
-          "dependencies": {
-            "type": "array",
-            "maxItems": 50,
-            "uniqueItems": true,
-            "items": { "$ref": "#/$defs/id" },
-            "description": "Optional required catalog skill IDs. References, types and cycles are checked by Estao."
           }
-        },
-        "allOf": [
-          {
-            "if": { "properties": { "type": { "enum": ["instruction", "file"] } } },
-            "then": { "properties": { "dependencies": { "maxItems": 0 } } }
-          }
-        ]
-      }
-    }
-  },
-  "$defs": {
+        }
+    },
     "id": { "type": "string", "maxLength": 80, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
     "translations": {
       "type": "object",

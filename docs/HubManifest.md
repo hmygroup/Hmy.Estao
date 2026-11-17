@@ -4,18 +4,19 @@ Publish **`hub-manifest.json` at the root of `hmygroup/hmy-prompt-engineer`**. I
 
 - [JSON Schema](hub-manifest.schema.json)
 - [Starter example](hub-manifest.example.json)
-- [Six-skill sample](hub-manifest.json) (publish at the source repository root)
+- [Skill sample](hub-manifest.json) (publish at the source repository root)
 
 These are authoring deliverables in the Estao repository. They have **not** been published to the HMY source repository. The example is not an exhaustive catalog. Check its paths against the current HMY tree before publishing.
 
 ## Structure
 
-`schemaVersion` is `1`. `defaultLanguage` is a lowercase ISO 639-1 two-letter code, normally `en`, used for category-label fallback only. `categories` maps stable category IDs to translated display labels. `items` lists the curated catalog entries.
+`schemaVersion` is `2`. `defaultLanguage` is a lowercase ISO 639-1 two-letter code, normally `en`, used for category-label fallback only. `categories` maps stable category IDs to translated display labels. Separate `skills`, `instructions`, `files`, `mcps` and `clis` arrays declare entries; omitted arrays mean empty. The array determines the internal item type. Schema version 1, `items` and explicit `type` fields are rejected; there is no migration reader or legacy fallback.
+
+MCP/CLI installation is not implemented. Nonempty `mcps` or `clis` arrays produce an explicit unsupported-feature catalog error, even when their sources are missing. Leave these sections empty or omitted. Entries currently require `id`, `path` and `categories`; only skills accept `dependencies`. The combined catalog limit is 500 entries.
 
 Every item has:
 
-- `id`: unique stable lowercase slug. It can differ from the skill folder name.
-- `type`: `skill`, `instruction`, or `file`. Types control handling; they are not browsing categories.
+- `id`: globally unique stable lowercase slug across every section. It can differ from the skill folder name.
 - `path`: exact repository-relative path using `/`. A skill points to its folder, **not** `SKILL.md`; its references, assets, scripts and licenses stay in the same installation group. An instruction or file points to one existing file.
 - `categories`: comma-separated registered IDs, e.g. `"core,database"`. Whitespace is trimmed and duplicate values removed. Use `""` for Uncategorized. Undefined category IDs are errors.
 - Optional `dependencies` on skills: required catalog skill IDs. Dependencies must exist and cannot form cycles. Required skills are included in the installation review. Instructions and files cannot request automatic dependency installation.
@@ -24,7 +25,7 @@ Entries whose source files are missing from the current repository snapshot are 
 
 The manifest does **not** contain item `description` or `descriptions` fields, even as overrides. Remove those fields from existing catalogs; they are rejected as unknown fields. It also does not contain `harnesses`, installation destinations, shell commands, global instruction merge policies, repository commit/tree pins, or an exhaustive list of exclusions. Unknown fields and unsafe/ambiguous paths are rejected. The runtime also validates source existence, unique IDs, category-label fallbacks and dependency references; JSON Schema alone cannot express all cross-reference checks.
 
-For example, an instruction entry can use `"type": "instruction"` and `"path": "instructions/database.md"`; a template can use `"type": "file"` and `"path": "templates/example.json"`. These paths are illustrative, not claims that those files exist in HMY. Create or select the real files before adding them to the catalog.
+For example, place `{"id":"database-guide","path":"instructions/database.md","categories":"database"}` in `instructions`, or `{"id":"template","path":"templates/example.json","categories":""}` in `files`. These paths are illustrative, not claims that those files exist in HMY. Create or select the real files before adding them to the catalog.
 
 ## Skill descriptions
 

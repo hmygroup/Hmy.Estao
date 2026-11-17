@@ -52,7 +52,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
             if (manifestEntry is null) throw new InvalidDataException("hub-manifest.json is missing.");
             catalog = HubCatalogContract.Read(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false), entries);
         }
-        catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException)
+        catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException or HubCatalogUnsupportedFeatureException)
         { catalogError = ex.Message; }
         var curatedByPath = catalog?.Catalog.Items.Where(i => i.Type == "skill")
             .ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase) ?? new Dictionary<string, HubCatalogItem>(StringComparer.OrdinalIgnoreCase);
@@ -207,7 +207,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
             coverage.Add(new(source, "installable", "Formato nativo; no se ejecutan scripts ni se instalan dependencias.", members.Count));
         }
         var dependencyMap = selected.ToDictionary(i => i.Id, i => (IReadOnlyList<string>)(catalog?.ById.GetValueOrDefault(i.Id)?.Dependencies ?? []), StringComparer.OrdinalIgnoreCase);
-        return new PreparedSnapshot(commit, tree, "1", files, coverage, dependencyMap, artifacts);
+        return new PreparedSnapshot(commit, tree, "2", files, coverage, dependencyMap, artifacts);
     }
 
     public async Task<byte[]> ReadCatalogFileAsync(string token, string sourcePath, string reference, CancellationToken cancellationToken = default)
