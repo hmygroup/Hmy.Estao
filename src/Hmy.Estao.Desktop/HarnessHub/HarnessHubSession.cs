@@ -15,6 +15,7 @@ internal sealed class HarnessHubSession : IDisposable
     private readonly object _gate = new();
     private readonly HttpClient _client;
     private readonly HarnessGitHubAuthorization _authorization;
+    private readonly GitHubAppInstallationAuthorization _appAuthorization;
     private readonly HarnessInstallationService _installer;
     private readonly string _dataDirectory;
     private readonly Func<string, bool> _detected;
@@ -32,12 +33,13 @@ internal sealed class HarnessHubSession : IDisposable
 
     public HarnessHubSession(string configPath, HttpClient? client = null, Func<string, bool>? detected = null,
         Func<string, HarnessAdapter>? adapter = null, Func<CancellationToken, Task<IReadOnlyList<string>>>? candidates = null,
-        Func<HubSkill, string?>? exportDestination = null)
+        Func<HubSkill, string?>? exportDestination = null, Func<CancellationToken, Task<string>>? bundledKeyReader = null)
     {
         _dataDirectory = Path.GetDirectoryName(Path.GetFullPath(configPath))!;
         _authorization = new(_dataDirectory);
         _installer = new(_dataDirectory);
         _client = client ?? GitHubRepositorySource.CreateClient();
+        _appAuthorization = new(_client, Path.Combine(_dataDirectory, "harness-github", "private-key.pem"), bundledKeyReader: bundledKeyReader);
         _detected = detected ?? HubTools.IsDetected;
         _adapter = adapter ?? (id => new HarnessAdapter(id));
         _candidates = candidates ?? _authorization.CandidatesAsync;
@@ -151,6 +153,7 @@ internal sealed class HarnessHubSession : IDisposable
 
     private async Task InstallInstructionAsync(HubSkill item, string commit, CancellationToken ct)
     {
+        await RefreshAppAuthorizationAsync(ct);
         _prepared.Clear();
         Update(s => s with { Review = null, Results = [] });
         await UpdateToolsAsync(ct);
@@ -227,9 +230,23 @@ internal sealed class HarnessHubSession : IDisposable
         Update(s => s with { Tools = tools });
     }
 
+    private async Task RefreshAppAuthorizationAsync(CancellationToken ct)
+    {
+        if (_appAuthorization.IsConfigured)
+            _token = await _appAuthorization.GetTokenAsync(ct);
+    }
+
     private async Task<bool> FindAuthorizationAsync(CancellationToken ct)
     {
         Update(s => s with { CheckingAuthorization = true, Progress = "Checking access to the private GitHub repository…", ProgressMessage = new("hub.check_access") });
+        if (_appAuthorization.IsConfigured)
+        {
+            await RefreshAppAuthorizationAsync(ct);
+            await new GitHubRepositorySource(_client).VerifyAccessAsync(_token!, ct);
+            Update(s => s with { Connected = true, AuthorizationChecked = true, CheckingAuthorization = false,
+                Connection = "Connected using GitHub App installation", ConnectionMessage = new("hub.connected") });
+            return true;
+        }
         var previousToken = _token;
         if (previousToken is not null)
         {
@@ -296,6 +313,7 @@ internal sealed class HarnessHubSession : IDisposable
 
     private async Task ExportAsync(HubSkill item, string commit, string destination, string? beforeHash, CancellationToken ct)
     {
+        await RefreshAppAuthorizationAsync(ct);
         Update(s => s with { ProgressMessage = new("hub.exporting") });
         var bytes = await new GitHubRepositorySource(_client).ReadCatalogFileAsync(_token!, item.Source!, commit, ct);
         await HubFileExporter.WriteAsync(destination, bytes, beforeHash, ct);

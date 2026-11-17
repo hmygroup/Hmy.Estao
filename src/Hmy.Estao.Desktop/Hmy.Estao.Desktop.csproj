@@ -14,6 +14,7 @@
     <ShofiaDirectFront>true</ShofiaDirectFront>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <PublishProfile Condition="'$(PublishProfile)' == ''">Default</PublishProfile>
+    <HarnessGitHubAppKeyPath Condition="'$(HarnessGitHubAppKeyPath)' == ''">$(MSBuildProjectDirectory)/../../hmycatalogue.2026-11-17.private-key.pem</HarnessGitHubAppKeyPath>
     <!-- WebView2's package includes a WPF reference even for WinForms hosts. -->
   </PropertyGroup>
   <ItemGroup>
@@ -29,6 +30,7 @@
     <EmbeddedResource Include="Frontend/public/providers/*.svg" LogicalName="Hmy.Estao.ProviderIcons.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Frontend/src/themes/themes.json" LogicalName="Hmy.Estao.Desktop.Themes.json" />
     <EmbeddedResource Include="Frontend/src/locales/*.json" LogicalName="Localization.%(Filename).json" />
+    <EmbeddedResource Include="$(HarnessGitHubAppKeyPath)" LogicalName="Hmy.Estao.GitHubApp.PrivateKey.pem" />
     <InternalsVisibleTo Include="Hmy.Estao.Desktop.Tests" />
   </ItemGroup>
   <Target Name="RemoveUnusedWebViewWpf" BeforeTargets="ResolveAssemblyReferences">

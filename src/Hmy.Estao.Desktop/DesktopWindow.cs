@@ -44,7 +44,8 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
             if (providerSignIn is not null)
                 _handlers.Add(Messages.Handle(DesktopContracts.ProviderSignIn, async (request, ct) =>
                     await OnUiCommandAsync(() => providerSignIn(request), ct)));
-            _hub = new HarnessHubSession(configPath ?? new Hmy.Estao.Core.Configuration.ConfigStore().Path);
+            _hub = new HarnessHubSession(configPath ?? new Hmy.Estao.Core.Configuration.ConfigStore().Path,
+                bundledKeyReader: ReadBundledGitHubAppKeyAsync);
             _handlers.Add(Messages.Handle(HubContracts.State, (_, _) => ValueTask.FromResult(_hub.State)));
             _handlers.Add(Messages.Handle(HubContracts.Command, async (request, ct) =>
                 await OnUiCommandAsync(() => { _hub.Command(request); return Task.CompletedTask; }, ct)));
@@ -68,6 +69,14 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
     }
 
     public void UpdateLanguage() => Text = $"{DesktopBranding.DisplayName} · {DesktopLocalization.Text(_view == "settings" ? "settings" : "usage")}";
+
+    internal static async Task<string> ReadBundledGitHubAppKeyAsync(CancellationToken ct)
+    {
+        using var stream = typeof(DesktopWindow).Assembly.GetManifestResourceStream("Hmy.Estao.GitHubApp.PrivateKey.pem")
+            ?? throw new InvalidOperationException("The bundled GitHub App key is missing. Rebuild Desktop with HarnessGitHubAppKeyPath set to the PEM file.");
+        using var reader = new StreamReader(stream);
+        return await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+    }
 
     private Task<EmptyRequest> OnUiCommandAsync(Func<Task> action, CancellationToken ct) => OnUiAsync(async () =>
     {

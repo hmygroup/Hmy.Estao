@@ -10,6 +10,63 @@ namespace Hmy.Estao.Desktop.Tests;
 public sealed class HarnessHubSessionTests
 {
     [Fact]
+    public async Task BundledKeyIsPresentAndReadableWithoutASeparatePemFile()
+    {
+        var pem = await Hmy.Estao.Desktop.DesktopWindow.ReadBundledGitHubAppKeyAsync(CancellationToken.None);
+        using var rsa = System.Security.Cryptography.RSA.Create();
+        rsa.ImportFromPem(pem);
+        Assert.True(rsa.KeySize >= 2048);
+    }
+
+    [Fact]
+    public async Task BundledAppKeyLoadsLibraryWithoutLocalKeyOrUserAuthorization()
+    {
+        using var fixture = new Fixture();
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var pem = rsa.ExportRSAPrivateKeyPem();
+        using var session = fixture.Session(
+            candidates: _ => throw new InvalidOperationException("User credentials must not be requested."),
+            bundledKeyReader: _ => Task.FromResult(pem));
+
+        session.Command(new("check")); await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.True(session.State.Connected);
+        Assert.True(session.State.LibraryLoaded);
+        Assert.Null(session.State.DeviceCode);
+        Assert.False(File.Exists(Path.Combine(fixture.Directory, "harness-github", "private-key.pem")));
+        var state = JsonSerializer.Serialize(session.State);
+        Assert.DoesNotContain("installation-test-token", state);
+        Assert.DoesNotContain("PRIVATE KEY", state);
+    }
+
+    [Fact]
+    public async Task LocalAppKeyLoadsLibraryWithoutUserAuthorization()
+    {
+        using var fixture = new Fixture();
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var key = Path.Combine(fixture.Directory, "harness-github", "private-key.pem");
+        Directory.CreateDirectory(Path.GetDirectoryName(key)!);
+        await File.WriteAllTextAsync(key, rsa.ExportRSAPrivateKeyPem());
+        using var session = fixture.Session(candidates: _ => throw new InvalidOperationException("User credentials must not be requested."));
+
+        session.Command(new("check")); await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.True(session.State.Connected);
+        Assert.True(session.State.LibraryLoaded);
+        Assert.Null(session.State.DeviceCode);
+        Assert.DoesNotContain("installation-test-token", JsonSerializer.Serialize(session.State));
+        Assert.Contains("/repos/hmygroup/hmy-prompt-engineer/installation", fixture.Requests);
+        Assert.Contains("/app/installations/42/access_tokens", fixture.Requests);
+
+        session.Command(new("connect")); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        Assert.Null(session.State.DeviceCode);
+        Assert.Equal(1, fixture.Requests.Count(path => path == "/app/installations/42/access_tokens"));
+    }
+
+    [Fact]
     public async Task UninstallWorksWithoutAuthorizationAndRefreshesAllSharedObservers()
     {
         using var fixture = new Fixture();
@@ -669,15 +726,22 @@ public sealed class HarnessHubSessionTests
         public string SampleId { get; set; } = "sample";
         public HarnessAdapter Adapter(string id) => new(id, Path.Combine(Directory, "home"), _ => null);
         public HarnessHubSession Session(string token = "fake-test-token", Func<CancellationToken, Task<IReadOnlyList<string>>>? candidates = null,
-            Func<HubSkill, string?>? exportDestination = null) => new(Path.Combine(Directory, "config.json"),
+            Func<HubSkill, string?>? exportDestination = null, Func<CancellationToken, Task<string>>? bundledKeyReader = null) => new(Path.Combine(Directory, "config.json"),
             new HttpClient(new Handler(this)), id => IncludeOpenCode || id != "opencode", Adapter,
-            candidates ?? (_ => Task.FromResult<IReadOnlyList<string>>([token])), exportDestination);
+            candidates ?? (_ => Task.FromResult<IReadOnlyList<string>>([token])), exportDestination, bundledKeyReader);
 
         private HttpResponseMessage Respond(HttpRequestMessage request)
         {
             var path = request.RequestUri!.PathAndQuery;
             lock (Requests) Requests.Add(path);
             if (DenyAccess) return new(HttpStatusCode.Forbidden) { Content = new StringContent("{}") };
+            if (path.EndsWith("/installation", StringComparison.Ordinal))
+                return new(HttpStatusCode.OK) { Content = new StringContent("{\"id\":42}") };
+            if (path == "/app/installations/42/access_tokens")
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    token = "installation-test-token", expires_at = DateTimeOffset.UtcNow.AddHours(1)
+                })) };
             if (FailTree && path.Contains("/git/trees/", StringComparison.Ordinal)) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
             var skill = Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n" +
                 (LocalizedSkill ? "descriptions:\n  es: Skill de prueba\n  fr: Compétence de test\n" : "") + "---\nFixture, never execute.\n");
