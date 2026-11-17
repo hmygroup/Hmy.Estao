@@ -118,7 +118,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
                 }
                 skills.Add(new RepositorySkill(item.Id, string.IsNullOrWhiteSpace(documentMetadata?.Name) ? item.Id : documentMetadata.Name,
                     item.Type is "mcp" or "cli" ? item.Description : documentMetadata?.Description ?? "", item.Path,
-                    item.Type == "instruction" ? HarnessAdapter.Ids : [], item.Type == "instruction" && issue is null,
+                    item.Type is "instruction" or "mcp" ? HarnessAdapter.Ids : [], item.Type is "instruction" or "mcp" or "cli" && issue is null,
                     issue, true, item.Type, documentMetadata?.Descriptions, catalog.ItemCategories[item.Id], catalog.Catalog.DefaultLanguage));
             }
         return new RepositorySkillLibrary(commit, skills, catalog?.Categories, catalog?.Catalog.DefaultLanguage ?? "en", catalogError);

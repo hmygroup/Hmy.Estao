@@ -44,11 +44,13 @@ internal static class HubToolInventory
             }
             else
             {
-                var executable = (findExecutable ?? CliExecutable.Find)(item.Id);
-                // CLI executables on PATH are shared by all harnesses, not installed per profile.
-                copies = executable is null ? [] : ids.Select(id => new HubSkillOccurrence(id, executable, true, null)).ToArray();
+                var name = HubNetworkInstaller.CommandName(item);
+                var executable = (findExecutable ?? CliExecutable.Find)(name) ?? (name != item.Id ? (findExecutable ?? CliExecutable.Find)(item.Id) : null);
+                // CLIs are user-global even when no harness is detected.
+                copies = executable is null ? [] : [new("global", executable, true, null)];
             }
-            result.Add(item with { CompatibleTools = HarnessAdapter.Ids, Occurrences = copies });
+            result.Add(item with { CompatibleTools = item.ItemType == "mcp" ? HarnessAdapter.Ids : [], Occurrences = copies,
+                Installable = true, CommandName = item.ItemType == "cli" ? HubNetworkInstaller.CommandName(item) : null });
         }
         result.AddRange(occurrences.Select(pair => new HubSkill("mcp:" + pair.Key, pair.Key, "", false, false,
             HarnessAdapter.Ids, pair.Value.Concat(failures.Select(failure =>

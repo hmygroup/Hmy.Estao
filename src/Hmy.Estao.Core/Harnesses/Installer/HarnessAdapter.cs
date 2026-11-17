@@ -81,6 +81,13 @@ public sealed class HarnessAdapter
         return result?.Configuration.Servers.Keys.ToArray() ?? [];
     }
 
+    public void CheckMcpConfiguration()
+    {
+        if (_configurationConflict)
+            throw new InvalidDataException("Inline or ambiguous OpenCode JSON/JSONC configuration must be resolved before managing MCP servers.");
+        InstallerPaths.CheckLocal(McpPath);
+    }
+
     public void CheckCapabilities(SourceArtifact artifact)
     {
         if (artifact.Category == "mcp")

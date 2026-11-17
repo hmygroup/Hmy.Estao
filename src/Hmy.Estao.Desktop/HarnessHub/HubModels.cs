@@ -33,5 +33,5 @@ internal sealed record HubState(bool Busy, string Phase, string Progress, bool C
 internal sealed record HubSkill(string Id, string Name, string Description, bool InLibrary, bool Installable,
     IReadOnlyList<string> CompatibleTools, IReadOnlyList<HubSkillOccurrence> Occurrences, string? Source = null, string? Issue = null,
     bool Curated = false, string ItemType = "skill", IReadOnlyDictionary<string, string>? Descriptions = null,
-    IReadOnlyList<string>? Categories = null, string DefaultLanguage = "en");
+    IReadOnlyList<string>? Categories = null, string DefaultLanguage = "en", string? CommandName = null);
 internal sealed record HubSkillOccurrence(string ToolId, string Path, bool Shared, string? Hash, string? Error = null);

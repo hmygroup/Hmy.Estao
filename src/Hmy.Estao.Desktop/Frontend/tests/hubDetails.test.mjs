@@ -7,7 +7,7 @@ const css = readFileSync(new URL('../src/harness-hub.css', import.meta.url), 'ut
 
 test('installation controls sit outside the scrollable skill details', () => {
   assert.match(source, /className="hub-skill-details-content"/);
-  assert.match(source, /<\/div>\s*<div className="hub-skill-details-footer">\s*\{isSkill && skill.inLibrary && skill.installable/);
+  assert.match(source, /<\/div>\s*<div className="hub-skill-details-footer">\s*\{\(isSkill \|\| itemType\(skill\) === "mcp"\) && skill.inLibrary && skill.installable/);
   assert.match(css, /\.hub-skill-details-content\{[^}]*min-height:0;[^}]*overflow:auto/);
   assert.match(css, /\.hub-skill-details-footer\{[^}]*flex-shrink:0/);
   assert.doesNotMatch(css, /\.hub-skill-details\{[^}]*overflow:(auto|visible)/);
@@ -25,7 +25,8 @@ test('details put categories beside the name and omit repository metadata', () =
   assert.match(css, /\.hub-item-categories\{[^}]*margin-left:auto/);
   assert.doesNotMatch(details, /hub\.snapshot|hub\.origin_hmy/);
   assert.match(details, /isNetworkItem && skill\.source && <p className="hub-network-path">.*\{skill\.source\}/);
-  assert.match(details, /: isNetworkItem \? <p className="hub-helper">\{t\("hub.browse_only_hint"\)\}<\/p> : <>/);
+  assert.match(details, /: isNetworkItem \? <>/);
+  assert.doesNotMatch(details, /hub\.browse_only_hint/);
   assert.match(details, /!isCurated\(skill\) && skill.inLibrary && <small>/);
 });
 
@@ -50,10 +51,10 @@ test('installed skills uninstall directly without confirmation or repository acc
   assert.doesNotMatch(uninstall, /connected|harnessId|item\.path/);
 });
 
-test('install and uninstall share equal-width controls, with target only for installation', () => {
+test('install and uninstall share equal-width controls, with target for skills and MCPs but not CLIs', () => {
   assert.match(css, /\.hub-skill-actions\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(css, /\.hub-skill-actions>button:only-of-type\{grid-column:1\/-1\}/);
-  assert.match(source, /isSkill && skill.inLibrary && skill.installable && <div className="hub-skill-install">\s*<label>\{t\("hub.install_target"\)\}/);
+  assert.match(source, /\(isSkill \|\| itemType\(skill\) === "mcp"\) && skill.inLibrary && skill.installable && <div className="hub-skill-install">\s*<label>\{t\("hub.install_target"\)\}/);
   const actions = source.slice(source.indexOf('className="hub-skill-actions"'));
   assert.match(actions, /skill.inLibrary && skill.installable && <button type="button" className="primary"/);
   const uninstall = source.slice(source.indexOf('function UninstallSkill('));
@@ -61,6 +62,15 @@ test('install and uninstall share equal-width controls, with target only for ins
   assert.doesNotMatch(uninstall, /className="primary"/);
   assert.match(css, /\.hub-skill-actions \.secondary\{background:transparent;box-shadow:none\}/);
   assert.doesNotMatch(uninstall, /install_target/);
+});
+
+test('MCP and CLI packages have install/update and confirmed uninstall actions', () => {
+  assert.match(source, /action: "install-package", skillId: skill.id/);
+  assert.match(source, /t\(installed \? "hub.update_package" : "hub.install_package"\)/);
+  assert.match(source, /window.confirm\(t\("hub.package_uninstall_confirm", skill.name\)\)/);
+  assert.match(source, /action: "uninstall-package", skillId: skill.id/);
+  assert.match(source, /!isCli && effectiveTarget \? \{ harnessId: effectiveTarget \}/);
+  assert.match(source, /hub.cli_global_hint/);
 });
 
 test('installed skills use the update label without changing the install command', () => {

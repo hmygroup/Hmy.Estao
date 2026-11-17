@@ -19,18 +19,20 @@ const skill = (id, options = {}) => ({
 const tools = [tool('codex'), tool('claude'), tool('absent', false)];
 
 for (const itemType of ['mcp', 'cli']) {
-  test(`${itemType} is browse-only, searchable in English and visible without detected tools`, () => {
+  test(`${itemType} is searchable in English and visible without detected tools`, () => {
     const entries = [skill('network-tool', { itemType, inLibrary: true, curated: true,
       description: 'English network utility', descriptions: { es: 'Ignored translation' }, categories: ['tooling'] })];
     assert.equal(localizedDescription(entries[0], 'es'), 'English network utility');
     assert.equal(filterSkills(entries, [], 'library', 'network utility', '', 'all', 'es', 'tooling', itemType).length, 1);
     for (const view of ['installed', 'other']) assert.deepEqual(filterSkills(entries, tools, view, '', '', 'all'), []);
     entries[0].compatibleTools = ['codex', 'claude'];
-    assert.deepEqual(filterSkills(entries, tools, 'library', '', 'codex', 'all'), entries);
+    assert.deepEqual(filterSkills(entries, tools, 'library', '', 'codex', 'all'), itemType === 'cli' ? [] : entries);
     assert.deepEqual(filterSkills(entries, tools, 'library', '', '', 'missing'), entries);
     for (const status of ['attention', 'installable'])
       assert.deepEqual(filterSkills(entries, tools, 'library', '', '', status), []);
   });
+}
+for (const itemType of ['mcp']) {
   test(`${itemType} reuses installed, missing, attention and per-tool inventory`, () => {
     const entry = skill('utility', { itemType, curated: true, compatibleTools: ['codex', 'claude'],
       occurrences: [occurrence('codex', '/local/utility')] });
@@ -45,6 +47,17 @@ for (const itemType of ['mcp', 'cli']) {
     assert.equal(skillToolStatus(entry, tools[1]), 'unknown');
   });
 }
+
+test('CLIs have global installed and installable inventory without any detected tools', () => {
+  const entry = skill('tengu-cli', { itemType: 'cli', curated: true, inLibrary: true, installable: true,
+    occurrences: [occurrence('global', '/local/tengu.exe', true)] });
+  assert.deepEqual(filterSkills([entry], [], 'installed', '', '', 'all'), [entry]);
+  assert.deepEqual(filterSkills([entry], [], 'library', '', '', 'installable'), [entry]);
+  assert.deepEqual(filterSkills([entry], tools, 'installed', '', 'codex', 'all'), []);
+  assert.deepEqual(filterSkills([entry], [], 'library', '', '', 'missing'), []);
+  entry.occurrences = [];
+  assert.deepEqual(filterSkills([entry], [], 'library', '', '', 'missing'), [entry]);
+});
 
 test('detectedTools hides absent tools', () => {
   assert.deepEqual(detectedTools(tools).map(item => item.id), ['codex', 'claude']);

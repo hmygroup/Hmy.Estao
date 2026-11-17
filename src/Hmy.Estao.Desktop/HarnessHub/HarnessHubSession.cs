@@ -17,6 +17,7 @@ internal sealed class HarnessHubSession : IDisposable
     private readonly HarnessGitHubAuthorization _authorization;
     private readonly GitHubAppInstallationAuthorization _appAuthorization;
     private readonly HarnessInstallationService _installer;
+    private readonly HubNetworkInstaller _networkInstaller;
     private readonly string _dataDirectory;
     private readonly Func<string, bool> _detected;
     private readonly Func<string, HarnessAdapter> _adapter;
@@ -43,6 +44,7 @@ internal sealed class HarnessHubSession : IDisposable
         _appAuthorization = new(_client, Path.Combine(_dataDirectory, "harness-github", "private-key.pem"), bundledKeyReader: bundledKeyReader);
         _detected = detected ?? HubTools.IsDetected;
         _adapter = adapter ?? (id => new HarnessAdapter(id));
+        _networkInstaller = new(_dataDirectory, _adapter);
         _candidates = candidates ?? _authorization.CandidatesAsync;
         _exportDestination = exportDestination ?? ChooseExportDestination;
     }
@@ -75,6 +77,14 @@ internal sealed class HarnessHubSession : IDisposable
         {
             case "check": Start("checking", CheckAsync); break;
             case "connect": Start("connecting", ConnectAsync); break;
+            case "install-package":
+            case "uninstall-package":
+                var package = State.Skills?.SingleOrDefault(item => item.Id == command.SkillId && item.ItemType is "mcp" or "cli" && item.Curated)
+                    ?? throw new ArgumentException("Select a catalog MCP or CLI.").WithUserMessage("hub.select_package");
+                if (command.HarnessId is not null && !HarnessAdapter.Ids.Contains(command.HarnessId))
+                    throw new ArgumentException("Unknown harness.").WithUserMessage("hub.unknown_tool");
+                var uninstall = command.Action == "uninstall-package";
+                Start(uninstall ? "uninstalling" : "installing", ct => ManagePackageAsync(package, command.HarnessId, uninstall, ct)); break;
             case "install-instruction":
                 var instruction = _librarySkills.SingleOrDefault(item => item.Id == command.SkillId && item.Curated &&
                     item.ItemType == "instruction" && item.Installable)
@@ -177,6 +187,30 @@ internal sealed class HarnessHubSession : IDisposable
             catch (OperationCanceledException) { throw; }
             catch (Exception exception) { results.Add(new(tool.Id, tool.Name, "failed", 0, 0, 0, 0, SafeError(exception), UserMessage.FromException(exception))); }
             Update(s => s with { Results = results.ToArray() });
+        }
+    }
+
+    private async Task ManagePackageAsync(HubSkill item, string? harnessId, bool uninstall, CancellationToken ct)
+    {
+        _prepared.Clear();
+        Update(s => s with { Review = null, Results = [] });
+        try
+        {
+            await UpdateToolsAsync(ct);
+            var targets = State.Tools.Where(tool => tool.Detected && (harnessId is null || tool.Id == harnessId))
+                .Select(tool => tool.Id).ToArray();
+            if (uninstall) await _networkInstaller.UninstallAsync(item, targets, ct);
+            else await _networkInstaller.InstallAsync(item, targets, ct);
+            Update(s => s with { ProgressMessage = new(uninstall ? "hub.uninstall_complete" : "hub.package_installed", item.Name) });
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            throw new InvalidOperationException(SafeError(exception), exception).WithUserMessage("hub.package_error", SafeError(exception));
+        }
+        finally
+        {
+            await UpdateToolsAsync(CancellationToken.None);
+            await UpdateLocalInventoryAsync(CancellationToken.None);
         }
     }
 
@@ -470,7 +504,7 @@ internal sealed class HarnessHubSession : IDisposable
 
     private async Task UpdateToolInventoryAsync(CancellationToken ct) =>
         _toolItems = await HubToolInventory.ScanAsync(State.Tools.Where(tool => tool.Detected).Select(tool => tool.Id),
-            _adapter, _librarySkills, ct);
+            _adapter, _librarySkills, ct, item => _networkInstaller.FindCli(new(item, item, "", true, true, [], [], ItemType: "cli")));
 
     private IReadOnlyList<HubSkill> MergeInventory() => MergeSkills(_localSkills,
         _librarySkills.Where(item => item.ItemType is not ("mcp" or "cli"))).Concat(_toolItems)

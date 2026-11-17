@@ -29,9 +29,21 @@ public sealed class HubToolInventoryTests : IDisposable
     {
         var result = await HubToolInventory.ScanAsync(["codex", "claude"], Adapter,
             [Item("utility", "cli"), Item("missing", "cli")], findExecutable: name => name == "utility" ? @"C:\bin\utility.cmd" : null);
-        Assert.Equal(2, result.Single(item => item.Id == "utility").Occurrences.Count);
+        Assert.Equal("global", Assert.Single(result.Single(item => item.Id == "utility").Occurrences).ToolId);
         Assert.All(result.Single(item => item.Id == "utility").Occurrences, copy => Assert.True(copy.Shared));
         Assert.Empty(result.Single(item => item.Id == "missing").Occurrences);
+    }
+
+    [Fact]
+    public async Task CliSuffixResolvesCommandEvenWithoutAnyHarnessInstalled()
+    {
+        var result = await HubToolInventory.ScanAsync([], Adapter, [Item("tengu-cli", "cli")],
+            findExecutable: name => name == "tengu" ? @"C:\bin\tengu.exe" : null);
+        var item = Assert.Single(result);
+        Assert.Equal("tengu", item.CommandName);
+        Assert.Equal("global", Assert.Single(item.Occurrences).ToolId);
+        Assert.True(item.Installable);
+        Assert.Empty(item.CompatibleTools);
     }
 
     [Fact]

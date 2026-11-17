@@ -493,7 +493,7 @@ public sealed class HarnessSourceTests
     [Theory]
     [InlineData("mcps")]
     [InlineData("clis")]
-    public async Task network_sections_are_browse_only_without_repository_payloads(string section)
+    public async Task network_sections_are_installable_without_accessing_network_payloads_during_discovery(string section)
     {
         var fixture = new Fixture();
         fixture.Skill("skills/a", "a");
@@ -510,8 +510,9 @@ public sealed class HarnessSourceTests
         Assert.Equal("English description", item.Description);
         Assert.Equal(section == "mcps" ? "mcp" : "cli", item.ItemType);
         Assert.True(item.Curated);
-        Assert.False(item.Installable);
-        Assert.Empty(item.CompatibleHarnesses);
+        Assert.True(item.Installable);
+        if (section == "mcps") Assert.Equal(HarnessAdapter.Ids, item.CompatibleHarnesses);
+        else Assert.Empty(item.CompatibleHarnesses);
         var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
         Assert.Empty((await source.PrepareAsync("fake-token", adapter)).Files);
         Assert.NotEmpty((await source.PrepareAsync("fake-token", adapter, sourcePath: "skills/a")).Files);
