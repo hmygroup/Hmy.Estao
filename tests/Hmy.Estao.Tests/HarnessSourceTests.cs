@@ -491,22 +491,29 @@ public sealed class HarnessSourceTests
     }
 
     [Theory]
-    [InlineData("mcps")]
-    [InlineData("clis")]
-    public async Task network_sections_are_installable_without_accessing_network_payloads_during_discovery(string section)
+    [InlineData("mcps", @"\\unreachable\share\tool")]
+    [InlineData("clis", @"\\unreachable\share\tool")]
+    [InlineData("mcps", @"C:\unavailable\packages\tool")]
+    [InlineData("clis", @"C:\unavailable\packages\tool")]
+    [InlineData("mcps", @"G:\Biblioteca\Software_Desarrollo\ai-hub\mcps\tool")]
+    [InlineData("clis", @"G:\Biblioteca\Software_Desarrollo\ai-hub\clis\tool")]
+    [InlineData("clis", "C:/packages/tool/")]
+    [InlineData("mcps", @"\\server\share\folder with spaces\")]
+    public async Task package_sections_accept_absolute_source_folders_without_accessing_payloads_during_discovery(string section, string path)
     {
         var fixture = new Fixture();
         fixture.Skill("skills/a", "a");
         fixture.File("guide.md", "Guide");
         fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{},\"" + section +
-            "\":[{\"id\":\"network-tool\",\"path\":" + JsonSerializer.Serialize(@"\\unreachable\share\tool") + ",\"description\":\"English description\",\"categories\":\"\"}]," +
+            "\":[{\"id\":\"package-tool\",\"path\":" + JsonSerializer.Serialize(path) + ",\"description\":\"English description\",\"categories\":\"\"}]," +
             "\"instructions\":[{\"id\":\"guide\",\"path\":\"guide.md\",\"categories\":\"\"}]}");
         using var client = fixture.Client();
         var source = new GitHubRepositorySource(client);
         var library = await source.DiscoverSkillsAsync("fake-token");
         Assert.Null(library.CatalogError);
-        var item = library.Skills.Single(item => item.Id == "network-tool");
-        Assert.Equal("network-tool", item.Name);
+        var item = library.Skills.Single(item => item.Id == "package-tool");
+        Assert.Equal("package-tool", item.Name);
+        Assert.Equal(path, item.Source);
         Assert.Equal("English description", item.Description);
         Assert.Equal(section == "mcps" ? "mcp" : "cli", item.ItemType);
         Assert.True(item.Curated);
@@ -522,13 +529,18 @@ public sealed class HarnessSourceTests
 
     [Theory]
     [InlineData("relative/path", "Description")]
-    [InlineData(@"C:\local\folder", "Description")]
+    [InlineData(@"C:relative\folder", "Description")]
+    [InlineData(@"\root-relative\folder", "Description")]
+    [InlineData(@"C:\folder\..\other", "Description")]
+    [InlineData(@"G:\folder\bad?name", "Description")]
+    [InlineData(@"C:\folder\trailing.\", "Description")]
+    [InlineData(@"\\.\C:\folder", "Description")]
     [InlineData(@"\\server", "Description")]
     [InlineData(@"\\?\UNC\server\share", "Description")]
     [InlineData(@"\\server\share\..\folder", "Description")]
     [InlineData(@"\\server\share", "   ")]
     [InlineData(@"\\server\share", null)]
-    public async Task network_entries_reject_invalid_paths_and_descriptions(string path, string? description)
+    public async Task package_entries_reject_invalid_paths_and_descriptions(string path, string? description)
     {
         foreach (var section in new[] { "mcps", "clis" })
         {
@@ -546,7 +558,7 @@ public sealed class HarnessSourceTests
     [InlineData("null-description")]
     [InlineData("translations")]
     [InlineData("unknown-category")]
-    public async Task network_entries_preserve_strict_metadata_validation(string failure)
+    public async Task package_entries_preserve_strict_metadata_validation(string failure)
     {
         foreach (var section in new[] { "mcps", "clis" })
         {

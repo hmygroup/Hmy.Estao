@@ -37,13 +37,13 @@ public sealed class HubSkillEntry : HubCatalogEntry
 
 public sealed class HubInstructionEntry : HubCatalogEntry;
 public sealed class HubFileEntry : HubCatalogEntry;
-public abstract class HubNetworkEntry : HubCatalogEntry
+public abstract class HubPackageEntry : HubCatalogEntry
 {
     [JsonRequired]
     public string Description { get; set; } = "";
 }
-public sealed class HubMcpEntry : HubNetworkEntry;
-public sealed class HubCliEntry : HubNetworkEntry;
+public sealed class HubMcpEntry : HubPackageEntry;
+public sealed class HubCliEntry : HubPackageEntry;
 
 // Only the validated, normalized catalog reaches discovery and installation.
 internal sealed class HubCatalogItem
@@ -96,7 +96,7 @@ internal static partial class HubCatalogContract
             {
                 if (entry is null) throw new InvalidDataException($"Invalid {type} catalog entry.");
                 items.Add(new HubCatalogItem { Id = entry.Id, Type = type, Path = entry.Path,
-                    Categories = entry.Categories, Description = entry is HubNetworkEntry network ? network.Description : "",
+                    Categories = entry.Categories, Description = entry is HubPackageEntry package ? package.Description : "",
                     Dependencies = entry is HubSkillEntry skill ? skill.Dependencies : [] });
             }
         }
@@ -128,12 +128,12 @@ internal static partial class HubCatalogContract
                 (item.Type != "skill" && item.Dependencies.Count > 0))
                 throw new InvalidDataException("Invalid catalog item identity or fields.");
             if (item.Categories.Length > 4096) throw new InvalidDataException("Catalog categories exceed the safe limit.");
-            var networkItem = item.Type is "mcp" or "cli";
-            if (networkItem)
+            var packageItem = item.Type is "mcp" or "cli";
+            if (packageItem)
             {
                 if (string.IsNullOrWhiteSpace(item.Description) || item.Description.Length > 1024)
                     throw new InvalidDataException("MCP and CLI entries require a nonblank English description of at most 1024 characters.");
-                ValidateNetworkPath(item.Path);
+                ValidateSourceFolder(item.Path);
             }
             else
             {
@@ -154,7 +154,7 @@ internal static partial class HubCatalogContract
                 if (!entries.Any(entry => entry.Path == item.Path + "/SKILL.md"))
                     missingItems.Add(item.Id);
             }
-            else if (!networkItem && !entries.Any(entry => entry.Path == item.Path))
+            else if (!packageItem && !entries.Any(entry => entry.Path == item.Path))
                 missingItems.Add(item.Id);
         }
         foreach (var item in items)
@@ -190,14 +190,18 @@ internal static partial class HubCatalogContract
         return new ValidatedCatalog(availableCatalog, categoryLabels, ids, normalizedCategories, unavailableSkills);
     }
 
-    private static void ValidateNetworkPath(string path)
+    private static void ValidateSourceFolder(string path)
     {
-        // Syntax only: discovery must never contact a network share.
-        var parts = path.StartsWith("\\\\", StringComparison.Ordinal) ? path[2..].TrimEnd('\\').Split('\\') : [];
-        if (path.Length > 32767 || parts.Length < 2 || parts.Any(part =>
+        // Syntax only: discovery must not probe the filesystem or require a drive/share to exist.
+        var normalized = path.Replace('/', '\\');
+        var unc = normalized.StartsWith("\\\\", StringComparison.Ordinal);
+        var drive = normalized.Length >= 3 && char.IsAsciiLetter(normalized[0]) && normalized[1] == ':' && normalized[2] == '\\';
+        var parts = unc ? normalized[2..].TrimEnd('\\').Split('\\')
+            : drive ? normalized[3..].TrimEnd('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries) : [];
+        if (path.Length > 32767 || (!unc && !drive) || (unc && parts.Length < 2) || parts.Any(part =>
             string.IsNullOrWhiteSpace(part) || part is "." or ".." || part.EndsWith(' ') || part.EndsWith('.') ||
             part.Any(c => c < 32 || "<>:\"/|?*".Contains(c))))
-            throw new InvalidDataException("MCP and CLI paths must be UNC network-folder paths (\\\\server\\share\\folder).");
+            throw new InvalidDataException("MCP and CLI source folders must be absolute Windows paths (C:\\folder, G:\\folder or \\\\server\\share\\folder).");
     }
 
     private static void ValidateTranslations(IReadOnlyDictionary<string, string> translations, string fallback)

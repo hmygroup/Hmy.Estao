@@ -206,7 +206,7 @@ internal sealed class HubMcpConfiguration
 
     public async Task WriteAsync(string dataDirectory, CancellationToken ct)
     {
-        var backup = System.IO.Path.Combine(dataDirectory, "network-backups", Guid.NewGuid().ToString("N"));
+        var backup = System.IO.Path.Combine(dataDirectory, "package-backups", Guid.NewGuid().ToString("N"));
         InstallerPaths.EnsurePrivateDirectory(backup);
         if (BeforeHash is not null) await File.WriteAllBytesAsync(System.IO.Path.Combine(backup, System.IO.Path.GetFileName(_adapter.McpPath)), Before, ct);
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_adapter.McpPath)!);

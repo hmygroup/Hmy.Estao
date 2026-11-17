@@ -200,7 +200,7 @@
   "hub.type.file": "Fichier",
   "hub.type.mcp": "MCP",
   "hub.type.cli": "CLI",
-  "hub.network_folder": "Dossier réseau",
+  "hub.source_folder": "Dossier source",
   "hub.package_install_hint": "Installation pour votre utilisateur Windows. Les installations existantes portant le même nom sont également gérées.",
   "hub.install_package": "Installer",
   "hub.update_package": "Mettre à jour",

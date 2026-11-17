@@ -26,7 +26,7 @@ const { default: LibraryBrowser } = await import(moduleUrl(source.replace('useSt
 
 const render = (itemType, tools, installed = true, Browser = HubSkillBrowser) => renderToStaticMarkup(React.createElement(Browser, {
   state: { busy: false, tools, skills: [{ id: 'utility', name: 'Utility', description: 'Example',
-    inLibrary: true, curated: true, installable: true, itemType, compatibleTools: tools.map(tool => tool.id),
+    inLibrary: true, curated: true, installable: true, itemType, source: 'C:\\packages\\utility', compatibleTools: tools.map(tool => tool.id),
     occurrences: installed ? [{ toolId: itemType === 'cli' ? 'global' : 'claude', path: 'C:\\utility.exe', shared: itemType === 'cli', hash: null }] : [],
   }] }, busy: false, run: async () => {},
 }));
@@ -37,6 +37,8 @@ test('installed CLI renders Update and Uninstall without any harness or target s
   assert.match(html, />Uninstall<\/button>/);
   assert.match(html, /C:\\utility.exe/);
   assert.match(html, /Windows user/);
+  assert.match(html, /Source folder/);
+  assert.doesNotMatch(html, /Network folder/);
   assert.doesNotMatch(html, /aria-label="Install target"|Browse only|No supported tools were detected/);
 });
 

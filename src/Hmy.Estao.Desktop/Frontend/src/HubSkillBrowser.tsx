@@ -102,7 +102,7 @@ function ToolIndicator({ skill, tool }: { skill: HubSkill; tool: HubTool }) {
 function SkillDetails({ skill, tools, connected, busy, run, language, catalogCategories, catalogDefaultLanguage }: { skill: HubSkill; tools: HubTool[]; connected: boolean; busy: boolean; run: (command: HubCommand) => Promise<void>; language: string; catalogCategories?: HubState["catalogCategories"]; catalogDefaultLanguage?: string }) {
   const [target, setTarget] = useState("");
   const isSkill = itemType(skill) === "skill";
-  const isNetworkItem = itemType(skill) === "mcp" || itemType(skill) === "cli";
+  const isPackage = itemType(skill) === "mcp" || itemType(skill) === "cli";
   const isCli = itemType(skill) === "cli";
   const compatible = tools.filter(tool => skill.compatibleTools.includes(tool.id));
   const effectiveTarget = compatible.some(tool => tool.id === target) ? target : "";
@@ -117,7 +117,7 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
       </div>
     </div>
     <p>{description || t("hub.no_description")}</p>
-    {isNetworkItem && skill.source && <p className="hub-network-path"><strong>{t("hub.network_folder")}</strong> <code>{skill.source}</code></p>}
+    {isPackage && skill.source && <p className="hub-source-path"><strong>{t("hub.source_folder")}</strong> <code>{skill.source}</code></p>}
     {!isCurated(skill) && skill.inLibrary && <small>{t("hub.origin_repo")}</small>}
     {skill.issue && <p className="inline-warning">{t("hub.attention")} <span className="hub-diagnostic">{skill.issue}</span></p>}
     {isCli && <div className="hub-skill-locations"><p>{t("hub.cli_global_hint")}</p>
@@ -146,7 +146,7 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
         {skill.inLibrary && skill.installable && <button type="button" className="primary" disabled={busy || !connected || !compatible.length} onClick={() => void run({ action: "install-skill", skillId: skill.id, ...(effectiveTarget ? { harnessId: effectiveTarget } : {}) })}>{t(skill.occurrences.length > 0 ? "hub.update_skill" : "hub.install_skill")}</button>}
         {isSkill && skill.occurrences.length > 0 && <UninstallSkill skill={skill} busy={busy} run={run} />}
       </div>
-    </> : isNetworkItem ? <>
+    </> : isPackage ? <>
       <div className="hub-skill-actions">
         {skill.inLibrary && skill.installable && <button type="button" className="primary" disabled={busy || (!isCli && !compatible.length)}
           onClick={() => void run({ action: "install-package", skillId: skill.id, ...(!isCli && effectiveTarget ? { harnessId: effectiveTarget } : {}) })}>{t(installed ? "hub.update_package" : "hub.install_package")}</button>}

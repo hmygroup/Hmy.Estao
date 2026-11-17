@@ -5,7 +5,7 @@ using Hmy.Estao.Core.Platform;
 
 namespace Hmy.Estao.Desktop.HarnessHub;
 
-internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, HarnessAdapter> adapterFactory,
+internal sealed class HubPackageInstaller(string dataDirectory, Func<string, HarnessAdapter> adapterFactory,
     Func<string, string?>? findExecutable = null, Func<string?>? readUserPath = null, Action<string>? writeUserPath = null)
 {
     private readonly Func<string, string?> _find = findExecutable ?? CliExecutable.Find;
@@ -68,7 +68,7 @@ internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, Har
         var written = new List<HubMcpConfiguration>();
         var previousPath = _readPath() ?? "";
         var previousProcessPath = Environment.GetEnvironmentVariable("PATH");
-        using var removal = new PackageRemoval(dataDirectory);
+        using var removal = new PackageRemoval(dataDirectory, source);
         try
         {
             await CopyAsync(source, destination, ct);
@@ -81,7 +81,7 @@ internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, Har
                 if (old is not null && !SamePath(old, executable)) removal.Stage([old]);
                 // Replace the PATH location, not the executable inside an arbitrary shared bin folder.
                 var oldDirectory = old is null ? null : Path.GetDirectoryName(old)!;
-                var removeOldPath = oldDirectory is not null && !LocalFiles(oldDirectory).Any();
+                var removeOldPath = oldDirectory is not null && (IsSourcePath(old, source) || !LocalFiles(oldDirectory).Any());
                 var path = AddPath(removeOldPath ? RemovePath(previousPath, oldDirectory!) : previousPath, destination);
                 SetPath(path, destination, true);
                 if (removeOldPath && readUserPath is null)
@@ -142,12 +142,12 @@ internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, Har
             var directory = Path.GetDirectoryName(executable)!;
             var previousPath = _readPath() ?? "";
             var previousProcessPath = Environment.GetEnvironmentVariable("PATH");
-            using var removal = new PackageRemoval(dataDirectory);
+            using var removal = new PackageRemoval(dataDirectory, item.Source!);
             removal.Stage([executable]);
             try
             {
                 // A shared bin must stay on PATH for its other commands.
-                if (!Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Any())
+                if (IsSourcePath(executable, item.Source!) || !Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Any())
                     SetPath(RemovePath(previousPath, directory), directory, false);
                 removal.Complete();
             }
@@ -184,7 +184,7 @@ internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, Har
                 .Select(ResolveExecutable).OfType<string>().ToArray();
             executables.RemoveWhere(executable => remaining.Any(path => SamePath(path, executable)));
         }
-        using var packageRemoval = new PackageRemoval(dataDirectory);
+        using var packageRemoval = new PackageRemoval(dataDirectory, item.Source!);
         packageRemoval.Stage(executables);
         var written = new List<HubMcpConfiguration>();
         try
@@ -219,6 +219,15 @@ internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, Har
     }
 
     private string? ResolveExecutable(string command) => Path.IsPathFullyQualified(command) ? command : _find(command);
+
+    private static bool IsSourcePath(string? path, string sourceFolder)
+    {
+        if (path is null) return false;
+        var source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceFolder));
+        var candidate = Path.GetFullPath(path);
+        return SamePath(candidate, source) || candidate.StartsWith(
+            Path.EndsInDirectorySeparator(source) ? source : source + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static void ValidateItem(HubSkill item)
     {
@@ -334,7 +343,7 @@ internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, Har
 
     // Removal treats manual and Estao installations identically. Move files to
     // a private backup first, so configuration/PATH failures can restore them.
-    private sealed class PackageRemoval(string dataDirectory) : IDisposable
+    private sealed class PackageRemoval(string dataDirectory, string sourceFolder) : IDisposable
     {
         private readonly List<(string Original, string Backup)> _files = [];
         private readonly HashSet<string> _directories = new(StringComparer.OrdinalIgnoreCase);
@@ -344,8 +353,13 @@ internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, Har
         {
             var paths = executables.SelectMany(executable =>
             {
+                // A registration may run directly from the source; unregister it without deleting the originals.
+                if (IsSourcePath(executable, sourceFolder)) return [];
                 var root = Path.GetDirectoryName(executable)!;
                 var files = RemovalFiles(executable);
+                // Source protection is about the package's role, not whether it is on a share.
+                if (files.Any(file => IsSourcePath(file, sourceFolder)))
+                    throw new InvalidDataException("The application points to the catalog source folder. Its original package files cannot be removed; install a separate local copy first.");
                 foreach (var file in files)
                     for (var parent = Path.GetDirectoryName(file); parent is not null; parent = Path.GetDirectoryName(parent))
                     {
@@ -356,7 +370,7 @@ internal sealed class HubNetworkInstaller(string dataDirectory, Func<string, Har
             }).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             // Preflight every handle before moving any file (including running executables).
             var handles = new List<FileStream>();
-            var backup = Path.Combine(dataDirectory, "network-backups", Guid.NewGuid().ToString("N"), "files");
+            var backup = Path.Combine(dataDirectory, "package-backups", Guid.NewGuid().ToString("N"), "files");
             try
             {
                 foreach (var path in paths)

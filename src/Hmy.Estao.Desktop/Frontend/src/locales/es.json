@@ -200,7 +200,7 @@
   "hub.type.file": "Archivo",
   "hub.type.mcp": "MCP",
   "hub.type.cli": "CLI",
-  "hub.network_folder": "Carpeta de red",
+  "hub.source_folder": "Carpeta de origen",
   "hub.package_install_hint": "Se instala para tu usuario de Windows. También se gestionan las instalaciones existentes con el mismo nombre.",
   "hub.install_package": "Instalar",
   "hub.update_package": "Actualizar",

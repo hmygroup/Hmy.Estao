@@ -4,13 +4,13 @@ using Hmy.Estao.Desktop.HarnessHub;
 
 namespace Hmy.Estao.Desktop.Tests;
 
-public sealed class HubNetworkInstallerTests : IDisposable
+public sealed class HubPackageInstallerTests : IDisposable
 {
     private readonly string _home = Path.Combine(Path.GetTempPath(), "estao-packages-" + Guid.NewGuid().ToString("N"));
     private string Data => Path.Combine(_home, "data");
     private string _userPath = "";
     private HarnessAdapter Adapter(string id) => new(id, _home, _ => null);
-    private HubNetworkInstaller Installer(Func<string, string?>? find = null, Action<string>? write = null) =>
+    private HubPackageInstaller Installer(Func<string, string?>? find = null, Action<string>? write = null) =>
         new(Data, Adapter, find ?? (_ => null), () => _userPath, write ?? (value => _userPath = value));
 
     private HubSkill Package(string type, string id = "utility", string? executableName = null)
@@ -59,7 +59,7 @@ public sealed class HubNetworkInstallerTests : IDisposable
         Assert.False(File.Exists(updated));
         Assert.Equal("other", config.Executable("other"));
         Assert.Contains("example", await File.ReadAllTextAsync(adapter.McpPath));
-        Assert.Contains(Directory.GetFiles(Path.Combine(Data, "network-backups"), "*", SearchOption.AllDirectories),
+        Assert.Contains(Directory.GetFiles(Path.Combine(Data, "package-backups"), "*", SearchOption.AllDirectories),
             path => Path.GetFileName(path) == Path.GetFileName(adapter.McpPath) && File.ReadAllText(path) == before);
     }
 
@@ -262,8 +262,55 @@ public sealed class HubNetworkInstallerTests : IDisposable
     [Fact]
     public void PathEditsPreserveUnrelatedEntriesAndAvoidDuplicates()
     {
-        Assert.Equal(@"C:\package;C:\one;C:\two", HubNetworkInstaller.AddPath(@"C:\one;c:\PACKAGE\;C:\two", @"C:\package"));
-        Assert.Equal(@"C:\one;C:\two", HubNetworkInstaller.RemovePath(@"C:\one;C:\package;C:\two", @"C:\package"));
+        Assert.Equal(@"C:\package;C:\one;C:\two", HubPackageInstaller.AddPath(@"C:\one;c:\PACKAGE\;C:\two", @"C:\package"));
+        Assert.Equal(@"C:\one;C:\two", HubPackageInstaller.RemovePath(@"C:\one;C:\package;C:\two", @"C:\package"));
+    }
+
+    [Theory]
+    [InlineData("cli")]
+    [InlineData("mcp")]
+    public async Task UninstallProtectsLocalSourceFilesEvenWhenUsedDirectly(string type)
+    {
+        var item = Package(type);
+        var original = Path.Combine(item.Source!, "utility.exe");
+        if (type == "cli") _userPath = item.Source!;
+        else
+        {
+            var config = await HubMcpConfiguration.ReadAsync(Adapter("claude"), default);
+            config.Install(item.Id, original);
+            await config.WriteAsync(Data, default);
+        }
+        await Installer().UninstallAsync(item, type == "cli" ? [] : ["claude"], default);
+        Assert.Equal("version one", await File.ReadAllTextAsync(original));
+        if (type == "cli") Assert.Equal("", _userPath);
+        else Assert.Null((await HubMcpConfiguration.ReadAsync(Adapter("claude"), default)).Executable(item.Id));
+    }
+
+    [Theory]
+    [InlineData("cli")]
+    [InlineData("mcp")]
+    public async Task UpdateFromLocalSourceReferenceInstallsSeparateCopyWithoutChangingOriginals(string type)
+    {
+        var item = Package(type);
+        var original = Path.Combine(item.Source!, "utility.exe");
+        if (type == "cli") _userPath = item.Source!;
+        else
+        {
+            var config = await HubMcpConfiguration.ReadAsync(Adapter("claude"), default);
+            config.Install(item.Id, original);
+            await config.WriteAsync(Data, default);
+        }
+        var installer = Installer();
+        await installer.InstallAsync(item, type == "cli" ? [] : ["claude"], default);
+        var installed = type == "cli" ? installer.FindCli(item)
+            : (await HubMcpConfiguration.ReadAsync(Adapter("claude"), default)).Executable(item.Id);
+        Assert.NotNull(installed);
+        Assert.NotEqual(original, installed);
+        Assert.Equal("version one", await File.ReadAllTextAsync(original));
+        Assert.Equal("version one", await File.ReadAllTextAsync(installed));
+        await installer.UninstallAsync(item, type == "cli" ? [] : ["claude"], default);
+        Assert.True(File.Exists(original));
+        Assert.False(File.Exists(installed));
     }
 
     public void Dispose()

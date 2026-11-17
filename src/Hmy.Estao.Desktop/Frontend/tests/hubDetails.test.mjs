@@ -24,8 +24,8 @@ test('details put categories beside the name and omit repository metadata', () =
   assert.match(details, /className="hub-skill-details-heading">\s*<h3>\{skill.name\}<\/h3>\s*<div className="hub-item-categories">/);
   assert.match(css, /\.hub-item-categories\{[^}]*margin-left:auto/);
   assert.doesNotMatch(details, /hub\.snapshot|hub\.origin_hmy/);
-  assert.match(details, /isNetworkItem && skill\.source && <p className="hub-network-path">.*\{skill\.source\}/);
-  assert.match(details, /: isNetworkItem \? <>/);
+  assert.match(details, /isPackage && skill\.source && <p className="hub-source-path">.*\{skill\.source\}/);
+  assert.match(details, /: isPackage \? <>/);
   assert.doesNotMatch(details, /hub\.browse_only_hint/);
   assert.match(details, /!isCurated\(skill\) && skill.inLibrary && <small>/);
 });

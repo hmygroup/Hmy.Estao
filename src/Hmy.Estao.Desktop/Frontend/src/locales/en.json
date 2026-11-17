@@ -200,7 +200,7 @@
   "hub.type.file": "File",
   "hub.type.mcp": "MCP",
   "hub.type.cli": "CLI",
-  "hub.network_folder": "Network folder",
+  "hub.source_folder": "Source folder",
   "hub.package_install_hint": "Installs for your Windows user. Existing installations with the same name are managed too.",
   "hub.install_package": "Install",
   "hub.update_package": "Update",

@@ -17,17 +17,17 @@
     "skills": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/skill" } },
     "instructions": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" } },
     "files": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" } },
-    "mcps": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/networkEntry" } },
-    "clis": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/networkEntry" } }
+    "mcps": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/packageEntry" } },
+    "clis": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/packageEntry" } }
   },
   "$defs": {
-    "networkEntry": {
+    "packageEntry": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "path", "categories", "description"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
-        "path": { "type": "string", "minLength": 5, "maxLength": 32767, "pattern": "^\\\\\\\\[^\\\\]+\\\\[^\\\\]+", "description": "UNC network-folder path. Syntax validated by Estao; never accessed during discovery." },
+        "path": { "type": "string", "minLength": 3, "maxLength": 32767, "pattern": "^(?:[A-Za-z]:[\\\\/]|[\\\\/]{2}[^\\\\/]+[\\\\/][^\\\\/]+)", "description": "Absolute Windows source-folder path: local drive, mapped drive or UNC. Syntax validated by Estao; never accessed during discovery." },
         "categories": { "type": "string", "maxLength": 4096 },
         "description": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "\\S", "description": "Required English description, displayed unchanged in every UI language." }
       }

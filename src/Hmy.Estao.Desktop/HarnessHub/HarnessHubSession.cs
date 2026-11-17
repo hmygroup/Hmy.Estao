@@ -17,7 +17,7 @@ internal sealed class HarnessHubSession : IDisposable
     private readonly HarnessGitHubAuthorization _authorization;
     private readonly GitHubAppInstallationAuthorization _appAuthorization;
     private readonly HarnessInstallationService _installer;
-    private readonly HubNetworkInstaller _networkInstaller;
+    private readonly HubPackageInstaller _packageInstaller;
     private readonly string _dataDirectory;
     private readonly Func<string, bool> _detected;
     private readonly Func<string, HarnessAdapter> _adapter;
@@ -44,7 +44,7 @@ internal sealed class HarnessHubSession : IDisposable
         _appAuthorization = new(_client, Path.Combine(_dataDirectory, "harness-github", "private-key.pem"), bundledKeyReader: bundledKeyReader);
         _detected = detected ?? HubTools.IsDetected;
         _adapter = adapter ?? (id => new HarnessAdapter(id));
-        _networkInstaller = new(_dataDirectory, _adapter);
+        _packageInstaller = new(_dataDirectory, _adapter);
         _candidates = candidates ?? _authorization.CandidatesAsync;
         _exportDestination = exportDestination ?? ChooseExportDestination;
     }
@@ -199,8 +199,8 @@ internal sealed class HarnessHubSession : IDisposable
             await UpdateToolsAsync(ct);
             var targets = State.Tools.Where(tool => tool.Detected && (harnessId is null || tool.Id == harnessId))
                 .Select(tool => tool.Id).ToArray();
-            if (uninstall) await _networkInstaller.UninstallAsync(item, targets, ct);
-            else await _networkInstaller.InstallAsync(item, targets, ct);
+            if (uninstall) await _packageInstaller.UninstallAsync(item, targets, ct);
+            else await _packageInstaller.InstallAsync(item, targets, ct);
             Update(s => s with { ProgressMessage = new(uninstall ? "hub.uninstall_complete" : "hub.package_installed", item.Name) });
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -504,7 +504,7 @@ internal sealed class HarnessHubSession : IDisposable
 
     private async Task UpdateToolInventoryAsync(CancellationToken ct) =>
         _toolItems = await HubToolInventory.ScanAsync(State.Tools.Where(tool => tool.Detected).Select(tool => tool.Id),
-            _adapter, _librarySkills, ct, item => _networkInstaller.FindCli(new(item, item, "", true, true, [], [], ItemType: "cli")));
+            _adapter, _librarySkills, ct, item => _packageInstaller.FindCli(new(item, item, "", true, true, [], [], ItemType: "cli")));
 
     private IReadOnlyList<HubSkill> MergeInventory() => MergeSkills(_localSkills,
         _librarySkills.Where(item => item.ItemType is not ("mcp" or "cli"))).Concat(_toolItems)
