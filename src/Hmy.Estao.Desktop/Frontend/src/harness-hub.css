@@ -94,6 +94,8 @@
 .hub-skill-location>small,.hub-occurrence small{display:block;line-height:1.6}
 .hub-occurrence{margin-top:8px;font-size:11px;line-height:1.7;overflow-wrap:anywhere}
 .hub-occurrence code{font-size:inherit;display:inline}
+.hub-network-path{font-size:12px;overflow-wrap:anywhere}
+.hub-network-path strong{display:block;color:var(--text)}
 .hub-diagnostic{display:block;overflow-wrap:anywhere;font-size:11px;line-height:1.6}
 .hub-skill-install{display:grid;gap:12px}
 .hub-skill-install .hub-helper{margin:0}

@@ -5,9 +5,6 @@ using System.Text.RegularExpressions;
 
 namespace Hmy.Estao.Core.Harnesses.Installer;
 
-public sealed class HubCatalogUnsupportedFeatureException() : NotSupportedException(
-    "Unsupported feature: MCP/CLI catalog installation is not available. Leave mcps and clis empty or omitted.");
-
 public sealed class HubCatalog
 {
     [JsonRequired]
@@ -40,8 +37,13 @@ public sealed class HubSkillEntry : HubCatalogEntry
 
 public sealed class HubInstructionEntry : HubCatalogEntry;
 public sealed class HubFileEntry : HubCatalogEntry;
-public sealed class HubMcpEntry : HubCatalogEntry;
-public sealed class HubCliEntry : HubCatalogEntry;
+public abstract class HubNetworkEntry : HubCatalogEntry
+{
+    [JsonRequired]
+    public string Description { get; set; } = "";
+}
+public sealed class HubMcpEntry : HubNetworkEntry;
+public sealed class HubCliEntry : HubNetworkEntry;
 
 // Only the validated, normalized catalog reaches discovery and installation.
 internal sealed class HubCatalogItem
@@ -50,6 +52,7 @@ internal sealed class HubCatalogItem
     public string Type { get; init; } = "";
     public string Path { get; init; } = "";
     public string Categories { get; init; } = "";
+    public string Description { get; init; } = "";
     public List<string> Dependencies { get; init; } = [];
 }
 
@@ -93,7 +96,8 @@ internal static partial class HubCatalogContract
             {
                 if (entry is null) throw new InvalidDataException($"Invalid {type} catalog entry.");
                 items.Add(new HubCatalogItem { Id = entry.Id, Type = type, Path = entry.Path,
-                    Categories = entry.Categories, Dependencies = entry is HubSkillEntry skill ? skill.Dependencies : [] });
+                    Categories = entry.Categories, Description = entry is HubNetworkEntry network ? network.Description : "",
+                    Dependencies = entry is HubSkillEntry skill ? skill.Dependencies : [] });
             }
         }
         Add(catalog.Skills, "skill");
@@ -124,12 +128,22 @@ internal static partial class HubCatalogContract
                 (item.Type != "skill" && item.Dependencies.Count > 0))
                 throw new InvalidDataException("Invalid catalog item identity or fields.");
             if (item.Categories.Length > 4096) throw new InvalidDataException("Catalog categories exceed the safe limit.");
-            InstallerPaths.Relative(item.Path);
-            if (paths.Any(path => path.Equals(item.Path, StringComparison.OrdinalIgnoreCase) ||
-                                  path.StartsWith(item.Path + "/", StringComparison.OrdinalIgnoreCase) ||
-                                  item.Path.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidDataException("Catalog paths must be unique and non-overlapping.");
-            paths.Add(item.Path);
+            var networkItem = item.Type is "mcp" or "cli";
+            if (networkItem)
+            {
+                if (string.IsNullOrWhiteSpace(item.Description) || item.Description.Length > 1024)
+                    throw new InvalidDataException("MCP and CLI entries require a nonblank English description of at most 1024 characters.");
+                ValidateNetworkPath(item.Path);
+            }
+            else
+            {
+                InstallerPaths.Relative(item.Path);
+                if (paths.Any(path => path.Equals(item.Path, StringComparison.OrdinalIgnoreCase) ||
+                                      path.StartsWith(item.Path + "/", StringComparison.OrdinalIgnoreCase) ||
+                                      item.Path.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidDataException("Catalog paths must be unique and non-overlapping.");
+                paths.Add(item.Path);
+            }
             var categories = item.Categories.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Distinct(StringComparer.Ordinal).ToArray();
             if (categories.Any(category => !categoryLabels.ContainsKey(category)))
@@ -140,7 +154,7 @@ internal static partial class HubCatalogContract
                 if (!entries.Any(entry => entry.Path == item.Path + "/SKILL.md"))
                     missingItems.Add(item.Id);
             }
-            else if (!entries.Any(entry => entry.Path == item.Path))
+            else if (!networkItem && !entries.Any(entry => entry.Path == item.Path))
                 missingItems.Add(item.Id);
         }
         foreach (var item in items)
@@ -162,8 +176,6 @@ internal static partial class HubCatalogContract
             visited.Add(item.Id);
         }
         foreach (var item in items) Visit(item);
-        if (catalog.Mcps.Count > 0 || catalog.Clis.Count > 0)
-            throw new HubCatalogUnsupportedFeatureException();
         var unavailableSkills = items.Where(item => item.Type == "skill" && missingItems.Contains(item.Id))
             .Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         bool changed;
@@ -176,6 +188,16 @@ internal static partial class HubCatalogContract
         var availableCatalog = new TypedHubCatalog(catalog.DefaultLanguage,
             items.Where(item => !missingItems.Contains(item.Id)).ToList());
         return new ValidatedCatalog(availableCatalog, categoryLabels, ids, normalizedCategories, unavailableSkills);
+    }
+
+    private static void ValidateNetworkPath(string path)
+    {
+        // Syntax only: discovery must never contact a network share.
+        var parts = path.StartsWith("\\\\", StringComparison.Ordinal) ? path[2..].TrimEnd('\\').Split('\\') : [];
+        if (path.Length > 32767 || parts.Length < 2 || parts.Any(part =>
+            string.IsNullOrWhiteSpace(part) || part is "." or ".." || part.EndsWith(' ') || part.EndsWith('.') ||
+            part.Any(c => c < 32 || "<>:\"/|?*".Contains(c))))
+            throw new InvalidDataException("MCP and CLI paths must be UNC network-folder paths (\\\\server\\share\\folder).");
     }
 
     private static void ValidateTranslations(IReadOnlyDictionary<string, string> translations, string fallback)

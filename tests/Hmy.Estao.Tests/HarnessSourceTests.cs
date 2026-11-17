@@ -483,7 +483,8 @@ public sealed class HarnessSourceTests
         var fixture = new Fixture();
         fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{}," +
             "\"skills\":[{\"id\":\"duplicate\",\"path\":\"skills/a\",\"categories\":\"\"}],\"" + section +
-            "\":[{\"id\":\"duplicate\",\"path\":\"other\",\"categories\":\"\"}]}");
+            "\":[{\"id\":\"duplicate\",\"path\":\"other\",\"categories\":\"\"" +
+            (section is "mcps" or "clis" ? ",\"description\":\"English description\"" : "") + "}]}");
         using var client = fixture.Client();
         var library = await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token");
         Assert.Contains("identity", library.CatalogError);
@@ -492,23 +493,72 @@ public sealed class HarnessSourceTests
     [Theory]
     [InlineData("mcps")]
     [InlineData("clis")]
-    public async Task unsupported_sections_report_catalog_error_and_cannot_be_prepared_or_exported(string section)
+    public async Task network_sections_are_browse_only_without_repository_payloads(string section)
     {
         var fixture = new Fixture();
         fixture.Skill("skills/a", "a");
         fixture.File("guide.md", "Guide");
         fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{},\"" + section +
-            "\":[{\"id\":\"unsupported\",\"path\":\"missing-source\",\"categories\":\"\"}]," +
+            "\":[{\"id\":\"network-tool\",\"path\":" + JsonSerializer.Serialize(@"\\unreachable\share\tool") + ",\"description\":\"English description\",\"categories\":\"\"}]," +
             "\"instructions\":[{\"id\":\"guide\",\"path\":\"guide.md\",\"categories\":\"\"}]}");
         using var client = fixture.Client();
         var source = new GitHubRepositorySource(client);
         var library = await source.DiscoverSkillsAsync("fake-token");
-        Assert.Contains("Unsupported feature: MCP/CLI", library.CatalogError);
-        Assert.False(Assert.Single(library.Skills).Curated);
+        Assert.Null(library.CatalogError);
+        var item = library.Skills.Single(item => item.Id == "network-tool");
+        Assert.Equal("network-tool", item.Name);
+        Assert.Equal("English description", item.Description);
+        Assert.Equal(section == "mcps" ? "mcp" : "cli", item.ItemType);
+        Assert.True(item.Curated);
+        Assert.False(item.Installable);
+        Assert.Empty(item.CompatibleHarnesses);
         var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
-        await Assert.ThrowsAsync<HubCatalogUnsupportedFeatureException>(() => source.PrepareAsync("fake-token", adapter));
-        await Assert.ThrowsAsync<HubCatalogUnsupportedFeatureException>(() => source.PrepareAsync("fake-token", adapter, sourcePath: "skills/a"));
-        await Assert.ThrowsAsync<HubCatalogUnsupportedFeatureException>(() => source.ReadCatalogFileAsync("fake-token", "guide.md", Commit));
+        Assert.Empty((await source.PrepareAsync("fake-token", adapter)).Files);
+        Assert.NotEmpty((await source.PrepareAsync("fake-token", adapter, sourcePath: "skills/a")).Files);
+        Assert.Equal(Bytes("Guide"), await source.ReadCatalogFileAsync("fake-token", "guide.md", Commit));
+        await Assert.ThrowsAsync<InvalidDataException>(() => source.ReadCatalogFileAsync("fake-token", item.Source, Commit));
+    }
+
+    [Theory]
+    [InlineData("relative/path", "Description")]
+    [InlineData(@"C:\local\folder", "Description")]
+    [InlineData(@"\\server", "Description")]
+    [InlineData(@"\\?\UNC\server\share", "Description")]
+    [InlineData(@"\\server\share\..\folder", "Description")]
+    [InlineData(@"\\server\share", "   ")]
+    [InlineData(@"\\server\share", null)]
+    public async Task network_entries_reject_invalid_paths_and_descriptions(string path, string? description)
+    {
+        foreach (var section in new[] { "mcps", "clis" })
+        {
+            var fixture = new Fixture();
+            var fields = new Dictionary<string, object> { ["id"] = "network", ["path"] = path, ["categories"] = "" };
+            if (description is not null) fields["description"] = description;
+            fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{},\"" + section + "\":[" + JsonSerializer.Serialize(fields) + "]}");
+            using var client = fixture.Client();
+            Assert.NotNull((await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token")).CatalogError);
+        }
+    }
+
+    [Theory]
+    [InlineData("long-description")]
+    [InlineData("null-description")]
+    [InlineData("translations")]
+    [InlineData("unknown-category")]
+    public async Task network_entries_preserve_strict_metadata_validation(string failure)
+    {
+        foreach (var section in new[] { "mcps", "clis" })
+        {
+            var fixture = new Fixture();
+            var fields = new Dictionary<string, object?> { ["id"] = "network", ["path"] = @"\\server\share", ["categories"] = "", ["description"] = "English description" };
+            if (failure == "long-description") fields["description"] = new string('x', 1025);
+            if (failure == "null-description") fields["description"] = null;
+            if (failure == "translations") fields["descriptions"] = new { es = "Translation" };
+            if (failure == "unknown-category") fields["categories"] = "unknown";
+            fixture.RawCatalog("{\"schemaVersion\":2,\"defaultLanguage\":\"en\",\"categories\":{},\"" + section + "\":[" + JsonSerializer.Serialize(fields) + "]}");
+            using var client = fixture.Client();
+            Assert.NotNull((await new GitHubRepositorySource(client).DiscoverSkillsAsync("fake-token")).CatalogError);
+        }
     }
 
     [Theory]

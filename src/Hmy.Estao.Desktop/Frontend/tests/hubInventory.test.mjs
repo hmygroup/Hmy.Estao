@@ -18,6 +18,19 @@ const skill = (id, options = {}) => ({
 });
 const tools = [tool('codex'), tool('claude'), tool('absent', false)];
 
+for (const itemType of ['mcp', 'cli']) {
+  test(`${itemType} is browse-only, searchable in English and visible without detected tools`, () => {
+    const entries = [skill('network-tool', { itemType, inLibrary: true, curated: true,
+      description: 'English network utility', descriptions: { es: 'Ignored translation' }, categories: ['tooling'] })];
+    assert.equal(localizedDescription(entries[0], 'es'), 'English network utility');
+    assert.equal(filterSkills(entries, [], 'library', 'network utility', '', 'all', 'es', 'tooling', itemType).length, 1);
+    for (const view of ['installed', 'other']) assert.deepEqual(filterSkills(entries, tools, view, '', '', 'all'), []);
+    assert.deepEqual(filterSkills(entries, tools, 'library', '', 'codex', 'all'), []);
+    for (const status of ['missing', 'attention', 'installable'])
+      assert.deepEqual(filterSkills(entries, tools, 'library', '', '', status), []);
+  });
+}
+
 test('detectedTools hides absent tools', () => {
   assert.deepEqual(detectedTools(tools).map(item => item.id), ['codex', 'claude']);
 });

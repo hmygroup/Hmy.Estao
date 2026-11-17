@@ -55,7 +55,7 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
       </select></label>
       {catalogFilter && <>
         <label>{t("hub.type_filter")}<select aria-label={t("hub.type_filter")} value={type} onChange={event => setType(event.target.value as CatalogItemType)}>
-          {(["all", "skill", "instruction", "file"] as CatalogItemType[]).map(value => <option key={value} value={value}>{t(`hub.type.${value}`)}</option>)}
+          {(["all", "skill", "instruction", "file", "mcp", "cli"] as CatalogItemType[]).map(value => <option key={value} value={value}>{t(`hub.type.${value}`)}</option>)}
         </select></label>
       </>}
       <div className={`hub-category-filter${catalogFilter ? " with-repository" : ""}`}><label>{t("hub.category_filter")}<select aria-label={t("hub.category_filter")} value={effectiveCategory} onChange={event => setCategory(event.target.value)}>
@@ -103,6 +103,7 @@ function ToolIndicator({ skill, tool }: { skill: HubSkill; tool: HubTool }) {
 function SkillDetails({ skill, tools, connected, busy, run, language, catalogCategories, catalogDefaultLanguage }: { skill: HubSkill; tools: HubTool[]; connected: boolean; busy: boolean; run: (command: HubCommand) => Promise<void>; language: string; catalogCategories?: HubState["catalogCategories"]; catalogDefaultLanguage?: string }) {
   const [target, setTarget] = useState("");
   const isSkill = itemType(skill) === "skill";
+  const isNetworkItem = itemType(skill) === "mcp" || itemType(skill) === "cli";
   const compatible = tools.filter(tool => skill.compatibleTools.includes(tool.id));
   const effectiveTarget = compatible.some(tool => tool.id === target) ? target : "";
   const description = localizedDescription(skill, language);
@@ -115,6 +116,7 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
       </div>
     </div>
     <p>{description || t("hub.no_description")}</p>
+    {isNetworkItem && <p className="hub-network-path"><strong>{t("hub.network_folder")}</strong> <code>{skill.source}</code></p>}
     {!isCurated(skill) && skill.inLibrary && <small>{t("hub.origin_repo")}</small>}
     {skill.issue && <p className="inline-warning">{t("hub.attention")} <span className="hub-diagnostic">{skill.issue}</span></p>}
     {isSkill && <div className="hub-skill-locations">{tools.map(tool => {
@@ -140,7 +142,7 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
         {skill.inLibrary && skill.installable && <button type="button" className="primary" disabled={busy || !connected || !compatible.length} onClick={() => void run({ action: "install-skill", skillId: skill.id, ...(effectiveTarget ? { harnessId: effectiveTarget } : {}) })}>{t(skill.occurrences.length > 0 ? "hub.update_skill" : "hub.install_skill")}</button>}
         {isSkill && skill.occurrences.length > 0 && <UninstallSkill skill={skill} busy={busy} run={run} />}
       </div>
-    </> : <>
+    </> : isNetworkItem ? <p className="hub-helper">{t("hub.browse_only_hint")}</p> : <>
       <div className="hub-skill-actions">
         <button type="button" className="secondary" disabled={busy || !connected} onClick={() => void run({ action: "export-item", skillId: skill.id })}>{t("hub.export_item")}</button>
         {itemType(skill) === "instruction" && <button type="button" className="primary" disabled={busy || !connected || !skill.installable || !tools.length} onClick={() => void run({ action: "install-instruction", skillId: skill.id })}>{t("hub.install_instruction")}</button>}

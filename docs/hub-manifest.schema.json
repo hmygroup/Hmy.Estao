@@ -17,10 +17,21 @@
     "skills": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/skill" } },
     "instructions": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" } },
     "files": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" } },
-    "mcps": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" }, "description": "Reserved; nonempty sections produce an unsupported-feature error." },
-    "clis": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/entry" }, "description": "Reserved; nonempty sections produce an unsupported-feature error." }
+    "mcps": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/networkEntry" } },
+    "clis": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/networkEntry" } }
   },
   "$defs": {
+    "networkEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "categories", "description"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "minLength": 5, "maxLength": 32767, "pattern": "^\\\\\\\\[^\\\\]+\\\\[^\\\\]+", "description": "UNC network-folder path. Syntax validated by Estao; never accessed during discovery." },
+        "categories": { "type": "string", "maxLength": 4096 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "\\S", "description": "Required English description, displayed unchanged in every UI language." }
+      }
+    },
     "entry": { "$ref": "#/$defs/entryFields", "unevaluatedProperties": false },
     "skill": {
       "$ref": "#/$defs/entryFields",

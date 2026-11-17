@@ -2,17 +2,52 @@
   "schemaVersion": 2,
   "defaultLanguage": "en",
   "categories": {
-    "core": { "en": "Core", "es": "General", "fr": "Général" },
-    "database": { "en": "Database", "es": "Bases de datos", "fr": "Bases de données" }
+    "core": { "en": "Core", "es": "Core", "fr": "Core" },
+    "engineering": { "en": "Engineering", "es": "Desarrollo", "fr": "Développement" },
+    "design": { "en": "Design", "es": "Diseño", "fr": "Design" },
+    "product": { "en": "Product", "es": "Producto", "fr": "Produit" },
+    "database": { "en": "Database", "es": "Bases de datos", "fr": "Bases de données" },
+    "tooling": { "en": "Tools and environments", "es": "Herramientas y entornos", "fr": "Outils et environnements" }
   },
   "skills": [
     {
-      "id": "analisto",
-      "path": ".agents/skills/analisto",
-      "categories": "core,database"
+      "id": "batukada",
+      "path": ".agents/skills/batukada",
+      "categories": "engineering"
+    },
+    {
+      "id": "itab-design",
+      "path": ".agents/skills/itab-design",
+      "categories": "design"
+    },
+    {
+      "id": "prd",
+      "path": ".agents/skills/prd",
+      "categories": "product,engineering"
+    },
+    {
+      "id": "sqlcmd-shofia-skill",
+      "path": ".agents/skills/sqlcmd-shofia-skill",
+      "categories": "database,tooling"
+    },
+    {
+      "id": "tengu",
+      "path": ".agents/skills/tengu",
+      "categories": "tooling"
+    },
+    {
+      "id": "tfs-workspace",
+      "path": ".agents/skills/tfs-workspace",
+      "categories": "core,engineering,tooling"
     }
   ],
-  "instructions": [],
+  "instructions": [
+    {
+      "id": "global-instructions",
+      "path": ".agents/instructions/AGENTS.md",
+      "categories": "core"
+    }
+  ],
   "files": [],
   "mcps": [],
   "clis": []

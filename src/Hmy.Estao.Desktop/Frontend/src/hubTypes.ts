@@ -31,10 +31,11 @@ export interface HubSkill {
 }
 export type SkillView = "installed" | "library" | "other";
 export type SkillStatus = "all" | "missing" | "attention" | "installable";
-export type CatalogItemType = "all" | "skill" | "instruction" | "file";
+export type CatalogItemType = "all" | "skill" | "instruction" | "file" | "mcp" | "cli";
 export function detectedTools(tools: HubTool[]): HubTool[] { return tools.filter(tool => tool.detected); }
 export function isCurated(skill: HubSkill): boolean { return skill.curated ?? skill.inLibrary; }
 export function localizedDescription(skill: HubSkill, language: string): string {
+  if (itemType(skill) === "mcp" || itemType(skill) === "cli") return skill.description || "";
   return skill.descriptions?.[language] || skill.description || "";
 }
 export function localizedCategory(category: string, catalogCategories: HubState["catalogCategories"], language: string, defaultLanguage = "en"): string {
@@ -66,6 +67,7 @@ export function filterSkills(skills: HubSkill[], tools: HubTool[], view: SkillVi
     if (category === "__uncategorized" && (skill.categories ?? []).length > 0) return false;
     if (category && category !== "__uncategorized" && !(skill.categories ?? []).includes(category)) return false;
     if (text && !`${skill.name} ${skill.id} ${localizedDescription(skill, language)} ${(skill.categories ?? []).map(value => localizedCategory(value, catalogCategories, language, catalogDefaultLanguage)).join(" ")}`.toLocaleLowerCase(language).includes(text)) return false;
+    if ((itemType(skill) === "mcp" || itemType(skill) === "cli") && (toolId || status !== "all")) return false;
     if (toolId && itemType(skill) === "file") return false;
     if (toolId && itemType(skill) === "instruction" && !selected.some(tool => skill.compatibleTools.includes(tool.id))) return false;
     if (itemType(skill) === "skill" && toolId && !selected.some(tool => view === "installed"

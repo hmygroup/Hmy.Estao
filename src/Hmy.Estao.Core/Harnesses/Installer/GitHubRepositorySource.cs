@@ -52,7 +52,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
             if (manifestEntry is null) throw new InvalidDataException("hub-manifest.json is missing.");
             catalog = HubCatalogContract.Read(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false), entries);
         }
-        catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException or HubCatalogUnsupportedFeatureException)
+        catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException)
         { catalogError = ex.Message; }
         var curatedByPath = catalog?.Catalog.Items.Where(i => i.Type == "skill")
             .ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase) ?? new Dictionary<string, HubCatalogItem>(StringComparer.OrdinalIgnoreCase);
@@ -111,7 +111,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
                     { issue = "Could not parse instruction metadata or content."; }
                 }
                 skills.Add(new RepositorySkill(item.Id, string.IsNullOrWhiteSpace(documentMetadata?.Name) ? item.Id : documentMetadata.Name,
-                    documentMetadata?.Description ?? "", item.Path,
+                    item.Type is "mcp" or "cli" ? item.Description : documentMetadata?.Description ?? "", item.Path,
                     item.Type == "instruction" ? HarnessAdapter.Ids : [], item.Type == "instruction" && issue is null,
                     issue, true, item.Type, documentMetadata?.Descriptions, catalog.ItemCategories[item.Id], catalog.Catalog.DefaultLanguage));
             }
