@@ -24,9 +24,9 @@ const { default: HubSkillBrowser } = await import(moduleUrl(source));
 // Render the library's initial state as well as the default Installed view.
 const { default: LibraryBrowser } = await import(moduleUrl(source.replace('useState("installed")', 'useState("library")')));
 
-const render = (itemType, tools, installed = true, Browser = HubSkillBrowser) => renderToStaticMarkup(React.createElement(Browser, {
+const render = (itemType, tools, installed = true, Browser = HubSkillBrowser, curated = true) => renderToStaticMarkup(React.createElement(Browser, {
   state: { busy: false, tools, skills: [{ id: 'utility', name: 'Utility', description: 'Example',
-    inLibrary: true, curated: true, installable: true, itemType, source: 'C:\\packages\\utility', compatibleTools: tools.map(tool => tool.id),
+    inLibrary: curated, curated, installable: curated, itemType, source: curated ? 'C:\\packages\\utility' : null, compatibleTools: tools.map(tool => tool.id),
     occurrences: installed ? [{ toolId: itemType === 'cli' ? 'global' : 'claude', path: 'C:\\utility.exe', shared: itemType === 'cli', hash: null }] : [],
   }] }, busy: false, run: async () => {},
 }));
@@ -56,4 +56,13 @@ for (const type of ['mcp', 'cli']) test(`missing ${type} renders Install rather 
   const html = render(type, tools, false, LibraryBrowser);
   assert.match(html, /class="primary">Install<\/button>/);
   assert.doesNotMatch(html, />Update<\/button>|>Uninstall<\/button>|Browse only/);
+});
+
+test('non-HMY installed MCP offers Uninstall without a catalog or repository connection', () => {
+  const tools = [{ id: 'claude', name: 'Claude Code', detected: true, status: '', error: null }];
+  const html = render('mcp', tools, true, HubSkillBrowser, false);
+  assert.match(html, /class="secondary">Uninstall<\/button>/);
+  assert.doesNotMatch(html, />Install<\/button>|>Update<\/button>|Source folder/);
+  assert.match(html, /identifiable application files/);
+  assert.match(html, /aria-label="Install target"/);
 });

@@ -191,10 +191,14 @@ public sealed class HubPackageInstallerTests : IDisposable
     {
         var item = Package("mcp");
         var config = await HubMcpConfiguration.ReadAsync(Adapter("claude"), default);
-        config.Install(item.Id, @"C:\dotnet\dotnet.exe");
+        var host = Path.Combine(_home, "runtime", "dotnet.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(host)!);
+        await File.WriteAllTextAsync(host, "Shared runtime");
+        config.Install(item.Id, host);
         await config.WriteAsync(Data, default);
-        await Assert.ThrowsAsync<InvalidDataException>(() => Installer().UninstallAsync(item, ["claude"], default));
-        Assert.NotNull((await HubMcpConfiguration.ReadAsync(Adapter("claude"), default)).Executable(item.Id));
+        await Installer().UninstallAsync(item, ["claude"], default);
+        Assert.Null((await HubMcpConfiguration.ReadAsync(Adapter("claude"), default)).Executable(item.Id));
+        Assert.True(File.Exists(host));
     }
 
     [Fact]

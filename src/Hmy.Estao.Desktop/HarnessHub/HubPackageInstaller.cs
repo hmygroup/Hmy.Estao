@@ -29,7 +29,7 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
         {
             var directory = Environment.ExpandEnvironmentVariables(raw.Trim().Trim('"'));
             if (!Path.IsPathFullyQualified(directory)) continue;
-            foreach (var extension in new[] { ".exe", ".cmd", ".bat" })
+            foreach (var extension in new[] { ".exe", ".cmd", ".bat", ".ps1" })
             {
                 var path = Path.Combine(directory, name + extension);
                 if (File.Exists(path)) return path;
@@ -133,22 +133,29 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
     public async Task UninstallAsync(HubSkill item, IReadOnlyList<string> targets, CancellationToken ct)
     {
         using var gate = Lock();
-        ValidateItem(item);
+        if (item.ItemType is not ("mcp" or "cli")) throw new InvalidDataException("Select an installed MCP or CLI.");
         if (item.ItemType == "cli")
         {
-            var executable = FindCli(item);
+            ValidateName(CommandName(item));
+            var executable = item.Occurrences.FirstOrDefault(copy => copy.ToolId == "global" && copy.Error is null && File.Exists(copy.Path))?.Path
+                ?? FindCli(item);
             if (executable is null) return;
             ct.ThrowIfCancellationRequested();
             var directory = Path.GetDirectoryName(executable)!;
             var previousPath = _readPath() ?? "";
             var previousProcessPath = Environment.GetEnvironmentVariable("PATH");
-            using var removal = new PackageRemoval(dataDirectory, item.Source!);
+            using var removal = new PackageRemoval(dataDirectory, item.Source);
             removal.Stage([executable]);
             try
             {
                 // A shared bin must stay on PATH for its other commands.
-                if (IsSourcePath(executable, item.Source!) || !Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Any())
-                    SetPath(RemovePath(previousPath, directory), directory, false);
+                if (IsSourcePath(executable, item.Source) || !Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Any())
+                {
+                    var updated = RemovePath(previousPath, directory);
+                    if (updated != previousPath) SetPath(updated, directory, false);
+                    else if (readUserPath is null && previousProcessPath is not null && RemovePath(previousProcessPath, directory) != previousProcessPath)
+                        Environment.SetEnvironmentVariable("PATH", RemovePath(previousProcessPath, directory));
+                }
                 removal.Complete();
             }
             catch
@@ -161,19 +168,20 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
         }
         var configs = new List<HubMcpConfiguration>();
         var executables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var serverName = item.CommandName ?? item.Id;
         foreach (var id in targets)
         {
             var adapter = adapterFactory(id);
             if (await new HarnessInstallationService(dataDirectory).GetInstallationStatusAsync(adapter) == HubOperationState.RecoveryRequired)
                 throw new InvalidOperationException("Recover the interrupted tool installation first.");
             var config = await HubMcpConfiguration.ReadAsync(adapter, ct);
-            var executable = config.PayloadExecutable(item.Id);
+            var executable = config.PayloadExecutable(serverName, strict: false);
             if (executable is not null)
             {
                 executable = ResolveExecutable(executable);
                 if (executable is not null) executables.Add(executable);
             }
-            config.Remove(item.Id);
+            config.Remove(serverName);
             configs.Add(config);
         }
         // Resolve references before changing anything, including other names in selected tools.
@@ -184,7 +192,7 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
                 .Select(ResolveExecutable).OfType<string>().ToArray();
             executables.RemoveWhere(executable => remaining.Any(path => SamePath(path, executable)));
         }
-        using var packageRemoval = new PackageRemoval(dataDirectory, item.Source!);
+        using var packageRemoval = new PackageRemoval(dataDirectory, item.Source);
         packageRemoval.Stage(executables);
         var written = new List<HubMcpConfiguration>();
         try
@@ -220,9 +228,9 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
 
     private string? ResolveExecutable(string command) => Path.IsPathFullyQualified(command) ? command : _find(command);
 
-    private static bool IsSourcePath(string? path, string sourceFolder)
+    private static bool IsSourcePath(string? path, string? sourceFolder)
     {
-        if (path is null) return false;
+        if (path is null || string.IsNullOrWhiteSpace(sourceFolder)) return false;
         var source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceFolder));
         var candidate = Path.GetFullPath(path);
         return SamePath(candidate, source) || candidate.StartsWith(
@@ -299,7 +307,7 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
         InstallerPaths.CheckLocal(executable);
         if (new DriveInfo(Path.GetPathRoot(Path.GetFullPath(executable))!).DriveType == DriveType.Network)
             throw new InvalidDataException("Network package sources cannot be removed. Only local application copies can be uninstalled.");
-        if (!Path.IsPathFullyQualified(executable) || !new[] { ".exe", ".cmd", ".bat", ".dll", ".js", ".py" }.Contains(Path.GetExtension(executable), StringComparer.OrdinalIgnoreCase))
+        if (!Path.IsPathFullyQualified(executable) || !new[] { ".exe", ".cmd", ".bat", ".ps1", ".dll", ".js", ".py" }.Contains(Path.GetExtension(executable), StringComparer.OrdinalIgnoreCase))
             throw new InvalidDataException("Cannot determine the installed package executable safely.");
         if (new[] { "dotnet", "node", "python", "python3", "cmd", "powershell", "pwsh", "npx", "npm", "uv", "uvx", "bash", "sh" }
             .Contains(Path.GetFileNameWithoutExtension(executable), StringComparer.OrdinalIgnoreCase))
@@ -329,7 +337,7 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
                 Path.GetFileNameWithoutExtension(path).Equals(stem, StringComparison.OrdinalIgnoreCase));
         var files = dedicated ? LocalFiles(directory).ToArray()
             : Directory.GetFiles(directory, stem + ".*").Where(path =>
-                new[] { ".exe", ".cmd", ".bat", ".dll", ".pdb", ".json", ".config" }.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)).ToArray();
+                new[] { ".exe", ".cmd", ".bat", ".ps1", ".dll", ".pdb", ".json", ".config" }.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)).ToArray();
         return files;
     }
 
@@ -343,7 +351,7 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
 
     // Removal treats manual and Estao installations identically. Move files to
     // a private backup first, so configuration/PATH failures can restore them.
-    private sealed class PackageRemoval(string dataDirectory, string sourceFolder) : IDisposable
+    private sealed class PackageRemoval(string dataDirectory, string? sourceFolder) : IDisposable
     {
         private readonly List<(string Original, string Backup)> _files = [];
         private readonly HashSet<string> _directories = new(StringComparer.OrdinalIgnoreCase);

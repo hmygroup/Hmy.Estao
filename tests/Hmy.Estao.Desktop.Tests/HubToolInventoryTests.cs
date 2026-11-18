@@ -21,6 +21,7 @@ public sealed class HubToolInventoryTests : IDisposable
         var result = await HubToolInventory.ScanAsync(["codex", "claude"], Adapter, [Item("database", "mcp")]);
         Assert.Equal("codex", Assert.Single(result.Single(item => item.Id == "database").Occurrences).ToolId);
         Assert.Equal("claude", Assert.Single(result.Single(item => item.Name == "extra").Occurrences).ToolId);
+        Assert.Equal("extra", result.Single(item => item.Id == "mcp:extra").CommandName);
         Assert.DoesNotContain("secret", System.Text.Json.JsonSerializer.Serialize(result));
     }
 

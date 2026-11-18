@@ -106,6 +106,38 @@ public sealed class HarnessHubSessionTests
         Assert.Empty(session.State.Skills!);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NonCatalogMcpCanBeUninstalledOfflineByItsActualServerName(bool packageManager)
+    {
+        using var fixture = new Fixture();
+        const string name = "Third Party.DB";
+        var adapter = fixture.Adapter("claude");
+        Directory.CreateDirectory(Path.GetDirectoryName(adapter.McpPath)!);
+        var executable = Path.Combine(fixture.Directory, "manual", "third-party.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+        await File.WriteAllTextAsync(executable, "External application");
+        var server = packageManager ? new { command = "npx", args = new[] { "-y", "third-party-mcp" } }
+            : new { command = executable, args = Array.Empty<string>() };
+        await File.WriteAllTextAsync(adapter.McpPath, JsonSerializer.Serialize(new
+        {
+            mcpServers = new Dictionary<string, object> { [name] = server, ["untouched"] = new { url = "https://example.test/mcp" } }
+        }));
+        using var session = fixture.Session(candidates: _ => Task.FromResult<IReadOnlyList<string>>([]));
+        session.Command(new("check")); await session.CurrentOperation;
+        var item = Assert.Single(session.State.Skills!, item => item.Id == "mcp:" + name);
+        Assert.False(item.Curated);
+        Assert.Equal(name, item.CommandName);
+        Assert.Throws<ArgumentException>(() => session.Command(new("install-package", SkillId: item.Id)));
+        session.Command(new("uninstall-package", SkillId: item.Id)); await session.CurrentOperation;
+        Assert.Null(session.State.Error);
+        Assert.DoesNotContain(session.State.Skills!, item => item.Id == "mcp:" + name);
+        Assert.Contains(session.State.Skills!, item => item.Name == "untouched");
+        Assert.Equal(packageManager, File.Exists(executable));
+        Assert.False(session.State.Connected);
+    }
+
     [Fact]
     public async Task MultiToolInstallationReusesImmutableDownloadsAndTheVerifiedCredential()
     {

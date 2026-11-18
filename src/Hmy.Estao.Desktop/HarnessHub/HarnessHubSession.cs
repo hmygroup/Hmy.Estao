@@ -79,11 +79,12 @@ internal sealed class HarnessHubSession : IDisposable
             case "connect": Start("connecting", ConnectAsync); break;
             case "install-package":
             case "uninstall-package":
-                var package = State.Skills?.SingleOrDefault(item => item.Id == command.SkillId && item.ItemType is "mcp" or "cli" && item.Curated)
-                    ?? throw new ArgumentException("Select a catalog MCP or CLI.").WithUserMessage("hub.select_package");
+                var uninstall = command.Action == "uninstall-package";
+                var package = State.Skills?.SingleOrDefault(item => item.Id == command.SkillId && item.ItemType is "mcp" or "cli" &&
+                    (uninstall ? item.Occurrences.Any(copy => copy.Path.Length > 0 && copy.Error is null) : item.Curated && item.InLibrary && item.Installable))
+                    ?? throw new ArgumentException("Select an MCP or CLI for this operation.").WithUserMessage("hub.select_package");
                 if (command.HarnessId is not null && !HarnessAdapter.Ids.Contains(command.HarnessId))
                     throw new ArgumentException("Unknown harness.").WithUserMessage("hub.unknown_tool");
-                var uninstall = command.Action == "uninstall-package";
                 Start(uninstall ? "uninstalling" : "installing", ct => ManagePackageAsync(package, command.HarnessId, uninstall, ct)); break;
             case "install-instruction":
                 var instruction = _librarySkills.SingleOrDefault(item => item.Id == command.SkillId && item.Curated &&
@@ -197,7 +198,8 @@ internal sealed class HarnessHubSession : IDisposable
         try
         {
             await UpdateToolsAsync(ct);
-            var targets = State.Tools.Where(tool => tool.Detected && (harnessId is null || tool.Id == harnessId))
+            var targets = State.Tools.Where(tool => tool.Detected && (harnessId is null || tool.Id == harnessId) &&
+                (!uninstall || item.ItemType != "mcp" || item.Occurrences.Any(copy => copy.ToolId == tool.Id && copy.Path.Length > 0 && copy.Error is null)))
                 .Select(tool => tool.Id).ToArray();
             if (uninstall) await _packageInstaller.UninstallAsync(item, targets, ct);
             else await _packageInstaller.InstallAsync(item, targets, ct);

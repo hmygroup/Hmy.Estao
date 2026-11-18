@@ -50,11 +50,11 @@ internal static class HubToolInventory
                 copies = executable is null ? [] : [new("global", executable, true, null)];
             }
             result.Add(item with { CompatibleTools = item.ItemType == "mcp" ? HarnessAdapter.Ids : [], Occurrences = copies,
-                Installable = true, CommandName = item.ItemType == "cli" ? HubPackageInstaller.CommandName(item) : null });
+                Installable = true, CommandName = item.ItemType == "cli" ? HubPackageInstaller.CommandName(item) : item.Id });
         }
         result.AddRange(occurrences.Select(pair => new HubSkill("mcp:" + pair.Key, pair.Key, "", false, false,
             HarnessAdapter.Ids, pair.Value.Concat(failures.Select(failure =>
-                new HubSkillOccurrence(failure.Key, "", false, null, failure.Value))).ToArray(), ItemType: "mcp")));
+                new HubSkillOccurrence(failure.Key, "", false, null, failure.Value))).ToArray(), ItemType: "mcp", CommandName: pair.Key)));
         return result;
     }
 }
