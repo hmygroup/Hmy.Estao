@@ -54,6 +54,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [hubMessage, setHubMessage] = useState("");
   const change = (update: Partial<SettingsUpdate>) => { setDraft(d => ({ ...d, ...update })); setDirty(true); setMessage(""); };
   const providerChange = (id: string, update: Partial<Provider>) =>
     change({ providers: draft.providers.map(p => p.id === id ? { ...p, ...update } : p) });
@@ -116,7 +117,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
     </aside>
     <div className={`settings-body${page === "hub" ? " settings-body-hub" : ""}`}><header className="page-header"><div>
       <h1>{titles[page][0]}</h1><p>{titles[page][1]}</p></div></header>
-      <main className="settings-content">{page === "hub" ? <HarnessHub /> : <fieldset className="editor" disabled={busy}>
+      <main className="settings-content">{page === "hub" ? <HarnessHub onStatusChange={setHubMessage} /> : <fieldset className="editor" disabled={busy}>
         {page === "providers" && <>
           <div className="section-caption">{t("connections")} <span>{plural("enabled_count", draft.providers.filter(p => p.enabled).length)}</span></div>
            {draft.providers.map(p => <ProviderCard key={p.id} provider={p} update={u => providerChange(p.id, u)}
@@ -165,7 +166,7 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
           </Section>
         </>}
       </fieldset>}</main>
-       <footer className="settings-footer"><span role="status">{message || formatMessage(state.statusMessage) || (dirty ? t("unsaved") : t("all_saved"))}</span>
+       <footer className="settings-footer"><span role="status">{(page === "hub" && hubMessage) || message || formatMessage(state.statusMessage) || (dirty ? t("unsaved") : t("all_saved"))}</span>
          <button className="secondary" disabled={busy || !dirty} onClick={() => void discard()}>{t("discard")}</button>
          <button className="primary" disabled={busy || !dirty} onClick={() => void save()}>{busy ? t("saving") : t("save")}</button></footer>
     </div>

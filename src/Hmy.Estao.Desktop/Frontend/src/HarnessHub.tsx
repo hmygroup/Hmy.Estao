@@ -4,7 +4,7 @@ import { defaultSelection, updateSelection, type HubCommand, type HubState, type
 import { t, plural, message, errorText } from "./i18n";
 import HubSkillBrowser from "./HubSkillBrowser";
 
-export default function HarnessHub() {
+export default function HarnessHub({ onStatusChange }: { onStatusChange?: (status: string) => void }) {
   const [state, setState] = useState<HubState>();
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -55,6 +55,10 @@ export default function HarnessHub() {
   const review = state?.review;
   const visibleResults = state?.results.filter(result => state.tools.some(tool => tool.id === result.id && tool.detected)) ?? [];
   const installedIn = visibleResults.filter(result => result.outcome === "installed").map(result => result.name).join(", ");
+  const status = error || (state?.error ? message(state.errorMessage) || t("error.operation") : "")
+    || (busy ? message(state?.progressMessage) || t("hub.working") : message(state?.progressMessage) || (installedIn ? t("hub.installed_in", installedIn) : ""));
+  useEffect(() => { onStatusChange?.(status); }, [onStatusChange, status]);
+  useEffect(() => () => onStatusChange?.(""), [onStatusChange]);
 
   return <div className="harness-hub">
     {state?.deviceCode && <section className="section hub-device" aria-label={t("hub.authorization")}>
@@ -69,8 +73,6 @@ export default function HarnessHub() {
         {tool.status === "RecoveryRequired" && <button type="button" className="secondary" disabled={busy} onClick={() => void run({ action: "recover", harnessId: tool.id })}>{t("hub.recover")}</button>}
       </div>)}
 
-    {(error || state?.error) && <p className="inline-warning" role="alert">{error || message(state?.errorMessage) || t("error.operation")}</p>}
-
     <HubSkillBrowser state={state} busy={busy} run={run} />
 
     {review && <section ref={reviewSection} tabIndex={-1} className="hub-review" aria-label={t("hub.review_install")}>
@@ -84,20 +86,9 @@ export default function HarnessHub() {
       </div>
     </section>}
 
-    {!busy && installedIn && <InstallNotice installedIn={installedIn} />}
     {!busy && visibleResults.filter(result => result.outcome === "failed" || result.outcome === "partial" || result.outcome === "cancelled").map(result =>
       <p className="inline-warning" role="alert" key={result.id}>{result.name}: {result.error ? message(result.errorMessage) || t("error.operation") : t("hub.install_conflicts", result.conflicts)}</p>)}
   </div>;
-}
-
-function InstallNotice({ installedIn }: { installedIn: string }) {
-  const [visible, setVisible] = useState(true);
-  useEffect(() => {
-    setVisible(true);
-    const timer = window.setTimeout(() => setVisible(false), 5000);
-    return () => window.clearTimeout(timer);
-  }, [installedIn]);
-  return visible ? <p className="hub-operation-result" role="status">{t("hub.installed_in", installedIn)}</p> : null;
 }
 
 function ToolReview({ tool, selected, onSelect }: { tool: HubToolReview; selected: string[]; onSelect: (id: string, include: boolean) => void }) {

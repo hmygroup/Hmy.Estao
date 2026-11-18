@@ -258,7 +258,7 @@ public sealed class HarnessHubSessionTests
     }
 
     [Fact]
-    public async Task DirectSkillInstallationPreservesLocalConflicts()
+    public async Task DirectSkillInstallationReplacesLocalDifferences()
     {
         using var fixture = new Fixture();
         var file = Path.Combine(fixture.Adapter("claude").SkillsRoot, "sample", "SKILL.md");
@@ -270,8 +270,8 @@ public sealed class HarnessHubSessionTests
 
         Assert.Null(session.State.Error);
         Assert.Null(session.State.Review);
-        Assert.Equal("Personal skill", await File.ReadAllTextAsync(file));
-        Assert.Contains(session.State.Results, result => result.Id == "claude" && result.Outcome == "partial" && result.Conflicts == 1);
+        Assert.Contains("Fixture, never execute.", await File.ReadAllTextAsync(file));
+        Assert.Contains(session.State.Results, result => result.Id == "claude" && result.Outcome == "installed" && result.Updated == 1 && result.Conflicts == 0);
     }
 
     [Theory]
@@ -329,7 +329,7 @@ public sealed class HarnessHubSessionTests
     [InlineData("codex")]
     [InlineData("copilot")]
     [InlineData("opencode")]
-    public async Task SharedRootConflictsArePreservedRegardlessOfSelectedTool(string target)
+    public async Task SharedRootDifferencesAreReplacedRegardlessOfSelectedTool(string target)
     {
         using var fixture = new Fixture { IncludeOpenCode = true };
         var file = Path.Combine(fixture.Directory, "home", ".agents", "skills", "sample", "SKILL.md");
@@ -340,11 +340,12 @@ public sealed class HarnessHubSessionTests
         session.Command(new("install-skill", target, SkillId: "sample")); await session.CurrentOperation;
 
         Assert.Null(session.State.Error);
-        Assert.Equal(content, await File.ReadAllTextAsync(file));
+        Assert.Contains("Fixture, never execute.", await File.ReadAllTextAsync(file));
         var result = Assert.Single(session.State.Results);
         Assert.Equal(target, result.Id);
-        Assert.Equal("partial", result.Outcome);
-        Assert.Equal(1, result.Conflicts);
+        Assert.Equal("installed", result.Outcome);
+        Assert.Equal(0, result.Conflicts);
+        Assert.Equal(1, result.Updated);
         Assert.Equal(0, result.Created);
         var skill = Assert.Single(session.State.Skills!);
         Assert.Equal(["codex", "copilot", "opencode"], skill.Occurrences.Select(occurrence => occurrence.ToolId).Order());
@@ -436,7 +437,7 @@ public sealed class HarnessHubSessionTests
     }
 
     [Fact]
-    public async Task InstallAllUsesOneCommitSkipsMissingToolsAndPreservesLocalConflicts()
+    public async Task InstallAllUsesOneCommitSkipsMissingToolsAndReplacesLocalDifferences()
     {
         using var fixture = new Fixture();
         var claude = fixture.Adapter("claude");
@@ -450,7 +451,7 @@ public sealed class HarnessHubSessionTests
         session.Command(new("review")); await session.CurrentOperation;
         var review = Assert.IsType<HubReview>(session.State.Review);
         Assert.Equal(3, review.Tools.Count);
-        Assert.Equal("conflict", Assert.Single(review.Tools.Single(t => t.Id == "claude").Artifacts).Status);
+        Assert.Equal("update", Assert.Single(review.Tools.Single(t => t.Id == "claude").Artifacts).Status);
         Assert.Equal("new", Assert.Single(review.Tools.Single(t => t.Id == "codex").Artifacts).Status);
         Assert.Contains(session.State.Results, r => r.Id == "opencode" && r.Outcome == "skipped");
         Assert.DoesNotContain(fixture.Requests, r => r.EndsWith("/commits/main", StringComparison.Ordinal));
@@ -461,9 +462,9 @@ public sealed class HarnessHubSessionTests
         await session.CurrentOperation;
         Assert.Null(session.State.Review);
         Assert.Contains(session.State.Results, r => r.Id == "codex" && r.Outcome == "installed" && r.Created == 1);
-        Assert.Contains(session.State.Results, r => r.Id == "claude" && r.Outcome == "partial" && r.Conflicts == 1);
+        Assert.Contains(session.State.Results, r => r.Id == "claude" && r.Outcome == "installed" && r.Updated == 1 && r.Conflicts == 0);
         Assert.Contains(session.State.Results, r => r.Id == "copilot" && r.Outcome == "installed" && r.Created == 0 && r.Unchanged == 1);
-        Assert.Equal("Personal skill. Must not be overwritten.", await File.ReadAllTextAsync(existing));
+        Assert.Contains("Fixture, never execute.", await File.ReadAllTextAsync(existing));
         Assert.True(File.Exists(Path.Combine(fixture.Adapter("copilot").SkillsRoot, "sample", "SKILL.md")));
         Assert.False(Directory.Exists(Path.Combine(fixture.Adapter("copilot").Profile, "skills")));
         var sample = Assert.Single(session.State.Skills!, skill => skill.Id == "sample");

@@ -16,7 +16,8 @@ public sealed class HarnessInstallationService
         _faultPoint = faultPoint;
     }
 
-    public Task<InstallPlan> PlanAsync(HarnessAdapter adapter, PreparedSnapshot snapshot, CancellationToken ct = default)
+    public Task<InstallPlan> PlanAsync(HarnessAdapter adapter, PreparedSnapshot snapshot, CancellationToken ct = default,
+        bool replaceSkills = false)
     {
         ct.ThrowIfCancellationRequested();
         var statePath = StatePath(adapter);
@@ -36,9 +37,13 @@ public sealed class HarnessInstallationService
             var reason = "Archivo nuevo.";
             UserMessage? reasonInfo = null;
             var destination = group.Key;
+            var replaceSkill = replaceSkills && file.Format == "file" && destination.StartsWith(
+                Path.TrimEndingDirectorySeparator(adapter.SkillsRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
             try
             {
-                var shadows = adapter.ShadowPaths(group.Key);
+                // Explicit Hub skill updates install the downloaded copy in the native root.
+                // Compatibility-only locations remain read-only and cannot block that update.
+                var shadows = replaceSkill ? Array.Empty<string>() : adapter.ShadowPaths(group.Key);
                 if (shadows.Any(p => InstallerPaths.FileHash(p) != hash))
                     throw new InvalidDataException("Otra ubicación compatible contiene esta skill con contenido diferente o recursos incompletos.");
                 if (shadows.Count > 0 && !System.IO.File.Exists(destination)) destination = shadows[0];
@@ -54,8 +59,8 @@ public sealed class HarnessInstallationService
                         action = hash == before ? InstallAction.AlreadyPresent : InstallAction.Merge;
                         reason = action == InstallAction.Merge ? "Añadir configuración ausente; conservar contenido local." : "Configuración equivalente.";
                     }
-                    else if (previous is { Managed: true } && previous.Hash == before)
-                    { action = InstallAction.Update; reason = "Actualizar archivo administrado sin modificaciones locales."; }
+                    else if (replaceSkill || previous is { Managed: true } && previous.Hash == before)
+                    { action = InstallAction.Update; reason = replaceSkill ? "Actualizar skill con el contenido descargado." : "Actualizar archivo administrado sin modificaciones locales."; }
                     else { action = InstallAction.Conflict; reason = "Contenido local ajeno o modificado: se conserva."; }
                 }
             }

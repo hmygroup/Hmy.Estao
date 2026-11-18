@@ -406,7 +406,7 @@
   "hub.prepare_failed": "No se pudo preparar ninguna instalación. Revisa los resultados.",
   "hub.review_ready": "Revisa las habilidades antes de instalarlas. Todavía no se ha escrito nada.",
   "hub.review_changed": "La revisión o los archivos locales han cambiado. Vuelve a revisar la instalación.",
-  "hub.finished": "Finalizado. Se conservaron los conflictos locales y no se ejecutaron los scripts descargados.",
+  "hub.finished": "Finalizado. No se ejecutaron los scripts descargados.",
   "hub.recovered": "Recuperación completada. Ya puedes revisar una instalación.",
   "hub.select_dependencies": "Selecciona las dependencias necesarias de '{0}' o desmárcala.",
   "hub.action.Create": "Crear",

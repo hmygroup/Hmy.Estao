@@ -54,7 +54,7 @@ test('installed skills uninstall directly without confirmation or repository acc
 test('install and uninstall share equal-width controls, with target for skills and MCPs but not CLIs', () => {
   assert.match(css, /\.hub-skill-actions\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(css, /\.hub-skill-actions>button:only-of-type\{grid-column:1\/-1\}/);
-  assert.match(source, /showTarget && <div className="hub-skill-install">\s*<label>\{t\("hub.install_target"\)\}/);
+  assert.match(source, /showTarget && <div className="hub-skill-install">\s*<label><select aria-label=\{t\("hub.install_target"\)\}/);
   const actions = source.slice(source.indexOf('className="hub-skill-actions"'));
   assert.match(actions, /skill.inLibrary && skill.installable && <button type="button" className="primary"/);
   const uninstall = source.slice(source.indexOf('function UninstallSkill('));

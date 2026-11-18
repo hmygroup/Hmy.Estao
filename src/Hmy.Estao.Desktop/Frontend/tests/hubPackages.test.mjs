@@ -39,6 +39,7 @@ test('installed CLI renders Update and Uninstall without any harness or target s
   assert.match(html, /Windows user/);
   assert.match(html, /Source folder/);
   assert.doesNotMatch(html, /Network folder/);
+  assert.doesNotMatch(html, /Installs for your Windows user|Existing installations with the same name/);
   assert.doesNotMatch(html, /aria-label="Install target"|Browse only|No supported tools were detected/);
 });
 
@@ -48,7 +49,24 @@ test('installed MCP renders the skills-style target selector and Update/Uninstal
   assert.match(html, />Uninstall<\/button>/);
   assert.match(html, /All compatible detected tools/);
   assert.match(html, /Claude Code/);
+  assert.match(html, /aria-label="Install target"/);
+  assert.doesNotMatch(html, />Install target</);
   assert.doesNotMatch(html, /Browse only/);
+});
+
+test('skills show a type pill in both list entries and details, like other item types', () => {
+  const tools = [{ id: 'claude', name: 'Claude Code', detected: true, status: '', error: null }];
+  const html = render('skill', tools);
+  assert.equal((html.match(/class="hub-badge">Skill<\/span>/g) ?? []).length, 2);
+});
+
+test('instruction actions omit installation guidance while file exports retain their hint', () => {
+  const tools = [{ id: 'claude', name: 'Claude Code', detected: true, status: '', error: null }];
+  const instruction = render('instruction', tools, false, LibraryBrowser);
+  assert.match(instruction, />Install instruction<\/button>/);
+  assert.doesNotMatch(instruction, /Install in all detected tools|Existing guidance is preserved|Start a new conversation/);
+  const file = render('file', tools, false, LibraryBrowser);
+  assert.match(file, /class="hub-helper"/);
 });
 
 for (const type of ['mcp', 'cli']) test(`missing ${type} renders Install rather than Update`, () => {

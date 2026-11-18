@@ -95,6 +95,65 @@ public sealed class HarnessInstallerTests : IDisposable
     }
 
     [Fact]
+    public async Task explicit_skill_update_replaces_unmanaged_and_modified_files_with_backups()
+    {
+        var adapter = Adapter();
+        var service = Service();
+        var skill = FileFor(adapter, "downloaded");
+        var resource = FileFor(adapter, "downloaded resource", leaf: "scripts/setup.ps1");
+        Write(skill.RelativePath, "local skill");
+        Write(resource.RelativePath, "local resource");
+        var snapshot = Snapshot(skill, resource);
+        var plan = await service.PlanAsync(adapter, snapshot, replaceSkills: true);
+        Assert.All(plan.Files, file => Assert.Equal(InstallAction.Update, file.Action));
+        var result = await service.ApplyAsync(adapter, plan, false);
+        Assert.Equal(0, result.Conflicts);
+        Assert.Equal(2, result.Updated);
+        Assert.Equal("downloaded", await System.IO.File.ReadAllTextAsync(skill.RelativePath));
+        Assert.Equal("downloaded resource", await System.IO.File.ReadAllTextAsync(resource.RelativePath));
+        var backups = Directory.GetFiles(Path.Combine(_root, "data", "harness-installer", "transactions"), "*.before", SearchOption.AllDirectories);
+        Assert.Contains(backups, path => System.IO.File.ReadAllText(path) == "local skill");
+        Assert.Contains(backups, path => System.IO.File.ReadAllText(path) == "local resource");
+
+        Write(skill.RelativePath, "edited after install");
+        plan = await service.PlanAsync(adapter, snapshot, replaceSkills: true);
+        Assert.Equal(InstallAction.Update, plan.Files.Single(file => file.Path == skill.RelativePath).Action);
+        await service.ApplyAsync(adapter, plan, false);
+        Assert.Equal("downloaded", await System.IO.File.ReadAllTextAsync(skill.RelativePath));
+    }
+
+    [Fact]
+    public async Task explicit_skill_update_uses_native_root_without_writing_compatibility_only_locations()
+    {
+        var adapter = Adapter("opencode");
+        var legacy = Path.Combine(_root, "home", ".claude", "skills", "sample", "SKILL.md");
+        Write(legacy, "different compatibility copy");
+        var skill = FileFor(adapter, "downloaded");
+        var service = Service();
+        var plan = await service.PlanAsync(adapter, Snapshot(skill), replaceSkills: true);
+        Assert.Equal(skill.RelativePath, Assert.Single(plan.Files).Path);
+        Assert.Equal(InstallAction.Create, plan.Files[0].Action);
+        await service.ApplyAsync(adapter, plan, false);
+        Assert.Equal("downloaded", await System.IO.File.ReadAllTextAsync(skill.RelativePath));
+        Assert.Equal("different compatibility copy", await System.IO.File.ReadAllTextAsync(legacy));
+    }
+
+    [Fact]
+    public async Task explicit_skill_update_still_rejects_changes_after_planning_and_duplicate_sources()
+    {
+        var adapter = Adapter();
+        var skill = FileFor(adapter, "downloaded");
+        Write(skill.RelativePath, "local");
+        var service = Service();
+        var plan = await service.PlanAsync(adapter, Snapshot(skill), replaceSkills: true);
+        Write(skill.RelativePath, "concurrent edit");
+        await Assert.ThrowsAsync<IOException>(() => service.ApplyAsync(adapter, plan, false));
+        Assert.Equal("concurrent edit", await System.IO.File.ReadAllTextAsync(skill.RelativePath));
+        plan = await service.PlanAsync(adapter, Snapshot(skill, FileFor(adapter, "other source")), replaceSkills: true);
+        Assert.Equal(InstallAction.Conflict, Assert.Single(plan.Files).Action);
+    }
+
+    [Fact]
     public void validates_versions_and_rejects_unproven_agent_conversions()
     {
         var artifact = new SourceArtifact { Id = "agent", Category = "agent", MinimumVersions = new() { ["claude"] = "2.1" } };

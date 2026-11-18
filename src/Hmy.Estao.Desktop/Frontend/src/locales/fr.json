@@ -406,7 +406,7 @@
   "hub.prepare_failed": "Aucune installation n’a pu être préparée. Consultez les résultats ci-dessous.",
   "hub.review_ready": "Examinez les compétences avant de les installer. Rien n’a encore été écrit.",
   "hub.review_changed": "L’examen ou les fichiers locaux ont changé. Examinez à nouveau l’installation.",
-  "hub.finished": "Terminé. Les conflits locaux ont été préservés et aucun script téléchargé n’a été exécuté.",
+  "hub.finished": "Terminé. Aucun script téléchargé n’a été exécuté.",
   "hub.recovered": "Récupération terminée. Vous pouvez maintenant examiner une installation.",
   "hub.select_dependencies": "Sélectionnez les dépendances requises pour « {0} » ou désélectionnez cette compétence.",
   "hub.action.Create": "Créer",

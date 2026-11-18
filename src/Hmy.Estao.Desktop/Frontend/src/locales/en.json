@@ -406,7 +406,7 @@
   "hub.prepare_failed": "No installation could be prepared. Review the results below.",
   "hub.review_ready": "Review the skills before installing. Nothing has been written yet.",
   "hub.review_changed": "The review or local files have changed. Review the installation again.",
-  "hub.finished": "Finished. Local conflicts were preserved; downloaded scripts were not executed.",
+  "hub.finished": "Finished. Downloaded scripts were not executed.",
   "hub.recovered": "Recovery completed. You can review an installation now.",
   "hub.select_dependencies": "Select the required dependencies for '{0}' or deselect it.",
   "hub.action.Create": "Create",

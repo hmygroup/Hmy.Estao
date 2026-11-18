@@ -404,7 +404,7 @@ internal sealed class HarnessHubSession : IDisposable
                     IncludeDependencies(skillId);
                     snapshot = HubReviewBuilder.Select(snapshot, closure);
                 }
-                var plan = await _installer.PlanAsync(adapter, snapshot, ct);
+                var plan = await _installer.PlanAsync(adapter, snapshot, ct, replaceSkills: true);
                 _prepared[target.Id] = (adapter, snapshot, plan);
                 var toolReview = HubReviewBuilder.Build(adapter, snapshot, plan);
                 reviews.Add(toolReview with { Artifacts = toolReview.Artifacts.Select(artifact =>
@@ -455,7 +455,7 @@ internal sealed class HarnessHubSession : IDisposable
                 foreach (var file in prepared.Plan.Files.Where(f => ids.Contains(f.ArtifactId)))
                     if (!written.Contains(Path.GetFullPath(file.Path)) && InstallerPaths.FileHash(file.Path) != file.BeforeHash)
                         throw new IOException("Local files changed after review. Review this tool again.").WithUserMessage("hub.review_changed");
-                var plan = await _installer.PlanAsync(prepared.Adapter, snapshot, ct);
+                var plan = await _installer.PlanAsync(prepared.Adapter, snapshot, ct, replaceSkills: true);
                 var result = await _installer.ApplyAsync(prepared.Adapter, plan, preserveConflicts: true, Progress(), ct);
                 foreach (var file in plan.Files.Where(f => f.Action is InstallAction.Create or InstallAction.Update or InstallAction.Merge))
                     written.Add(Path.GetFullPath(file.Path));
@@ -467,7 +467,7 @@ internal sealed class HarnessHubSession : IDisposable
             Update(s => s with { Results = results.ToArray() });
         }
         _prepared.Clear();
-        Update(s => s with { Review = null, Progress = "Finished. Local conflicts were preserved; downloaded scripts were not executed.", ProgressMessage = new("hub.finished") });
+        Update(s => s with { Review = null, Progress = "Finished. Downloaded scripts were not executed.", ProgressMessage = new("hub.finished") });
         await UpdateToolsAsync(ct);
         await UpdateLocalInventoryAsync(ct, skillDirectories);
     }
