@@ -81,6 +81,6 @@ test('non-HMY installed MCP offers Uninstall without a catalog or repository con
   const html = render('mcp', tools, true, HubSkillBrowser, false);
   assert.match(html, /class="secondary">Uninstall<\/button>/);
   assert.doesNotMatch(html, />Install<\/button>|>Update<\/button>|Source folder/);
-  assert.match(html, /identifiable application files/);
+  assert.doesNotMatch(html, /identifiable application files|Shared runtimes and unrelated files|Tool logos show item status/);
   assert.match(html, /aria-label="Install target"/);
 });

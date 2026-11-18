@@ -83,7 +83,6 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
       </div>
       {selected && <SkillDetails key={selected.id} skill={selected} tools={tools} connected={state?.connected === true} busy={busy} run={run} language={language} catalogCategories={catalogCategories} catalogDefaultLanguage={state?.catalogDefaultLanguage} />}
     </div>
-    <p className="hub-legend">{t("hub.logo_legend")}</p>
   </section>;
 }
 
@@ -153,7 +152,6 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
         {installed && <button type="button" className="secondary" disabled={busy || skill.occurrences.some(item => item.error && (!effectiveTarget || item.toolId === effectiveTarget))}
           onClick={() => { if (window.confirm(t("hub.package_uninstall_confirm", skill.name))) void run({ action: "uninstall-package", skillId: skill.id, ...(!isCli && effectiveTarget ? { harnessId: effectiveTarget } : {}) }); }}>{t("hub.uninstall_package")}</button>}
       </div>
-      {!skill.inLibrary && <p className="hub-helper">{t("hub.package_uninstall_hint")}</p>}
     </> : <>
       <div className="hub-skill-actions">
         <button type="button" className="secondary" disabled={busy || !connected} onClick={() => void run({ action: "export-item", skillId: skill.id })}>{t("hub.export_item")}</button>
