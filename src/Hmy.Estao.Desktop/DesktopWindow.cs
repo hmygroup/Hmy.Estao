@@ -41,6 +41,7 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
             await OnUiAsync(state, ct)));
         if (view == "settings")
         {
+            WindowState = FormWindowState.Maximized;
             if (providerSignIn is not null)
                 _handlers.Add(Messages.Handle(DesktopContracts.ProviderSignIn, async (request, ct) =>
                     await OnUiCommandAsync(() => providerSignIn(request), ct)));
