@@ -13,8 +13,19 @@ public sealed class GitHubAccessException(string message, HttpStatusCode status)
     public HttpStatusCode Status { get; } = status;
 }
 
-public sealed class GitHubRepositorySource(HttpClient client)
+public sealed class GitHubRepositorySource
 {
+    private readonly HttpClient _client;
+    private readonly string _localManifestPath;
+
+    public GitHubRepositorySource(HttpClient client) : this(client, Path.Combine(AppContext.BaseDirectory, "hub-manifest.json")) { }
+
+    internal GitHubRepositorySource(HttpClient client, string localManifestPath)
+    {
+        _client = client;
+        _localManifestPath = localManifestPath;
+    }
+
     // Source instances are operation-scoped. Only immutable Git objects are cached,
     // separately for each credential; access checks and mutable refs stay live.
     private readonly ConcurrentDictionary<(string Token, string Path), byte[]> _immutableResponses = new();
@@ -44,19 +55,11 @@ public sealed class GitHubRepositorySource(HttpClient client)
         using var listing = await GetAsync($"repos/{Repository}/git/trees/{tree}?recursive=1", token, ct).ConfigureAwait(false);
         if (listing.RootElement.GetProperty("truncated").GetBoolean()) throw new InvalidDataException("GitHub returned an incomplete source tree.");
         var entries = ReadTreeEntries(listing.RootElement.GetProperty("tree"));
-        var manifestEntry = entries.SingleOrDefault(e => e.Path == "hub-manifest.json");
         ValidatedCatalog? catalog = null;
         string? catalogError = null;
         try
         {
-            var localManifestPath = Path.Combine(AppContext.BaseDirectory, "hub-manifest.json");
-            if (File.Exists(localManifestPath))
-                catalog = HubCatalogContract.Read(await File.ReadAllBytesAsync(localManifestPath, ct).ConfigureAwait(false), entries);
-            else
-            {
-                if (manifestEntry is null) throw new InvalidDataException("hub-manifest.json is missing.");
-                catalog = HubCatalogContract.Read(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false), entries);
-            }
+            catalog = await ReadSkillCatalogAsync(entries, token, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException)
         { catalogError = ex.Message; }
@@ -145,11 +148,9 @@ public sealed class GitHubRepositorySource(HttpClient client)
         using var listing = await GetAsync($"repos/{Repository}/git/trees/{tree}?recursive=1", token, ct).ConfigureAwait(false);
         if (listing.RootElement.GetProperty("truncated").GetBoolean()) throw new InvalidDataException("GitHub returned an incomplete source tree.");
         var entries = ReadTreeEntries(listing.RootElement.GetProperty("tree"));
-        var manifestEntry = entries.SingleOrDefault(e => e.Path == "hub-manifest.json");
         ValidatedCatalog? catalog = null;
-        if (manifestEntry is not null)
-            try { catalog = HubCatalogContract.Read(await BlobAsync(manifestEntry, token, ct).ConfigureAwait(false), entries); }
-            catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException) { }
+        try { catalog = await ReadSkillCatalogAsync(entries, token, ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException) { }
         var coverage = new List<CoverageItem>();
         var files = new List<PreparedFile>();
         var artifacts = new List<PreparedArtifact>();
@@ -239,6 +240,16 @@ public sealed class GitHubRepositorySource(HttpClient client)
         return await BlobAsync(source, token, cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task<ValidatedCatalog> ReadSkillCatalogAsync(IReadOnlyList<SourceEntry> entries, string token, CancellationToken ct)
+    {
+        if (File.Exists(_localManifestPath))
+            return HubCatalogContract.Read(await File.ReadAllBytesAsync(_localManifestPath, ct).ConfigureAwait(false), entries);
+
+        var manifest = entries.SingleOrDefault(entry => entry.Path == "hub-manifest.json")
+            ?? throw new InvalidDataException("hub-manifest.json is missing.");
+        return HubCatalogContract.Read(await BlobAsync(manifest, token, ct).ConfigureAwait(false), entries);
+    }
+
     private static void AddDependencies(HubCatalogItem item, ValidatedCatalog catalog, List<HubCatalogItem> selected)
     {
         if (selected.Any(existing => existing.Id == item.Id)) return;
@@ -319,7 +330,7 @@ public sealed class GitHubRepositorySource(HttpClient client)
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
             HttpResponseMessage response;
-            try { response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false); }
+            try { response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false); }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             { throw new TimeoutException("GitHub no respondió dentro del tiempo permitido. Reintenta la operación.").WithUserMessage("error.network"); }
             catch (HttpRequestException) when (attempt < 2)

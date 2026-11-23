@@ -17,6 +17,7 @@ internal sealed class ProviderOverlay : Form
     private const int ProviderPadding = 6;
     private const int Gap = 6;
     private const int ProviderGap = 10;
+    private const int CircleSize = 18;
     private readonly Font _regular = new("Segoe UI", 8.5F);
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 100 };
     private readonly Dictionary<string, Bitmap> _icons = [];
@@ -85,25 +86,29 @@ internal sealed class ProviderOverlay : Form
         if (_config is null) return;
         using var graphics = CreateGraphics();
         using var format = MeasureFormat();
+        var overlay = _config.TaskbarOverlay;
+        var circleWidth = overlay.ShowCircle ? CircleSize : 0;
         _layouts = _config.Providers.Where(p => p.Enabled == true && ProviderCatalog.IsSupported(p.Id)
-            && (_config.TaskbarOverlay.ProviderIds.Count == 0 || _config.TaskbarOverlay.ProviderIds.Contains(p.Id)))
+            && (overlay.ProviderIds.Count == 0 || overlay.ProviderIds.Contains(p.Id)))
             .Select(p =>
             {
                 var snapshot = _snapshots.FirstOrDefault(s => s.Provider == p.Id);
                 var window = snapshot?.Windows.FirstOrDefault();
                 var title = ProviderCatalog.DisplayName(p.Id);
                 var percentage = window?.PercentUsed is double value ? Math.Clamp(value, 0, 1).ToString("P0", DesktopLocalization.Culture) : "—";
-                var reset = UsagePresentation.Reset(window?.ResetAt);
+                var reset = overlay.ShowResetTime ? UsagePresentation.Reset(window?.ResetAt) : null;
                 var percentageWidth = Measure(percentage, _regular);
-                var resetWidth = Measure(reset, _regular);
-                // Logo-only identity, followed by the three fixed usage indicators.
-                // Keep the provider name in accessibility text, not in the painted rail.
-                var width = ProviderPadding * 2 + 20 + percentageWidth + 18 + resetWidth + Gap * 3;
+                var resetWidth = reset is null ? 0 : Measure(reset, _regular);
+                var width = ProviderPadding * 2 + 20 + Gap + percentageWidth;
+                if (circleWidth > 0) width += Gap + circleWidth;
+                if (resetWidth > 0) width += Gap + resetWidth;
                 return new ProviderLayout(p.Id, title, percentage, reset, window?.PercentUsed,
-                    percentageWidth, resetWidth, width);
+                    percentageWidth, circleWidth, resetWidth, width);
             }).ToList();
         _lastLayout = Environment.TickCount64;
-        AccessibleDescription = string.Join("; ", _layouts.Select(p => DesktopLocalization.Text("native.accessible_usage", p.Title, p.Percentage, p.Reset)));
+        AccessibleDescription = string.Join("; ", _layouts.Select(p => p.Reset is null
+            ? DesktopLocalization.Text("native.accessible_usage_without_reset", p.Title, p.Percentage)
+            : DesktopLocalization.Text("native.accessible_usage", p.Title, p.Percentage, p.Reset)));
         return;
 
         int Measure(string text, Font font) => Math.Max(1, (int)Math.Ceiling(graphics.MeasureString(text, font, int.MaxValue, format).Width));
@@ -134,14 +139,17 @@ internal sealed class ProviderOverlay : Form
             if (icon is not null) g.DrawImage(icon, x, (Height - 20) / 2, 20, 20);
             x += 20 + Gap;
             DrawText(p.Percentage, _regular, p.PercentageWidth, _palette.TextMuted);
-            var custom = p.Used is double used ? UsageColorCatalog.ColorFor(_config?.UsageAlerts, used) : null;
-            var color = custom is null ? _palette.Accent : ColorTranslator.FromHtml(custom);
-            var donut = new Rectangle(x, (Height - 14) / 2 - 1, 18, 18);
-            using (var track = new Pen(Color.FromArgb(75, color), 3)) g.DrawArc(track, donut, 0, 360);
-            if (p.Used is double fraction)
-                using (var meter = new Pen(color, 3)) g.DrawArc(meter, donut, -90, (float)Math.Clamp(fraction, 0, 1) * 360);
-            x += 18 + Gap;
-            DrawText(p.Reset, _regular, p.ResetWidth, _palette.TextMuted);
+            if (p.CircleWidth > 0)
+            {
+                var custom = p.Used is double used ? UsageColorCatalog.ColorFor(_config?.UsageAlerts, used) : null;
+                var color = custom is null ? _palette.Accent : ColorTranslator.FromHtml(custom);
+                var donut = new Rectangle(x, (Height - 14) / 2 - 1, CircleSize, CircleSize);
+                using (var track = new Pen(Color.FromArgb(75, color), 3)) g.DrawArc(track, donut, 0, 360);
+                if (p.Used is double fraction)
+                    using (var meter = new Pen(color, 3)) g.DrawArc(meter, donut, -90, (float)Math.Clamp(fraction, 0, 1) * 360);
+                x += p.CircleWidth + Gap;
+            }
+            if (p.Reset is { } reset) DrawText(reset, _regular, p.ResetWidth, _palette.TextMuted);
             left += p.Width;
             if (i < _layouts.Count - 1)
             {
@@ -367,8 +375,8 @@ internal sealed class ProviderOverlay : Form
         base.Dispose(disposing);
     }
 
-    private sealed record ProviderLayout(string Id, string Title, string Percentage, string Reset, double? Used,
-        int PercentageWidth, int ResetWidth, int Width);
+    private sealed record ProviderLayout(string Id, string Title, string Percentage, string? Reset, double? Used,
+        int PercentageWidth, int CircleWidth, int ResetWidth, int Width);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindow(string className, string? windowName);

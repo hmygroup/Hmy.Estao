@@ -87,6 +87,37 @@ public sealed class HarnessSourceTests
     }
 
     [Fact]
+    public async Task discovery_and_batch_preparation_use_the_same_local_test_catalog()
+    {
+        var fixture = new Fixture();
+        fixture.Skill("skills/local", "local");
+        fixture.Skill("skills/remote", "remote");
+        fixture.Catalog(CatalogFor("remote"));
+
+        var localManifest = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllBytesAsync(localManifest, JsonSerializer.SerializeToUtf8Bytes(CatalogFor("local"), InstallerJson.Options));
+            using var client = fixture.Client();
+            var source = new GitHubRepositorySource(client, localManifest);
+            var library = await source.DiscoverSkillsAsync("fake-token");
+            Assert.Null(library.CatalogError);
+            Assert.Equal("local", Assert.Single(library.Skills, skill => skill.Curated).Id);
+
+            var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
+            var prepared = await source.PrepareAsync("fake-token", adapter, reference: library.Commit);
+            Assert.Equal("local", Assert.Single(prepared.Artifacts!).Id);
+        }
+        finally { File.Delete(localManifest); }
+
+        static HubCatalog CatalogFor(string id) => new()
+        {
+            SchemaVersion = 2, DefaultLanguage = "en", Categories = [],
+            Skills = [new() { Id = id, Path = "skills/" + id, Categories = "" }]
+        };
+    }
+
+    [Fact]
     public async Task unlisted_skills_also_read_translations_from_frontmatter()
     {
         var fixture = new Fixture();

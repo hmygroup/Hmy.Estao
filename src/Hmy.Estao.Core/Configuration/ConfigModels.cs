@@ -224,6 +224,12 @@ public sealed class TaskbarOverlayConfig
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;
 
+    [JsonPropertyName("showResetTime")]
+    public bool ShowResetTime { get; set; } = true;
+
+    [JsonPropertyName("showCircle")]
+    public bool ShowCircle { get; set; } = true;
+
     // Empty means "all enabled providers". Keeping that as the default makes
     // newly added providers visible without requiring a config migration.
     [JsonPropertyName("providerIds")]

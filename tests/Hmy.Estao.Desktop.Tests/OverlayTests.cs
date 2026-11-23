@@ -75,6 +75,26 @@ public sealed class OverlayTests
     });
 
     [Fact]
+    public void HidingResetTimeAlsoRemovesItFromAccessibleUsage() => OnSta(() =>
+    {
+        using var overlay = new ProviderOverlay();
+        var config = ConfigStore.Normalize(ConfigStore.CreateDefaultConfig());
+        config.TaskbarOverlay.Enabled = false;
+        var reset = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var snapshot = new UsageSnapshot("codex", "Codex", "test", DateTimeOffset.UtcNow,
+            [new RateWindow("weekly", "Weekly", .42, reset)]);
+        var resetText = UsagePresentation.Reset(reset);
+
+        overlay.UpdateUsage(config, [snapshot]);
+        Assert.Contains(resetText, overlay.AccessibleDescription);
+
+        config.TaskbarOverlay.ShowResetTime = false;
+        overlay.UpdateUsage(config, [snapshot]);
+        Assert.DoesNotContain(resetText, overlay.AccessibleDescription);
+        Assert.Contains("42", overlay.AccessibleDescription);
+    });
+
+    [Fact]
     public void DisabledProvidersNeverAppearInOverlay() => OnSta(() =>
     {
         using var overlay = new ProviderOverlay();

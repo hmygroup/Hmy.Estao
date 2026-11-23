@@ -21,8 +21,9 @@ const source = compile('../src/HubSkillBrowser.tsx')
   .replaceAll('"react"', JSON.stringify(import.meta.resolve('react')))
   .replaceAll('"./hubTypes"', JSON.stringify(types)).replaceAll('"./i18n"', JSON.stringify(i18n));
 const { default: HubSkillBrowser } = await import(moduleUrl(source));
-// Render the library's initial state as well as the default Installed view.
+// Render each tab as the initial view for static markup checks.
 const { default: LibraryBrowser } = await import(moduleUrl(source.replace('useState("installed")', 'useState("library")')));
+const { default: OtherBrowser } = await import(moduleUrl(source.replace('useState("installed")', 'useState("other")')));
 
 const render = (itemType, tools, installed = true, Browser = HubSkillBrowser, curated = true) => renderToStaticMarkup(React.createElement(Browser, {
   state: { busy: false, tools, skills: [{ id: 'utility', name: 'Utility', description: 'Example',
@@ -30,6 +31,25 @@ const render = (itemType, tools, installed = true, Browser = HubSkillBrowser, cu
     occurrences: installed ? [{ toolId: itemType === 'cli' ? 'global' : 'claude', path: 'C:\\utility.exe', shared: itemType === 'cli', hash: null }] : [],
   }] }, busy: false, run: async () => {},
 }));
+
+test('only HMY renders Install all beside GitHub and requires an available catalog skill', () => {
+  const tools = [{ id: 'claude', name: 'Claude Code', detected: true, status: '', error: null }];
+  const skill = { id: 'sample', name: 'Sample', description: 'Example', itemType: 'skill',
+    curated: true, inLibrary: true, installable: true, compatibleTools: ['claude'], occurrences: [] };
+  const state = { connected: true, libraryLoaded: true, tools, skills: [skill] };
+  const renderView = (Browser, overrides = {}, busy = false) => renderToStaticMarkup(React.createElement(Browser, {
+    state: { ...state, ...overrides }, busy, run: async () => {},
+  }));
+
+  assert.match(renderView(LibraryBrowser), /class="hub-catalog-actions"><button type="button" class="primary">Install all<\/button><button type="button" class="secondary">GitHub ↗<\/button>/);
+  for (const Browser of [HubSkillBrowser, OtherBrowser])
+    assert.doesNotMatch(renderView(Browser), />Install all<\/button>|>GitHub ↗<\/button>/);
+  for (const overrides of [
+    { connected: false }, { libraryLoaded: false }, { tools: [] },
+    { skills: [{ ...skill, installable: false }] }, { skills: [{ ...skill, itemType: 'instruction' }] },
+  ]) assert.match(renderView(LibraryBrowser, overrides), /class="primary" disabled="">Install all<\/button>/);
+  assert.match(renderView(LibraryBrowser, {}, true), /class="primary" disabled="">Install all<\/button>/);
+});
 
 test('installed CLI renders Update and Uninstall without any harness or target selector', () => {
   const html = render('cli', []);

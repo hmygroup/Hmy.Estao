@@ -17,6 +17,8 @@ public sealed class ConfigStoreTests
         Assert.Contains(config.Providers, provider => provider.Id == "codex" && provider.Enabled == true);
         Assert.Contains(config.Providers, provider => provider.Id == "claude");
         Assert.True(config.TaskbarOverlay.MoveEnabled);
+        Assert.True(config.TaskbarOverlay.ShowResetTime);
+        Assert.True(config.TaskbarOverlay.ShowCircle);
         Assert.Equal(["percentage", "pie", "reset"], config.TaskbarOverlay.Controls);
         Assert.All(config.Providers, provider => Assert.False(provider.UsageColors.Enabled));
         Assert.Equal(HarnessCatalog.All.Length, config.HarnessManager.Profiles.Count);
@@ -145,6 +147,35 @@ public sealed class ConfigStoreTests
         Assert.Equal(9D, codex.Pacing.DailyTargetPercent);
         var claude = Assert.Single(config.Providers, provider => provider.Id == "claude");
         Assert.Equal(22D, claude.Pacing.DailyTargetPercent);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task taskbar_overlay_indicators_default_to_visible_in_legacy_config_and_round_trip(bool showResetTime, bool showCircle)
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(path, """{"taskbarOverlay":{"controls":["percentage"]}}""");
+            var store = new ConfigStore(path);
+            var config = await store.LoadAsync();
+            Assert.True(config.TaskbarOverlay.ShowResetTime);
+            Assert.True(config.TaskbarOverlay.ShowCircle);
+
+            config.TaskbarOverlay.ShowResetTime = showResetTime;
+            config.TaskbarOverlay.ShowCircle = showCircle;
+            await store.SaveAsync(config);
+
+            var saved = await store.LoadAsync();
+            Assert.Equal(showResetTime, saved.TaskbarOverlay.ShowResetTime);
+            Assert.Equal(showCircle, saved.TaskbarOverlay.ShowCircle);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]

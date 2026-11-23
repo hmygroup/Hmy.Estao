@@ -220,7 +220,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             .ToDictionary(p => p.Id, p => _factory.Create(p.Id).GetAccounts(p)
                 .Select((a, i) => new AccountChoice(i, a.Label, a.LabelMessage)).ToList());
         return new DesktopState(view, _selectedProvider, providers, _config.UsageAlerts!, _config.Refresh,
-            _config.TaskbarOverlay.Enabled, _config.TaskbarOverlay.ProviderIds, StartupManager.Enabled,
+            _config.TaskbarOverlay.Enabled, _config.TaskbarOverlay.ProviderIds,
+            _config.TaskbarOverlay.ShowResetTime, _config.TaskbarOverlay.ShowCircle, StartupManager.Enabled,
             _service.LastSnapshots, view == "popover" ? _service.History : [], accounts, _status,
             DesktopThemeCatalog.Resolve(_config.Theme).Id, view == "settings" ? _providerSignIn : null, DesktopLocalization.Preference(_config.Language), _statusMessage, DesktopLocalization.Language,
             view == "popover" ? _service.LastSnapshots.SelectMany(s => UsageChartBuilder.Build(s, _service.History,
@@ -269,6 +270,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             config.Refresh = update.Refresh;
             config.TaskbarOverlay.Enabled = update.OverlayEnabled;
             config.TaskbarOverlay.ProviderIds = update.OverlayProviderIds;
+            config.TaskbarOverlay.ShowResetTime = update.OverlayShowResetTime ?? config.TaskbarOverlay.ShowResetTime;
+            config.TaskbarOverlay.ShowCircle = update.OverlayShowCircle ?? config.TaskbarOverlay.ShowCircle;
             var errors = ConfigValidation.Validate(config);
             if (errors.Count > 0)
             {

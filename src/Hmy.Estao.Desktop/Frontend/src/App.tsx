@@ -144,6 +144,10 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
         {page === "overlay" && <>
           <Section title={t("overlay.title")} description={t("overlay.details")}>
             <Toggle label={t("overlay.show")} checked={draft.overlayEnabled} onChange={overlayEnabled => change({ overlayEnabled })} />
+            <Toggle label={t("overlay.show_reset_time")} checked={draft.overlayShowResetTime}
+              onChange={overlayShowResetTime => change({ overlayShowResetTime })} />
+            <Toggle label={t("overlay.show_circle")} checked={draft.overlayShowCircle}
+              onChange={overlayShowCircle => change({ overlayShowCircle })} />
           </Section>
           <Section title={t("overlay.providers")} description={t("overlay.providers.description")}>
             {draft.providers.map(p => <Toggle key={p.id} label={p.name + (!p.enabled ? t("provider.disabled_suffix") : "")} checked={draft.overlayProviderIds.includes(p.id)}

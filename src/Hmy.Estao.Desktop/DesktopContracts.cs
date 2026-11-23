@@ -20,13 +20,15 @@ internal sealed record ProviderSettings(
     PacingConfig Pacing, bool HasApiKey, bool HasCookie, string? ApiKey = null,
     string? NewCookie = null, bool ClearApiKey = false, bool ClearCookie = false, CodexAccountStatus? Authentication = null);
 internal sealed record SettingsUpdate(List<ProviderSettings> Providers, UsageColorConfig UsageAlerts,
-    RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds, bool LaunchAtSignIn, string Theme, string Language = "system");
+    RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds, bool LaunchAtSignIn, string Theme, string Language = "system",
+    bool? OverlayShowResetTime = null, bool? OverlayShowCircle = null);
 internal sealed record AccountChoice(int Index, string Label, UserMessage? LabelMessage = null);
 internal sealed record CodexAccountStatus(bool? SignedIn, string Message, UserMessage? MessageInfo = null, bool Checking = false);
 internal sealed record ProviderSignInState(string Provider, bool Pending, string? UserCode, string Message, bool IsError = false,
     UserMessage? MessageInfo = null, string Operation = "signin");
 internal sealed record DesktopState(string View, string? SelectedProvider, List<ProviderSettings> Providers,
     UsageColorConfig UsageAlerts, RefreshConfig Refresh, bool OverlayEnabled, List<string> OverlayProviderIds,
+    bool OverlayShowResetTime, bool OverlayShowCircle,
     bool LaunchAtSignIn, IReadOnlyList<UsageSnapshot> Snapshots, IReadOnlyList<UsageHistoryPoint> History,
     Dictionary<string, List<AccountChoice>> Accounts, string? Status, string Theme, ProviderSignInState? ProviderSignIn = null,
     string Language = "system", UserMessage? StatusMessage = null, string EffectiveLanguage = "en",

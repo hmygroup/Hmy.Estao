@@ -20,6 +20,9 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
   const selected = skills.find(skill => skill.id === selectedId) ?? skills[0];
   const changeView = (next: SkillView) => { setView(next); setSelectedId(undefined); setCategory(""); setType("all"); };
   const catalogFilter = view === "library";
+  const canInstallAll = !busy && state?.connected && state.libraryLoaded && state.skills?.some(skill =>
+    isCurated(skill) && skill.inLibrary && itemType(skill) === "skill" && skill.installable &&
+    tools.some(tool => skill.compatibleTools.includes(tool.id)));
   const progress = message(state?.progressMessage) || t("hub.working");
 
   return <section className="hub-browser" aria-label={t("hub.browser")}>
@@ -58,7 +61,10 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
           <option value="">{t("hub.category_all")}</option>{categories.map(value => <option key={value} value={value}>{localizedCategory(value, catalogCategories, language, state?.catalogDefaultLanguage)}</option>)}
           <option value="__uncategorized">{t("hub.category_uncategorized")}</option>
       </select></label>
-      {catalogFilter && <button type="button" className="secondary hub-repository-button" onClick={() => void run({ action: "open-repo" })}>{t("hub.open_repo")}</button>}
+      {catalogFilter && <div className="hub-catalog-actions">
+        <button type="button" className="primary" disabled={!canInstallAll} onClick={() => void run({ action: "review" })}>{t("hub.install_all")}</button>
+        <button type="button" className="secondary" onClick={() => void run({ action: "open-repo" })}>{t("hub.open_repo")}</button>
+      </div>}
       </div>
     </div>
     {catalogFilter && showHubConnect(state) && <div className="hub-auth-notice" role="status">

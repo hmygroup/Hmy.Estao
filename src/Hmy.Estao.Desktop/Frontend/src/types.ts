@@ -35,7 +35,8 @@ export interface SettingsUpdate {
   theme: string;
   language?: string;
   providers: Provider[]; usageAlerts: UsageAlerts; refresh: { enabled: boolean; intervalMinutes: number };
-  overlayEnabled: boolean; overlayProviderIds: string[]; launchAtSignIn: boolean;
+  overlayEnabled: boolean; overlayProviderIds: string[]; overlayShowResetTime: boolean; overlayShowCircle: boolean;
+  launchAtSignIn: boolean;
 }
 export interface DesktopState extends SettingsUpdate {
   charts?: UsageChart[] | null;
