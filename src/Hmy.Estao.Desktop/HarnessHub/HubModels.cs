@@ -30,8 +30,7 @@ internal sealed record HubState(bool Busy, string Phase, string Progress, bool C
     IReadOnlyList<HubSkill>? Skills = null, string? LibraryCommit = null, string? LibraryError = null, bool LibraryLoaded = false,
     IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? CatalogCategories = null,
     string CatalogDefaultLanguage = "en", string? CatalogError = null, HubInstallProgress? InstallProgress = null);
-// Completed catalog items for a batch installation. Skill items are installed per tool together,
-// so Completed may be fractional while their tools are applied one after another.
+// Completed includes items with failed outcomes once all their applicable tools have finished.
 internal sealed record HubInstallProgress(int Completed, int Total);
 internal sealed record HubSkill(string Id, string Name, string Description, bool InLibrary, bool Installable,
     IReadOnlyList<string> CompatibleTools, IReadOnlyList<HubSkillOccurrence> Occurrences, string? Source = null, string? Issue = null,
