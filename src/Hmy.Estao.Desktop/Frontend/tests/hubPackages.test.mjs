@@ -16,10 +16,13 @@ export const currentLanguage = () => 'en';
 export const t = (key, ...args) => (translations[key] ?? key).replace(/\\{(\\d+)\\}/g, (_, i) => String(args[i]));
 export const plural = (key, count) => t(key + (count === 1 ? '_one' : '_other'), count);
 export const message = () => '';`);
+// The in-page Liquid Glass dialog is replaced by a stub the tests answer.
+const dialog = moduleUrl(`export const confirmDialog = async options => globalThis.__glassConfirm ? globalThis.__glassConfirm(options) : false;`);
 const source = compile('../src/HubSkillBrowser.tsx')
   .replaceAll('"react/jsx-runtime"', JSON.stringify(import.meta.resolve('react/jsx-runtime')))
   .replaceAll('"react"', JSON.stringify(import.meta.resolve('react')))
-  .replaceAll('"./hubTypes"', JSON.stringify(types)).replaceAll('"./i18n"', JSON.stringify(i18n));
+  .replaceAll('"./hubTypes"', JSON.stringify(types)).replaceAll('"./i18n"', JSON.stringify(i18n))
+  .replaceAll('"./GlassDialog"', JSON.stringify(dialog));
 const { default: HubSkillBrowser } = await import(moduleUrl(source));
 // Render each tab as the initial view for static markup checks.
 const { default: LibraryBrowser } = await import(moduleUrl(source.replace('useState("installed")', 'useState("library")')));
@@ -72,8 +75,8 @@ test('the HMY button confirms the exact selection and cancelling sends no comman
   const commands = [];
   const prompts = [];
   let accept = false;
-  const originalWindow = globalThis.window;
-  globalThis.window = { confirm: prompt => { prompts.push(prompt); return accept; } };
+  const titles = [];
+  globalThis.__glassConfirm = options => { prompts.push(options.message); titles.push(options.title); return accept; };
   function buttons(node) {
     if (Array.isArray(node)) return node.flatMap(buttons);
     if (!node?.props) return [];
@@ -83,26 +86,27 @@ test('the HMY button confirms the exact selection and cancelling sends no comman
     beginRender();
     return buttons(Browser({ state, busy: false, run: async command => { commands.push(command); } }));
   }
-  const click = (label, event = {}) => renderButtons().find(button => button.children === label).onClick(event);
+  const settle = () => new Promise(resolve => setTimeout(resolve));
+  const click = async (label, event = {}) => { renderButtons().find(button => button.children === label).onClick(event); await settle(); };
   const clickRow = (index, event = {}) => renderButtons().filter(button => button.className?.startsWith('hub-skill-row'))[index].onClick(event);
   try {
-    click('Install all...');
+    await click('Install all...');
     assert.match(prompts[0], /Install 3 HMY catalog items\?/);
+    assert.equal(titles[0], 'Install from the HMY catalog');
     assert.deepEqual(commands, []);
 
     clickRow(0);
     clickRow(2, { ctrlKey: true });
     accept = true;
-    click('Install selected...');
+    await click('Install selected...');
     assert.match(prompts[1], /Install 2 HMY catalog items\?/);
     assert.deepEqual(commands[0], { action: 'install-catalog', itemIds: ['Alpha', 'Gamma'], catalogCommit: 'commit' });
 
     clickRow(1);
-    click('Install all...');
+    await click('Install all...');
     assert.deepEqual(commands[1].itemIds, ['Alpha', 'Beta', 'Gamma']);
   } finally {
-    if (originalWindow === undefined) delete globalThis.window;
-    else globalThis.window = originalWindow;
+    delete globalThis.__glassConfirm;
   }
 });
 

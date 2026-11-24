@@ -1,6 +1,7 @@
 import { useState, type MouseEvent } from "react";
 import { catalogInstallItems, detectedTools, filterSkills, hasToolInventory, isCurated, itemType, localizedCategory, localizedDescription, selectCatalogItems, showHubConnect, skillCategories, skillToolStatus, type CatalogItemType, type HubCommand, type HubSkill, type HubState, type HubTool, type SkillStatus, type SkillView } from "./hubTypes";
 import { currentLanguage, t, plural, message } from "./i18n";
+import { confirmDialog } from "./GlassDialog";
 
 export default function HubSkillBrowser({ state, busy, run }: { state?: HubState; busy: boolean; run: (command: HubCommand) => Promise<void> }) {
   const [view, setView] = useState<SkillView>("installed");
@@ -40,9 +41,11 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
     }
     setSelectedId(id);
   };
-  const installCatalog = () => {
-    if (!canInstall || !catalogCommit || !window.confirm(plural("hub.confirm_catalog_install", installItems.length))) return;
-    void run({ action: "install-catalog", itemIds: installItems.map(item => item.id), catalogCommit });
+  const installCatalog = async () => {
+    if (!canInstall || !catalogCommit) return;
+    const confirmed = await confirmDialog({ title: t("hub.confirm_catalog_install_title"),
+      message: plural("hub.confirm_catalog_install", installItems.length), confirmLabel: t("hub.install_package") });
+    if (confirmed) void run({ action: "install-catalog", itemIds: installItems.map(item => item.id), catalogCommit });
   };
   const progress = message(state?.progressMessage) || t("hub.working");
 
@@ -83,7 +86,7 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
           <option value="__uncategorized">{t("hub.category_uncategorized")}</option>
       </select></label>
       {catalogFilter && <div className="hub-catalog-actions">
-        <button type="button" className="primary" disabled={!canInstall} onClick={installCatalog}>{t(selection ? "hub.install_catalog_selected" : "hub.install_all")}</button>
+        <button type="button" className="primary" disabled={!canInstall} onClick={() => void installCatalog()}>{t(selection ? "hub.install_catalog_selected" : "hub.install_all")}</button>
         <button type="button" className="secondary" onClick={() => void run({ action: "open-repo" })}>{t("hub.open_repo")}</button>
       </div>}
       </div>
@@ -179,7 +182,7 @@ function SkillDetails({ skill, tools, connected, busy, run, language, catalogCat
         {skill.inLibrary && skill.installable && <button type="button" className="primary" disabled={busy || (!isCli && !compatible.length)}
           onClick={() => void run({ action: "install-package", skillId: skill.id, ...(!isCli && effectiveTarget ? { harnessId: effectiveTarget } : {}) })}>{t(installed ? "hub.update_package" : "hub.install_package")}</button>}
         {installed && <button type="button" className="secondary" disabled={busy || skill.occurrences.some(item => item.error && (!effectiveTarget || item.toolId === effectiveTarget))}
-          onClick={() => { if (window.confirm(t("hub.package_uninstall_confirm", skill.name))) void run({ action: "uninstall-package", skillId: skill.id, ...(!isCli && effectiveTarget ? { harnessId: effectiveTarget } : {}) }); }}>{t("hub.uninstall_package")}</button>}
+          onClick={async () => { if (await confirmDialog({ title: t("hub.package_uninstall_title", skill.name), message: t("hub.package_uninstall_confirm", skill.name), confirmLabel: t("hub.uninstall_package"), tone: "danger" })) void run({ action: "uninstall-package", skillId: skill.id, ...(!isCli && effectiveTarget ? { harnessId: effectiveTarget } : {}) }); }}>{t("hub.uninstall_package")}</button>}
       </div>
     </> : <>
       <div className="hub-skill-actions">

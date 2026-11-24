@@ -67,7 +67,7 @@ test('install and uninstall share equal-width controls, with target for skills a
 test('MCP and CLI packages have install/update and confirmed uninstall actions', () => {
   assert.match(source, /action: "install-package", skillId: skill.id/);
   assert.match(source, /t\(installed \? "hub.update_package" : "hub.install_package"\)/);
-  assert.match(source, /window.confirm\(t\("hub.package_uninstall_confirm", skill.name\)\)/);
+  assert.match(source, /await confirmDialog\(\{ title: t\("hub.package_uninstall_title", skill.name\), message: t\("hub.package_uninstall_confirm", skill.name\)[^}]*tone: "danger" \}\)\) void run\(\{ action: "uninstall-package"/);
   assert.match(source, /action: "uninstall-package", skillId: skill.id/);
   assert.match(source, /!isCli && effectiveTarget \? \{ harnessId: effectiveTarget \}/);
   assert.match(source, /hub.cli_global_hint/);
