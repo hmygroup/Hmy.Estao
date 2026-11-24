@@ -169,7 +169,7 @@
   "hub.install_all": "Install all...",
   "hub.install_catalog_selected": "Install selected...",
   "hub.install_progress_label": "Catalog installation progress",
-  "hub.install_progress": "{0} of {1} items installed",
+  "hub.install_progress": "{0} of {1} items processed",
   "hub.confirm_catalog_install_one": "Install {0} HMY catalog item? Any required skill dependencies will be included.",
   "hub.confirm_catalog_install_other": "Install {0} HMY catalog items? Any required skill dependencies will be included.",
   "hub.catalog_install_finished": "Catalog installation finished.",

@@ -65,8 +65,12 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
                 DesktopBranding.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         };
-        KeyPreview = true;
-        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+        // Settings handles Escape in WebView2 so an open confirmation receives it first.
+        if (view != "settings")
+        {
+            KeyPreview = true;
+            KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+        }
     }
 
     public void UpdateLanguage() => Text = $"{DesktopBranding.DisplayName} · {DesktopLocalization.Text(_view == "settings" ? "settings" : "usage")}";

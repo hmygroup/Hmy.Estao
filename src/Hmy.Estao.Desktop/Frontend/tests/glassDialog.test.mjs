@@ -25,8 +25,9 @@ test('the glass dialog is a modal, labelled, keyboard-dismissable <dialog>', () 
   assert.match(dialog, /onCancel=\{event => \{ event\.preventDefault\(\); close\(false\); \}\}/);
   assert.match(dialog, /returnFocus\?\.isConnected\) returnFocus\.focus/);
   // Destructive confirmations start on Cancel; others on the primary action.
-  assert.match(dialog, /className="secondary" autoFocus=\{tone === "danger"\}/);
-  assert.match(dialog, /autoFocus=\{tone !== "danger"\}/);
+  assert.match(dialog, /className="secondary" ref=\{tone === "danger" \? initialFocus : undefined\}/);
+  assert.match(dialog, /ref=\{tone !== "danger" \? initialFocus : undefined\}/);
+  assert.match(dialog, /showModal\(\);\s+initialFocus\.current\?\.focus/);
 });
 
 test('the glass dialog uses theme tokens and honours accessibility media queries', () => {

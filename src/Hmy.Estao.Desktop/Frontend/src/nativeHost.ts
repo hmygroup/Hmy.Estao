@@ -12,6 +12,14 @@ registerWindowControls();
 export function WindowControls() {
   const element = useRef<WindowControlsElement | null>(null);
   useLayoutEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat || event.defaultPrevented || document.querySelector("dialog[open]")) return;
+      element.current?.shadowRoot?.querySelector<HTMLButtonElement>("button:last-child")?.click();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
+  useLayoutEffect(() => {
     const root = element.current?.shadowRoot;
     if (!root) return;
     const labels = () => {

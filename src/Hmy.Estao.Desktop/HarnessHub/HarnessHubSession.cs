@@ -90,7 +90,7 @@ internal sealed class HarnessHubSession : IDisposable
                         state.Tools.Any(tool => tool.Detected && item.CompatibleTools.Contains(tool.Id)))).ToArray();
                 if (catalogItems.Length == 0 || catalogItems.Length != catalogIds.Count)
                     throw new ArgumentException("Select valid installable catalog items.").WithUserMessage("hub.select_catalog_items");
-                Start("installing", ct => InstallCatalogAsync(catalogItems, catalogCommit, ct)); break;
+                Start("installing", ct => InstallCatalogAsync(catalogItems, catalogCommit, ct), catalogItems.Length); break;
             case "install-package":
             case "uninstall-package":
                 var uninstall = command.Action == "uninstall-package";
@@ -148,14 +148,15 @@ internal sealed class HarnessHubSession : IDisposable
         }
     }
 
-    private void Start(string phase, Func<CancellationToken, Task> action)
+    private void Start(string phase, Func<CancellationToken, Task> action, int? catalogItemCount = null)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_state.Busy) throw new InvalidOperationException("A Hub operation is already in progress.").WithUserMessage("hub.busy");
             _state = _state with { Busy = true, Phase = phase, CheckingAuthorization = phase is "checking" or "connecting" or "preparing",
-                Progress = "Working…", Error = null, ErrorMessage = null, DeviceCode = null, ProgressMessage = new("hub.working"), InstallProgress = null };
+                Progress = "Working…", Error = null, ErrorMessage = null, DeviceCode = null, ProgressMessage = new("hub.working"),
+                InstallProgress = catalogItemCount is { } total ? new(0, total) : null };
             _cancellation?.Dispose();
             _cancellation = new();
             var token = _cancellation.Token;
@@ -233,7 +234,6 @@ internal sealed class HarnessHubSession : IDisposable
         for (var slot = 0; slot < initialInstructionSlots; slot++) Prefetch(instructionQueue);
         double skillsCompleted = 0;
         var otherItemsCompleted = 0;
-        ReportProgress();
         try
         {
             if (skills.Length > 0)
@@ -282,10 +282,11 @@ internal sealed class HarnessHubSession : IDisposable
                 catch (Exception exception) when (exception is not OperationCanceledException) { ReportCatalogFailure(item, exception); }
                 finally
                 {
-                    if (!ct.IsCancellationRequested) { otherItemsCompleted++; ReportProgress(); }
                     staged.Remove(index);
                     if (!ct.IsCancellationRequested) Prefetch(item.ItemType == "instruction" ? instructionQueue : packageQueue);
                 }
+                otherItemsCompleted++;
+                ReportProgress();
             }
         }
         finally
