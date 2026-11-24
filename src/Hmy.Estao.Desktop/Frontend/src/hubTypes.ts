@@ -10,7 +10,7 @@ export interface HubToolReview {
   exclusions: { source: string; classification: string; reason: string; fileCount: number }[];
 }
 export interface HubReview { id: string; commit: string; tools: HubToolReview[] }
-export interface HubResult { id: string; name: string; outcome: string; created: number; updated: number; unchanged: number; conflicts: number; error: string | null; errorMessage?: UserMessage }
+export interface HubResult { id: string; name: string; outcome: string; created: number; updated: number; unchanged: number; conflicts: number; error: string | null; errorMessage?: UserMessage; catalogItem?: boolean }
 export interface HubState {
   skills?: HubSkill[] | null; libraryCommit?: string | null; libraryError?: string | null; libraryLoaded?: boolean;
   catalogCategories?: Record<string, Record<string, string>> | null; catalogDefaultLanguage?: string; catalogError?: string | null;
@@ -20,7 +20,7 @@ export interface HubState {
   tools: HubTool[]; review: HubReview | null; results: HubResult[];
   deviceCode: { code: string; verificationUrl: string } | null; error: string | null;
 }
-export interface HubCommand { action: string; harnessId?: string; reviewId?: string; selection?: Record<string, string[]>; skillId?: string }
+export interface HubCommand { action: string; harnessId?: string; reviewId?: string; selection?: Record<string, string[]>; skillId?: string; itemIds?: string[]; catalogCommit?: string }
 
 export interface HubSkillOccurrence { toolId: string; path: string; shared: boolean; hash: string | null; error?: string | null }
 export interface HubSkill {
@@ -46,6 +46,24 @@ export function skillCategories(skill: HubSkill[]): string[] {
   return [...new Set(skill.flatMap(item => item.categories ?? []))].sort((a, b) => a.localeCompare(b));
 }
 export function itemType(skill: HubSkill): string { return skill.itemType || "skill"; }
+export function catalogInstallItems(items: HubSkill[], tools: HubTool[], selected?: string[]): HubSkill[] {
+  const selection = selected && new Set(selected);
+  return items.filter(item => isCurated(item) && item.inLibrary && item.installable &&
+    (!selection || selection.has(item.id)) &&
+    (itemType(item) === "cli" || ["skill", "instruction", "mcp"].includes(itemType(item)) &&
+      tools.some(tool => item.compatibleTools.includes(tool.id))));
+}
+
+export function selectCatalogItems(visible: string[], previous: string[], anchor: string | undefined, clicked: string, shift: boolean, control: boolean): string[] {
+  if (shift) {
+    const start = anchor ? visible.indexOf(anchor) : -1;
+    const end = visible.indexOf(clicked);
+    const range = start < 0 ? [clicked] : visible.slice(Math.min(start, end), Math.max(start, end) + 1);
+    return control ? [...new Set([...previous, ...range])] : range;
+  }
+  return previous.includes(clicked) ? previous.filter(id => id !== clicked) : [...previous, clicked];
+}
+
 export function hasToolInventory(skill: HubSkill): boolean { return ["skill", "mcp", "cli"].includes(itemType(skill)); }
 export function skillToolStatus(skill: HubSkill, tool: HubTool): "present" | "missing" | "unknown" | "unsupported" {
   const occurrences = skill.occurrences.filter(item => item.toolId === tool.id || itemType(skill) === "cli" && item.toolId === "global");

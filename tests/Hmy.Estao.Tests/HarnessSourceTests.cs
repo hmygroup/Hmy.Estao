@@ -399,6 +399,16 @@ public sealed class HarnessSourceTests
     }
 
     [Fact]
+    public async Task malformed_references_are_rejected_before_contacting_github()
+    {
+        using var client = new HttpClient(new Handler(_ => throw new InvalidOperationException("Unexpected GitHub request.")));
+        var source = new GitHubRepositorySource(client);
+        var adapter = new HarnessAdapter("claude", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), _ => null);
+        await Assert.ThrowsAsync<InvalidDataException>(() => source.PrepareAsync("fake-token", adapter, reference: "invalid"));
+        await Assert.ThrowsAsync<InvalidDataException>(() => source.ReadCatalogFileAsync("fake-token", "docs/howto.md", "invalid"));
+    }
+
+    [Fact]
     public async Task rejects_unsafe_tree_and_corrupt_blobs()
     {
         var fixture = new Fixture(); fixture.Skill("skills/a", "a"); fixture.CorruptBlobs = true;

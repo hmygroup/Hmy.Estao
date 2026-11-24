@@ -8,6 +8,12 @@ internal static class HubToolInventory
     public static async Task<IReadOnlyList<HubSkill>> ScanAsync(IEnumerable<string> toolIds,
         Func<string, HarnessAdapter> adapterFactory, IEnumerable<HubSkill> catalog,
         CancellationToken cancellationToken = default, Func<string, string?>? findExecutable = null)
+        => Merge(await ReadAsync(toolIds, adapterFactory, cancellationToken), catalog, cancellationToken, findExecutable);
+
+    internal sealed record Snapshot(Dictionary<string, List<HubSkillOccurrence>> Occurrences, Dictionary<string, string> Failures);
+
+    internal static async Task<Snapshot> ReadAsync(IEnumerable<string> toolIds,
+        Func<string, HarnessAdapter> adapterFactory, CancellationToken cancellationToken)
     {
         var ids = toolIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var occurrences = new Dictionary<string, List<HubSkillOccurrence>>(StringComparer.OrdinalIgnoreCase);
@@ -31,6 +37,14 @@ internal static class HubToolInventory
             }
         }
 
+        return new(occurrences, failures);
+    }
+
+    internal static IReadOnlyList<HubSkill> Merge(Snapshot snapshot, IEnumerable<HubSkill> catalog,
+        CancellationToken cancellationToken, Func<string, string?>? findExecutable = null)
+    {
+        var occurrences = new Dictionary<string, List<HubSkillOccurrence>>(snapshot.Occurrences, StringComparer.OrdinalIgnoreCase);
+        var failures = snapshot.Failures;
         var result = new List<HubSkill>();
         foreach (var item in catalog.Where(item => item.ItemType is "mcp" or "cli"))
         {

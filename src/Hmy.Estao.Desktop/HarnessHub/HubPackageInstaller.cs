@@ -40,7 +40,13 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
 
     public async Task InstallAsync(HubSkill item, IReadOnlyList<string> targets, CancellationToken ct)
     {
-        using var gate = Lock();
+        using var staged = await StageAsync(item, ct);
+        await CommitAsync(staged, targets, ct);
+    }
+
+    internal async Task<StagedPackage> StageAsync(HubSkill item, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
         ValidateItem(item);
         var source = item.Source!;
         if (!Directory.Exists(source)) throw new DirectoryNotFoundException("The catalog package folder is unavailable: " + source);
@@ -50,6 +56,40 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
         ValidateName(command);
         if (item.ItemType == "cli" && !command.Equals(CommandName(item), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException($"CLI executable must be named {CommandName(item)}.exe (catalog ID, optionally without -cli).");
+        var directory = InstallerPaths.Within(dataDirectory, "hub-package-staging/" + Guid.NewGuid().ToString("N"));
+        var staged = new StagedPackage(item, directory, Path.GetFileName(executables[0]), command);
+        try
+        {
+            InstallerPaths.EnsurePrivateDirectory(directory);
+            await CopyAsync(source, directory, ct);
+            var executable = InstallerPaths.Within(directory, staged.ExecutableName);
+            if (!File.Exists(executable) || Directory.GetFiles(directory, "*.exe", SearchOption.TopDirectoryOnly).Length != 1)
+                throw new InvalidDataException("The package executable changed during staging.");
+            CheckRuntime(executable);
+            ct.ThrowIfCancellationRequested();
+            return staged;
+        }
+        catch
+        {
+            staged.Dispose();
+            throw;
+        }
+    }
+
+    internal sealed record StagedPackage(HubSkill Item, string DirectoryPath, string ExecutableName, string Command) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (Directory.Exists(DirectoryPath)) DeleteTree(DirectoryPath);
+        }
+    }
+
+    internal async Task CommitAsync(StagedPackage staged, IReadOnlyList<string> targets, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        using var gate = Lock();
+        var item = staged.Item;
+        var source = item.Source!;
         var configs = new List<HubMcpConfiguration>();
         if (item.ItemType == "mcp")
         {
@@ -63,26 +103,29 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
             if (configs.Count == 0) throw new InvalidOperationException("No tools are selected for MCP installation.");
         }
         var destination = InstallerPaths.Within(Root, item.ItemType + "/" + item.Id + "/" + Guid.NewGuid().ToString("N"));
-        InstallerPaths.EnsurePrivateDirectory(destination);
+        InstallerPaths.EnsurePrivateDirectory(Path.GetDirectoryName(destination)!);
         var committed = false;
+        var published = false;
+        var pathChanged = false;
         var written = new List<HubMcpConfiguration>();
         var previousPath = _readPath() ?? "";
         var previousProcessPath = Environment.GetEnvironmentVariable("PATH");
         using var removal = new PackageRemoval(dataDirectory, source);
         try
         {
-            await CopyAsync(source, destination, ct);
-            var executable = InstallerPaths.Within(destination, Path.GetFileName(executables[0]));
-            CheckRuntime(executable);
             ct.ThrowIfCancellationRequested();
+            Directory.Move(staged.DirectoryPath, destination);
+            published = true;
+            var executable = InstallerPaths.Within(destination, staged.ExecutableName);
             if (item.ItemType == "cli")
             {
-                var old = FindCli(item with { CommandName = command });
+                var old = FindCli(item with { CommandName = staged.Command });
                 if (old is not null && !SamePath(old, executable)) removal.Stage([old]);
                 // Replace the PATH location, not the executable inside an arbitrary shared bin folder.
                 var oldDirectory = old is null ? null : Path.GetDirectoryName(old)!;
                 var removeOldPath = oldDirectory is not null && (IsSourcePath(old, source) || !LocalFiles(oldDirectory).Any());
                 var path = AddPath(removeOldPath ? RemovePath(previousPath, oldDirectory!) : previousPath, destination);
+                pathChanged = true;
                 SetPath(path, destination, true);
                 if (removeOldPath && readUserPath is null)
                     Environment.SetEnvironmentVariable("PATH", RemovePath(Environment.GetEnvironmentVariable("PATH") ?? "", oldDirectory!));
@@ -110,10 +153,11 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
         }
         catch
         {
-            if (item.ItemType == "cli")
+            if (pathChanged)
             {
                 _writePath(previousPath);
                 if (readUserPath is null) Environment.SetEnvironmentVariable("PATH", previousProcessPath);
+                pathChanged = false;
             }
             // Roll back only our writes; preserve concurrent edits rather than overwrite them.
             foreach (var config in written.AsEnumerable().Reverse())
@@ -126,7 +170,7 @@ internal sealed class HubPackageInstaller(string dataDirectory, Func<string, Har
         finally
         {
             // Retain staged payloads if rollback could not finish: configuration may reference them.
-            if (!committed && written.Count == 0 && Directory.Exists(destination)) DeleteTree(destination);
+            if (published && !committed && !pathChanged && written.Count == 0 && Directory.Exists(destination)) DeleteTree(destination);
         }
     }
 

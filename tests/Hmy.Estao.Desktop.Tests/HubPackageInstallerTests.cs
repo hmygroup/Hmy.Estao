@@ -64,6 +64,27 @@ public sealed class HubPackageInstallerTests : IDisposable
     }
 
     [Fact]
+    public async Task StagingWorksWhileInstallerIsLockedAndCancellationDiscardsThePayload()
+    {
+        var item = Package("cli");
+        var installer = Installer();
+        var lockPath = Path.Combine(Data, "harness-installer", "installer.lock");
+        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+        using var gate = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        using (var staged = await installer.StageAsync(item, default))
+        {
+            Assert.True(File.Exists(Path.Combine(staged.DirectoryPath, "utility.exe")));
+            Assert.Equal("", _userPath);
+            await Assert.ThrowsAsync<IOException>(() => installer.CommitAsync(staged, [], default));
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            await Assert.ThrowsAsync<OperationCanceledException>(() => installer.CommitAsync(staged, [], cancellation.Token));
+        }
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(Data, "hub-package-staging")));
+        Assert.False(Directory.Exists(Path.Combine(Data, "hub-packages")));
+    }
+
+    [Fact]
     public async Task CliIsInstalledGloballyUpdatedAndRemovedWithoutAnyHarness()
     {
         var item = Package("cli", "tengu-cli", "tengu");
@@ -233,7 +254,8 @@ public sealed class HubPackageInstallerTests : IDisposable
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => Installer().InstallAsync(item, [], default));
         Assert.Contains("999.0", exception.Message);
         Assert.Equal("", _userPath);
-        Assert.Empty(Directory.GetFiles(Path.Combine(Data, "hub-packages"), "*.exe", SearchOption.AllDirectories));
+        Assert.False(Directory.Exists(Path.Combine(Data, "hub-packages")));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(Data, "hub-package-staging")));
     }
 
     [Fact]

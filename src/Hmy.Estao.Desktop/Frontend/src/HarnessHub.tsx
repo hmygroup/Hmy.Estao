@@ -53,7 +53,7 @@ export default function HarnessHub({ onStatusChange }: { onStatusChange?: (statu
   const busy = sending || !state || state.busy || checkingAuthorization;
   const chosen = Object.values(selection).reduce((sum, ids) => sum + ids.length, 0);
   const review = state?.review;
-  const visibleResults = state?.results.filter(result => state.tools.some(tool => tool.id === result.id && tool.detected)) ?? [];
+  const visibleResults = state?.results.filter(result => result.catalogItem || state.tools.some(tool => tool.id === result.id && tool.detected)) ?? [];
   const installedIn = visibleResults.filter(result => result.outcome === "installed").map(result => result.name).join(", ");
   const status = error || (state?.error ? message(state.errorMessage) || t("error.operation") : "")
     || (busy ? message(state?.progressMessage) || t("hub.working") : message(state?.progressMessage) || (installedIn ? t("hub.installed_in", installedIn) : ""));

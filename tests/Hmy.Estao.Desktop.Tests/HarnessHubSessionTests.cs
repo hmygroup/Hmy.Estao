@@ -141,7 +141,7 @@ public sealed class HarnessHubSessionTests
     [Fact]
     public async Task MultiToolInstallationReusesImmutableDownloadsAndTheVerifiedCredential()
     {
-        using var fixture = new Fixture { IncludeExtraSkills = true };
+        using var fixture = new Fixture { IncludeExtraSkills = true, IncludeExtraPayload = true };
         var credentialSearches = 0;
         using var session = fixture.Session(candidates: _ =>
         {
@@ -155,10 +155,188 @@ public sealed class HarnessHubSessionTests
         Assert.Null(session.State.Error);
         Assert.Equal(1, credentialSearches);
         Assert.Equal(3, session.State.Results.Count(result => result.Outcome == "installed"));
-        Assert.Single(fixture.Requests, path => path.EndsWith("/commits/" + Fixture.Commit, StringComparison.Ordinal));
-        var gitObjects = fixture.Requests.Where(path => path.Contains("/git/", StringComparison.Ordinal)).GroupBy(path => path).ToArray();
-        Assert.NotEmpty(gitObjects);
-        Assert.All(gitObjects, requests => Assert.Single(requests));
+        Assert.Single(fixture.Requests, path => path.EndsWith("/contents/", StringComparison.Ordinal));
+        Assert.DoesNotContain(fixture.Requests, path => path.Contains("/commits/", StringComparison.Ordinal) || path.Contains("/git/trees/", StringComparison.Ordinal));
+        Assert.Single(fixture.Requests, path => path.EndsWith("/" + InstallerPaths.GitBlob(Fixture.ExtraPayload), StringComparison.Ordinal));
+        Assert.Equal(2, fixture.Requests.Count);
+    }
+
+    [Fact]
+    public async Task CheckReadsInstructionsWhileSkillMetadataIsBlockedAndRefreshesMain()
+    {
+        using var fixture = new Fixture { IncludeFileItems = true };
+        using var session = fixture.Session();
+        var skillEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var instructionEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var skillSha = InstallerPaths.GitBlob(Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n---\nFixture, never execute.\n"));
+        var instructionSha = InstallerPaths.GitBlob(Encoding.UTF8.GetBytes(fixture.InstructionContent));
+        fixture.BeforeRead = async (request, ct) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/" + skillSha, StringComparison.Ordinal))
+            {
+                skillEntered.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            }
+            if (path.EndsWith("/" + instructionSha, StringComparison.Ordinal)) instructionEntered.TrySetResult();
+        };
+        session.Command(new("check"));
+        try { await Task.WhenAll(skillEntered.Task, instructionEntered.Task).WaitAsync(TimeSpan.FromSeconds(5)); }
+        finally { release.TrySetResult(); await session.CurrentOperation; }
+        Assert.True(session.State.LibraryLoaded);
+
+        fixture.Requests.Clear();
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.Equal(2, fixture.Requests.Count);
+        Assert.Contains(fixture.Requests, path => path.EndsWith("/commits/main", StringComparison.Ordinal));
+        Assert.Contains(fixture.Requests, path => path.EndsWith("/contents/", StringComparison.Ordinal));
+
+        fixture.DenyAccess = true;
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.False(session.State.Connected);
+        Assert.False(session.State.LibraryLoaded);
+    }
+
+    [Fact]
+    public async Task CheckStartsRemoteAccessWhileLocalToolDetectionIsBlocked()
+    {
+        using var fixture = new Fixture();
+        var detected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remote = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        fixture.BeforeRead = (_, _) =>
+        {
+            remote.TrySetResult();
+            return Task.CompletedTask;
+        };
+        using var session = fixture.Session(detect: _ =>
+        {
+            detected.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(10));
+            return false;
+        });
+        session.Command(new("check"));
+        try { await Task.WhenAll(detected.Task, remote.Task).WaitAsync(TimeSpan.FromSeconds(5)); }
+        finally { release.Set(); await session.CurrentOperation; }
+        Assert.True(session.State.LibraryLoaded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CatalogInstallationAppliesConfirmedItemsWithoutPublishingAReview(bool installAll)
+    {
+        using var fixture = new Fixture { IncludeExtraSkills = true, IncludeFileItems = true, IncludeMcp = true };
+        using var session = fixture.Session();
+        Directory.CreateDirectory(fixture.McpSource);
+        await File.WriteAllTextAsync(Path.Combine(fixture.McpSource, "utility.exe"), "Fixture package");
+        session.Command(new("check")); await session.CurrentOperation;
+        var commit = session.State.LibraryCommit;
+        Assert.Throws<InvalidOperationException>(() => session.Command(new("install-catalog", ItemIds: ["sample"], CatalogCommit: "stale")));
+        Assert.Throws<ArgumentException>(() => session.Command(new("install-catalog", ItemIds: ["sample", "example-template"], CatalogCommit: commit)));
+
+        var confirmed = installAll ? new[] { "sample", "base", "unrelated", "database-instructions", "utility" } : ["sample", "database-instructions"];
+        session.Command(new("install-catalog", ItemIds: confirmed, CatalogCommit: commit));
+        await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Null(session.State.Review);
+        Assert.Equal("hub.catalog_install_finished", session.State.ProgressMessage?.Code);
+        Assert.All(session.State.Results.Where(result => result.Outcome != "skipped"), result => Assert.Equal("installed", result.Outcome));
+        var adapter = fixture.Adapter("claude");
+        Assert.True(File.Exists(Path.Combine(adapter.SkillsRoot, "sample", "SKILL.md")));
+        Assert.True(File.Exists(Path.Combine(adapter.SkillsRoot, "base", "SKILL.md")));
+        Assert.Equal(installAll, File.Exists(Path.Combine(adapter.SkillsRoot, "unrelated", "SKILL.md")));
+        Assert.Contains(fixture.InstructionContent, await File.ReadAllTextAsync(HubInstructionInstaller.Destination(adapter)));
+        var config = await HubMcpConfiguration.ReadAsync(adapter, default);
+        Assert.Equal(installAll, File.Exists(config.Executable("utility")));
+    }
+
+    [Theory]
+    [InlineData("invalid")]
+    [InlineData("503")]
+    [InlineData("truncated")]
+    public async Task CatalogContinuesAfterIndependentSkillAndPackageFailures(string blobFailure)
+    {
+        using var fixture = new Fixture { IncludeExtraSkills = true, IncludeExtraPayload = true, IncludeFileItems = true, IncludeMcp = true };
+        using var session = fixture.Session();
+        session.Command(new("check")); await session.CurrentOperation;
+        var payloadSha = InstallerPaths.GitBlob(Fixture.ExtraPayload);
+        if (blobFailure == "503")
+            fixture.UnavailableBlob = payloadSha;
+        else if (blobFailure == "truncated")
+            fixture.TruncatedBlob = payloadSha;
+        else
+            fixture.BeforeRead = (request, _) => request.RequestUri!.AbsolutePath.EndsWith("/" + payloadSha, StringComparison.Ordinal)
+                ? Task.FromException(new InvalidDataException("Fixture payload cannot be read.")) : Task.CompletedTask;
+
+        session.Command(new("install-catalog", ItemIds: ["sample", "unrelated", "utility", "database-instructions"], CatalogCommit: session.State.LibraryCommit));
+        await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Contains(session.State.Results, result => result.Id == "item:sample:claude" && result.Outcome == "failed");
+        Assert.Contains(session.State.Results, result => result.Id == "item:utility" && result.Outcome == "failed");
+        Assert.Contains(session.State.Results, result => result.Id == "item:database-instructions:claude" && result.Outcome == "installed");
+        var adapter = fixture.Adapter("claude");
+        Assert.True(File.Exists(Path.Combine(adapter.SkillsRoot, "unrelated", "SKILL.md")));
+        Assert.False(Directory.Exists(Path.Combine(adapter.SkillsRoot, "sample")));
+        Assert.False(Directory.Exists(Path.Combine(adapter.SkillsRoot, "base")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GeneralReviewAndInstructionBatchRefreshExternallyChangedLocalSkills(bool review)
+    {
+        using var fixture = new Fixture { IncludeFileItems = true };
+        var removed = WriteLocalSkill("removed");
+        using var session = fixture.Session();
+        session.Command(new("check"));
+        await session.CurrentOperation;
+        Assert.Contains(session.State.Skills!, skill => skill.Id == "removed");
+
+        File.Delete(removed);
+        WriteLocalSkill("added");
+        session.Command(review ? new("review") :
+            new("install-catalog", ItemIds: ["database-instructions"], CatalogCommit: session.State.LibraryCommit));
+        await session.CurrentOperation;
+
+        Assert.Null(session.State.Error);
+        Assert.Equal(review, session.State.Review is not null);
+        Assert.DoesNotContain(session.State.Skills!, skill => skill.Id == "removed");
+        Assert.Contains(session.State.Skills!, skill => skill.Id == "added");
+
+        string WriteLocalSkill(string name)
+        {
+            var path = Path.Combine(fixture.Adapter("claude").SkillsRoot, name, "SKILL.md");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, $"---\nname: {name}\ndescription: Local skill\n---\n");
+            return path;
+        }
+    }
+
+    [Fact]
+    public async Task GeneralReviewRemovesLocalOccurrencesWhenTheLastToolDisappears()
+    {
+        using var fixture = new Fixture();
+        var detected = true;
+        using var session = fixture.Session(detect: id => detected && id == "claude");
+        var local = Path.Combine(fixture.Adapter("claude").SkillsRoot, "personal", "SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(local)!);
+        await File.WriteAllTextAsync(local, "---\nname: personal\ndescription: A local skill\n---\n");
+        session.Command(new("check"));
+        await session.CurrentOperation;
+        Assert.Contains(session.State.Skills!, skill => skill.Id == "personal");
+        fixture.Requests.Clear();
+
+        detected = false;
+        session.Command(new("review", "claude"));
+        await session.CurrentOperation;
+
+        Assert.Equal("hub.no_tools", session.State.ErrorMessage?.Code);
+        Assert.DoesNotContain(session.State.Skills!, skill => skill.Id == "personal");
+        Assert.Empty(fixture.Requests);
     }
 
     [Fact]
@@ -455,7 +633,7 @@ public sealed class HarnessHubSessionTests
         Assert.Equal("new", Assert.Single(review.Tools.Single(t => t.Id == "codex").Artifacts).Status);
         Assert.Contains(session.State.Results, r => r.Id == "opencode" && r.Outcome == "skipped");
         Assert.DoesNotContain(fixture.Requests, r => r.EndsWith("/commits/main", StringComparison.Ordinal));
-        Assert.Contains(fixture.Requests, r => r.EndsWith("/commits/" + Fixture.Commit, StringComparison.Ordinal));
+        Assert.EndsWith("/contents/", Assert.Single(fixture.Requests));
         Assert.False(File.Exists(Path.Combine(fixture.Adapter("codex").SkillsRoot, "sample", "SKILL.md")));
 
         session.Command(new("install", ReviewId: review.Id, Selection: review.Tools.ToDictionary(t => t.Id, _ => new[] { "sample" })));
@@ -742,6 +920,7 @@ public sealed class HarnessHubSessionTests
     private sealed class Fixture : IDisposable
     {
         public const string Commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        public static readonly byte[] ExtraPayload = Encoding.UTF8.GetBytes("Fixture payload.");
         private const string Tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         public string Directory { get; } = Path.Combine(Path.GetTempPath(), "estao-hub-session-" + Guid.NewGuid().ToString("N"));
         public List<string> Requests { get; } = [];
@@ -749,9 +928,14 @@ public sealed class HarnessHubSessionTests
         public bool BlockReads { get; set; }
         public Func<HttpRequestMessage, CancellationToken, Task>? BeforeRead { get; set; }
         public bool FailTree { get; set; }
+        public string? UnavailableBlob { get; set; }
+        public string? TruncatedBlob { get; set; }
         public bool IncludeExtraSkills { get; set; }
+        public bool IncludeExtraPayload { get; set; }
         public bool IncludeOpenCode { get; set; }
         public bool IncludeFileItems { get; set; }
+        public bool IncludeMcp { get; set; }
+        public string McpSource => Path.Combine(Directory, "packages", "utility");
         public string InstructionContent { get; set; } = "Project database guidance. Never execute.";
         public bool LocalizedSkill { get; set; }
         public bool OmitManifest { get; set; }
@@ -759,8 +943,8 @@ public sealed class HarnessHubSessionTests
         public string SampleId { get; set; } = "sample";
         public HarnessAdapter Adapter(string id) => new(id, Path.Combine(Directory, "home"), _ => null);
         public HarnessHubSession Session(string token = "fake-test-token", Func<CancellationToken, Task<IReadOnlyList<string>>>? candidates = null,
-            Func<HubSkill, string?>? exportDestination = null, Func<CancellationToken, Task<string>>? bundledKeyReader = null) => new(Path.Combine(Directory, "config.json"),
-            new HttpClient(new Handler(this)), id => IncludeOpenCode || id != "opencode", Adapter,
+            Func<HubSkill, string?>? exportDestination = null, Func<CancellationToken, Task<string>>? bundledKeyReader = null, Func<string, bool>? detect = null) => new(Path.Combine(Directory, "config.json"),
+            new HttpClient(new Handler(this)), detect ?? (id => IncludeOpenCode || id != "opencode"), Adapter,
             candidates ?? (_ => Task.FromResult<IReadOnlyList<string>>([token])), exportDestination, bundledKeyReader);
 
         private HttpResponseMessage Respond(HttpRequestMessage request)
@@ -776,18 +960,25 @@ public sealed class HarnessHubSessionTests
                     token = "installation-test-token", expires_at = DateTimeOffset.UtcNow.AddHours(1)
                 })) };
             if (FailTree && path.Contains("/git/trees/", StringComparison.Ordinal)) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
+            if (UnavailableBlob is { } sha && path.EndsWith("/git/blobs/" + sha, StringComparison.Ordinal))
+                return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
+            if (TruncatedBlob is { } truncated && path.EndsWith("/git/blobs/" + truncated, StringComparison.Ordinal))
+                return new(HttpStatusCode.OK) { Content = new StreamContent(new InterruptedResponseStream()) };
             var skill = Encoding.UTF8.GetBytes("---\nname: sample\ndescription: Shared test skill\n" +
                 (LocalizedSkill ? "descriptions:\n  es: Skill de prueba\n  fr: Compétence de test\n" : "") + "---\nFixture, never execute.\n");
             var skills = new List<HubSkillEntry> { new() { Id = SampleId, Path = "skills/sample", Categories = "core", Dependencies = IncludeExtraSkills ? ["base"] : [] } };
             var instructions = new List<HubInstructionEntry>();
             var files = new List<HubFileEntry>();
             var extras = new Dictionary<string, byte[]>();
+            if (IncludeExtraPayload) extras["skills/sample/example.txt"] = ExtraPayload;
             if (IncludeExtraSkills)
+            {
                 foreach (var id in new[] { "base", "unrelated" })
                 {
                     extras["skills/" + id + "/SKILL.md"] = Encoding.UTF8.GetBytes($"---\nname: {id}\ndescription: Test skill\n---\n");
                     skills.Add(new() { Id = id, Path = "skills/" + id, Categories = "core" });
                 }
+            }
             if (IncludeFileItems)
             {
                 extras["instructions/database.md"] = Encoding.UTF8.GetBytes(InstructionContent);
@@ -795,6 +986,9 @@ public sealed class HarnessHubSessionTests
                 instructions.Add(new() { Id = "database-instructions", Path = "instructions/database.md", Categories = "core" });
                 files.Add(new() { Id = "example-template", Path = "templates/example.json", Categories = "core" });
             }
+            var mcps = new List<HubMcpEntry>();
+            if (IncludeMcp)
+                mcps.Add(new() { Id = "utility", Path = McpSource, Categories = "core", Description = "Test package" });
             extras["skills/sample/SKILL.md"] = skill;
             if (!OmitManifest)
                 extras["hub-manifest.json"] = InvalidManifest ? Encoding.UTF8.GetBytes("{invalid-json") :
@@ -802,7 +996,7 @@ public sealed class HarnessHubSessionTests
                     {
                         schemaVersion = 2, defaultLanguage = "en",
                         categories = new Dictionary<string, Dictionary<string, string>> { ["core"] = new() { ["en"] = "Core", ["es"] = "General" } },
-                        skills, instructions, files
+                        skills, instructions, files, mcps
                     }, InstallerJson.Options);
             var entries = extras.Select(pair => new { path = pair.Key, sha = InstallerPaths.GitBlob(pair.Value), size = pair.Value.Length, mode = "100644", type = "blob" }).ToArray();
             var blob = extras.Values.FirstOrDefault(bytes => path.EndsWith("/" + InstallerPaths.GitBlob(bytes), StringComparison.Ordinal));
@@ -814,6 +1008,13 @@ public sealed class HarnessHubSessionTests
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body)) };
         }
         public void Dispose() { if (System.IO.Directory.Exists(Directory)) System.IO.Directory.Delete(Directory, recursive: true); }
+        private sealed class InterruptedResponseStream() : MemoryStream(Encoding.UTF8.GetBytes("{"))
+        {
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+                Position < Length ? base.ReadAsync(buffer, cancellationToken) :
+                ValueTask.FromException<int>(new HttpIOException(HttpRequestError.ResponseEnded, "Fixture connection closed mid-body."));
+        }
+
         private sealed class Handler(Fixture fixture) : HttpMessageHandler
         {
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)

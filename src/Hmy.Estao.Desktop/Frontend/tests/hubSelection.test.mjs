@@ -5,7 +5,27 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../src/hubTypes.ts', import.meta.url), 'utf8');
 const javascript = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { defaultSelection, updateSelection } = await import('data:text/javascript;base64,' + Buffer.from(javascript).toString('base64'));
+const { catalogInstallItems, selectCatalogItems, defaultSelection, updateSelection } = await import('data:text/javascript;base64,' + Buffer.from(javascript).toString('base64'));
+
+test('Shift selects the visible range, and Ctrl adds or removes individual rows', () => {
+  const visible = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(selectCatalogItems(visible, ['c'], 'c', 'a', true, false), ['a', 'b', 'c']);
+  assert.deepEqual(selectCatalogItems(visible, ['a'], 'a', 'd', false, true), ['a', 'd']);
+  assert.deepEqual(selectCatalogItems(visible, ['a', 'd'], 'd', 'a', false, true), ['d']);
+  assert.deepEqual(selectCatalogItems(visible, ['a'], 'c', 'd', true, true), ['a', 'c', 'd']);
+  assert.deepEqual(selectCatalogItems(visible, ['hidden'], 'hidden', 'b', true, false), ['b']);
+});
+
+test('the catalog batch counts only installable entries in the explicit selection or whole catalog', () => {
+  const item = { inLibrary: true, curated: true, installable: true, compatibleTools: ['codex'] };
+  const items = ['skill', 'instruction', 'mcp', 'cli', 'file'].map(type => ({ ...item, id: type, itemType: type }))
+    .concat({ ...item, id: 'unlisted', curated: false }, { ...item, id: 'disabled', installable: false });
+  const tools = [{ id: 'codex' }];
+  assert.deepEqual(catalogInstallItems(items, tools).map(item => item.id), ['skill', 'instruction', 'mcp', 'cli']);
+  assert.deepEqual(catalogInstallItems(items, tools, ['mcp', 'file']).map(item => item.id), ['mcp']);
+  assert.deepEqual(catalogInstallItems(items, [], undefined).map(item => item.id), ['cli']);
+  assert.deepEqual(catalogInstallItems(items, tools, []), []);
+});
 const artifact = (id, status = 'new', dependencies = []) => ({ id, status, dependencies });
 const tool = { id: 'codex', artifacts: [artifact('base'), artifact('dependent', 'new', ['base']), artifact('blocked', 'conflict'), artifact('needs-blocked', 'new', ['blocked']), artifact('present', 'present')] };
 
