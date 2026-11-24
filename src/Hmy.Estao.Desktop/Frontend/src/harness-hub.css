@@ -56,6 +56,14 @@
 .hub-catalog-actions>button{min-height:40px}
 .hub-auth-notice,.hub-recovery{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;font-size:12px;line-height:1.7}
 .hub-auth-notice{color:var(--muted)}
+.hub-install-progress{display:grid;gap:6px;margin-bottom:12px;font-size:12px;line-height:1.5}
+.hub-install-progress-text{display:flex;justify-content:space-between;gap:12px;color:var(--muted)}
+.hub-install-progress-text>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hub-install-progress-text>span:last-child{flex-shrink:0;font-variant-numeric:tabular-nums}
+.hub-install-progress-track{height:6px;border-radius:999px;background:var(--glass-low);border:1px solid var(--glass-edge);overflow:hidden}
+.hub-install-progress-fill{height:100%;border-radius:inherit;background:var(--accent);transition:width .3s ease}
+@media(prefers-reduced-motion:reduce){.hub-install-progress-fill{transition:none}}
+@media(forced-colors:active){.hub-install-progress-track{border-color:CanvasText}.hub-install-progress-fill{background:Highlight}}
 .hub-filters{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .hub-filters label,.hub-skill-install label{display:grid;gap:6px;color:var(--muted);font-size:12px;min-width:140px;flex:1}
 .hub-filters .hub-search{flex:2;min-width:200px}

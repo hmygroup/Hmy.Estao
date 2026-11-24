@@ -243,6 +243,7 @@ public sealed class HarnessHubSessionTests
         Assert.Null(session.State.Error);
         Assert.Null(session.State.Review);
         Assert.Equal("hub.catalog_install_finished", session.State.ProgressMessage?.Code);
+        Assert.Equal(new HubInstallProgress(confirmed.Length, confirmed.Length), session.State.InstallProgress);
         Assert.All(session.State.Results.Where(result => result.Outcome != "skipped"), result => Assert.Equal("installed", result.Outcome));
         var adapter = fixture.Adapter("claude");
         Assert.True(File.Exists(Path.Combine(adapter.SkillsRoot, "sample", "SKILL.md")));
@@ -275,6 +276,7 @@ public sealed class HarnessHubSessionTests
         await session.CurrentOperation;
 
         Assert.Null(session.State.Error);
+        Assert.Equal(new HubInstallProgress(4, 4), session.State.InstallProgress);
         Assert.Contains(session.State.Results, result => result.Id == "item:sample:claude" && result.Outcome == "failed");
         Assert.Contains(session.State.Results, result => result.Id == "item:utility" && result.Outcome == "failed");
         Assert.Contains(session.State.Results, result => result.Id == "item:database-instructions:claude" && result.Outcome == "installed");
