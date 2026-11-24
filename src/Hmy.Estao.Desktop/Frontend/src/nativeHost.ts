@@ -53,6 +53,7 @@ async function request<T>(type: string, payload: unknown): Promise<T> {
 }
 
 export const getState = () => request<DesktopState>("estao.state", {});
+export const onReloadRequested = (handler: () => void) => client?.on("estao.reloadRequested", handler);
 export const getHubState = () => request<HubState>("estao.hub.state", {});
 export const hubCommand = (command: HubCommand) => request("estao.hub.command", command);
 export const saveSettings = (settings: SettingsUpdate) => request("estao.settings.save", settings);

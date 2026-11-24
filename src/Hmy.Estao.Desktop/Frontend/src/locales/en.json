@@ -1,5 +1,8 @@
 {
   "settings": "Settings",
+  "settings.reload_title": "Reload settings?",
+  "settings.reload_warning": "Reloading discards your unsaved changes.",
+  "settings.reload": "Reload",
   "usage": "Usage",
   "usage.source": "Source: {0}",
   "usage.actions": "Usage actions",

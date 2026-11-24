@@ -1,5 +1,8 @@
 {
   "settings": "Configuración",
+  "settings.reload_title": "¿Recargar la configuración?",
+  "settings.reload_warning": "Al recargar se perderán los cambios sin guardar.",
+  "settings.reload": "Recargar",
   "usage": "Uso",
   "usage.source": "Origen: {0}",
   "usage.actions": "Acciones de uso",

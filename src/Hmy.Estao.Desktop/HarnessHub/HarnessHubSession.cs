@@ -232,7 +232,8 @@ internal sealed class HarnessHubSession : IDisposable
         for (var slot = 0; slot < 2; slot++) Prefetch(packageQueue);
         var initialInstructionSlots = skills.Length == 0 ? 6 : 2;
         for (var slot = 0; slot < initialInstructionSlots; slot++) Prefetch(instructionQueue);
-        double skillsCompleted = 0;
+        var finishedSkillTools = new HashSet<string>(StringComparer.Ordinal);
+        var skillBatchFinished = false;
         var otherItemsCompleted = 0;
         try
         {
@@ -243,7 +244,7 @@ internal sealed class HarnessHubSession : IDisposable
                     await authorization;
                     await PrepareAsync(null, ct, installDirectly: true, catalogSkills: skills, catalogCommit: commit,
                         changedSkillDirectories: changedSkillDirectories,
-                        toolProgress: (done, total) => { skillsCompleted = total == 0 ? skills.Length : skills.Length * (double)done / total; ReportProgress(); });
+                        onToolFinished: tool => { finishedSkillTools.Add(tool); ReportProgress(); });
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
@@ -251,7 +252,7 @@ internal sealed class HarnessHubSession : IDisposable
                     foreach (var skill in skills) ReportCatalogFailure(skill, exception);
                 }
                 // Skills whose preparation failed for every tool are finished too.
-                skillsCompleted = skills.Length;
+                skillBatchFinished = true;
                 ReportProgress();
             }
             // Leave room for skill downloads in the shared GitHub limit until skill preparation completes.
@@ -323,7 +324,10 @@ internal sealed class HarnessHubSession : IDisposable
 
         void ReportProgress()
         {
-            var completed = Math.Min(items.Length, skillsCompleted + otherItemsCompleted);
+            var skillsCompleted = skillBatchFinished ? skills.Length : skills.Count(skill =>
+                detectedBefore.Any(tool => skill.CompatibleTools.Contains(tool)) &&
+                detectedBefore.All(tool => !skill.CompatibleTools.Contains(tool) || finishedSkillTools.Contains(tool)));
+            var completed = skillsCompleted + otherItemsCompleted;
             Update(s => s with { InstallProgress = new(completed, items.Length) });
         }
         void Report(HubResult result) => Update(s => s with { Results = [.. s.Results, result] });
@@ -530,7 +534,7 @@ internal sealed class HarnessHubSession : IDisposable
 
     private async Task PrepareAsync(string? harnessId, CancellationToken ct, string? skillId = null, bool installDirectly = false,
         IReadOnlyList<HubSkill>? catalogSkills = null, string? catalogCommit = null, HashSet<string>? changedSkillDirectories = null,
-        Action<int, int>? toolProgress = null)
+        Action<string>? onToolFinished = null)
     {
         _prepared.Clear();
         Update(s => s with { Review = null, Results = [] });
@@ -591,7 +595,11 @@ internal sealed class HarnessHubSession : IDisposable
                         results.Add(new($"item:{failed.Id}:{target.Id}", $"{failed.Name} · {target.Name}", "failed", 0, 0, 0, 0,
                             SafeError(error), new("hub.catalog_item_install_failed", SafeError(error)), CatalogItem: true));
                     }
-                    if (downloaded.Skills.Count == 0) continue;
+                    if (downloaded.Skills.Count == 0)
+                    {
+                        onToolFinished?.Invoke(target.Id);
+                        continue;
+                    }
                 }
                 var snapshot = downloaded.ForAdapter(adapter, ct);
                 if (skillId is not null)
@@ -619,7 +627,11 @@ internal sealed class HarnessHubSession : IDisposable
                 }).ToArray() });
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception exception) { results.Add(new(target.Id, target.Name, "failed", 0, 0, 0, 0, SafeError(exception), UserMessage.FromException(exception))); }
+            catch (Exception exception)
+            {
+                results.Add(new(target.Id, target.Name, "failed", 0, 0, 0, 0, SafeError(exception), UserMessage.FromException(exception)));
+                onToolFinished?.Invoke(target.Id);
+            }
         }
         if (harnessId is null)
             results.AddRange(State.Tools.Where(t => !t.Detected).Select(t => new HubResult(t.Id, t.Name, "skipped", 0, 0, 0, 0, "Tool not installed.", new("hub.not_installed"))));
@@ -633,22 +645,20 @@ internal sealed class HarnessHubSession : IDisposable
             Update(s => s with { Phase = "installing", CheckingAuthorization = false, ProgressMessage = new("hub.working") });
             await InstallAsync(review.Tools.ToDictionary(tool => tool.Id, tool => _prepared[tool.Id].Snapshot.Files
                 .Select(file => file.ArtifactId).Distinct(StringComparer.Ordinal).ToArray()), ct, review, changedSkillDirectories: changedSkillDirectories,
-                toolProgress: toolProgress);
+                onToolFinished: onToolFinished);
         }
     }
 
     private async Task InstallAsync(Dictionary<string, string[]> selection, CancellationToken ct, HubReview? review = null, HashSet<string>? changedSkillDirectories = null,
-        Action<int, int>? toolProgress = null)
+        Action<string>? onToolFinished = null)
     {
         var results = State.Results.ToList();
         var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var skillDirectories = changedSkillDirectories ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var tools = (review ?? State.Review!).Tools;
-        var toolsDone = 0;
-        foreach (var tool in tools)
+        foreach (var tool in (review ?? State.Review!).Tools)
         {
             ct.ThrowIfCancellationRequested();
-            if (!selection.TryGetValue(tool.Id, out var ids) || ids.Length == 0) { toolProgress?.Invoke(++toolsDone, tools.Count); continue; }
+            if (!selection.TryGetValue(tool.Id, out var ids) || ids.Length == 0) { onToolFinished?.Invoke(tool.Id); continue; }
             var prepared = _prepared[tool.Id];
             foreach (var file in prepared.Plan.Files.Where(file => ids.Contains(file.ArtifactId) &&
                 Path.GetFileName(file.Path).Equals("SKILL.md", StringComparison.OrdinalIgnoreCase)))
@@ -673,10 +683,12 @@ internal sealed class HarnessHubSession : IDisposable
             catch (OperationCanceledException) { results.Add(new(tool.Id, tool.Name, "cancelled", 0, 0, 0, 0, "Installation cancelled; safe recovery attempted.", new("hub.cancelled"))); Update(s => s with { Results = results.ToArray() }); throw; }
             catch (Exception exception) { results.Add(new(tool.Id, tool.Name, "failed", 0, 0, 0, 0, SafeError(exception), UserMessage.FromException(exception))); }
             Update(s => s with { Results = results.ToArray() });
-            toolProgress?.Invoke(++toolsDone, tools.Count);
+            onToolFinished?.Invoke(tool.Id);
         }
         _prepared.Clear();
-        Update(s => s with { Review = null, Progress = "Finished. Downloaded scripts were not executed.", ProgressMessage = new("hub.finished") });
+        Update(s => onToolFinished is null
+            ? s with { Review = null, Progress = "Finished. Downloaded scripts were not executed.", ProgressMessage = new("hub.finished") }
+            : s with { Review = null });
         if (changedSkillDirectories is null)
         {
             await UpdateToolsAsync(ct);

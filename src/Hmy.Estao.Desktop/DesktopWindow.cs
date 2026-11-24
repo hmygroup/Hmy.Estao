@@ -1,5 +1,6 @@
 using Shofia.WebHost;
 using Shofia.WebHost.Frontend;
+using Microsoft.Web.WebView2.Core;
 using System.Text.Json;
 using Hmy.Estao.Desktop.HarnessHub;
 using Hmy.Estao.Core.Models;
@@ -108,6 +109,21 @@ internal sealed class DesktopWindow : CustomChromeWebViewHostForm
     protected override async ValueTask OnBrowserInitializedAsync(CancellationToken cancellationToken)
     {
         await base.OnBrowserInitializedAsync(cancellationToken);
+        if (_view == "settings")
+        {
+            var browser = WebView.CoreWebView2;
+            browser.Settings.AreDefaultScriptDialogsEnabled = false;
+            browser.ScriptDialogOpening += (_, e) =>
+            {
+                if (e.Kind != CoreWebView2ScriptDialogKind.Beforeunload) return;
+                // Let the pending navigation cancel before asking the active page to confirm.
+                BeginInvoke(() =>
+                {
+                    if (!IsDisposed)
+                        browser.PostWebMessageAsJson("""{"protocol":1,"kind":"event","name":"estao.reloadRequested","payload":{}}""");
+                });
+            };
+        }
         // Supply just the validated theme ID before the page executes, avoiding
         // a light/dark flash while React waits for the first native state reply.
         await WebView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(

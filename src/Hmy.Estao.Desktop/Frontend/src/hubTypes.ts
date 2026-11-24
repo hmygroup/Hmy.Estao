@@ -61,7 +61,7 @@ export function catalogInstallProgress(state?: Pick<HubState, "busy" | "installP
   const progress = state?.busy ? state.installProgress : undefined;
   if (!progress || !(progress.total > 0)) return undefined;
   const completed = Math.min(progress.total, Math.max(0, progress.completed));
-  return { completed: Math.floor(completed), total: progress.total, percent: Math.round(completed / progress.total * 100) };
+  return { completed, total: progress.total, percent: completed / progress.total * 100 };
 }
 
 export function selectCatalogItems(visible: string[], previous: string[], anchor: string | undefined, clicked: string, shift: boolean, control: boolean): string[] {

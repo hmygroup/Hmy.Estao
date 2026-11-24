@@ -254,6 +254,42 @@ public sealed class HarnessHubSessionTests
         Assert.Equal(installAll, File.Exists(config.Executable("utility")));
     }
 
+    [Fact]
+    public async Task CatalogProgressCountsASkillAfterAllItsDetectedTargetsFinish()
+    {
+        using var fixture = new Fixture { IncludeExtraSkills = true };
+        using var releaseClaude = new ManualResetEventSlim();
+        var claudeApplying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var installing = false;
+        var claudeChecks = 0;
+        using var session = fixture.Session(detect: id =>
+        {
+            if (installing && id == "claude" && Interlocked.Increment(ref claudeChecks) == 2)
+            {
+                claudeApplying.TrySetResult();
+                releaseClaude.Wait(TimeSpan.FromSeconds(10));
+            }
+            return id is "codex" or "claude";
+        });
+        session.Command(new("check"));
+        await session.CurrentOperation;
+
+        installing = true;
+        session.Command(new("install-catalog", ItemIds: ["sample", "unrelated"], CatalogCommit: session.State.LibraryCommit));
+        try
+        {
+            await claudeApplying.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Contains(session.State.Results, result => result.Id == "codex" && result.Outcome == "installed");
+            Assert.Equal(new HubInstallProgress(0, 2), session.State.InstallProgress);
+        }
+        finally
+        {
+            releaseClaude.Set();
+            await session.CurrentOperation;
+        }
+        Assert.Equal(new HubInstallProgress(2, 2), session.State.InstallProgress);
+    }
+
     [Theory]
     [InlineData("invalid")]
     [InlineData("503")]

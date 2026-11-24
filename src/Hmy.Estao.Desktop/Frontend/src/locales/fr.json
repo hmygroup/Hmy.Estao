@@ -1,5 +1,8 @@
 {
   "settings": "Paramètres",
+  "settings.reload_title": "Recharger les paramètres ?",
+  "settings.reload_warning": "Le rechargement efface vos modifications non enregistrées.",
+  "settings.reload": "Recharger",
   "usage": "Utilisation",
   "usage.source": "Source : {0}",
   "usage.actions": "Actions d’utilisation",

@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
-import { command, getState, saveSettings, signInProvider, WindowControls } from "./nativeHost";
+import { command, getState, onReloadRequested, saveSettings, signInProvider, WindowControls } from "./nativeHost";
 import type { DesktopState, Provider, RateWindow, SettingsUpdate, UsageAlerts } from "./types";
 import UsageChart from "./UsageChart";
 import { applyTheme, cachedTheme, cacheTheme, resolveTheme } from "./themes";
 import ThemePicker from "./themes/ThemePicker";
 import HarnessHub from "./HarnessHub";
+import { confirmDialog } from "./GlassDialog";
 import { connectionPresentation } from "./providerConnection";
 import { appName } from "./branding";
 import { t, plural, message as formatMessage, setLanguage, currentLanguage, dateTime, time, percent, number, windowTitle, sourceName, errorText, retryCountdown } from "./i18n";
@@ -97,9 +98,20 @@ function Settings({ state, reload, previewTheme }: { state: DesktopState; reload
     await run("signout", id);
   };
   useEffect(() => {
-    const listener = (event: BeforeUnloadEvent) => { if (dirty) event.preventDefault(); };
-    window.addEventListener("beforeunload", listener);
-    return () => window.removeEventListener("beforeunload", listener);
+    if (!dirty) return;
+    const guard = (event: BeforeUnloadEvent) => event.preventDefault();
+    const confirmReload = async () => {
+      if (!await confirmDialog({ title: t("settings.reload_title"), message: t("settings.reload_warning"),
+        confirmLabel: t("settings.reload"), tone: "danger" })) return;
+      window.removeEventListener("beforeunload", guard);
+      window.location.reload();
+    };
+    window.addEventListener("beforeunload", guard);
+    const unsubscribe = onReloadRequested(() => void confirmReload());
+    return () => {
+      window.removeEventListener("beforeunload", guard);
+      unsubscribe?.();
+    };
   }, [dirty]);
   const titles: Record<string, [string, string]> = {
     general: [t("general"), t("general.description")],

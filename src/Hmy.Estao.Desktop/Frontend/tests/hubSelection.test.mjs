@@ -53,6 +53,6 @@ test('catalog batch progress reports only finished items while the operation is 
   assert.equal(catalogInstallProgress({ busy: true, installProgress: null }), undefined);
   assert.equal(catalogInstallProgress({ busy: true, installProgress: { completed: 0, total: 0 } }), undefined);
   assert.deepEqual(catalogInstallProgress({ busy: true, installProgress: { completed: 0, total: 4 } }), { completed: 0, total: 4, percent: 0 });
-  assert.deepEqual(catalogInstallProgress({ busy: true, installProgress: { completed: 2.5, total: 4 } }), { completed: 2, total: 4, percent: 63 });
+  assert.deepEqual(catalogInstallProgress({ busy: true, installProgress: { completed: 2, total: 4 } }), { completed: 2, total: 4, percent: 50 });
   assert.deepEqual(catalogInstallProgress({ busy: true, installProgress: { completed: 9, total: 4 } }), { completed: 4, total: 4, percent: 100 });
 });
