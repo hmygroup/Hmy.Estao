@@ -168,6 +168,8 @@
   "hub.check_again": "Volver a comprobar",
   "hub.install_all": "Instalar todo...",
   "hub.install_catalog_selected": "Instalar selección...",
+  "hub.install_progress_label": "Progreso de la instalación del catálogo",
+  "hub.install_progress": "{0} de {1} elementos instalados",
   "hub.confirm_catalog_install_one": "¿Quieres instalar {0} elemento del catálogo HMY? Se incluirán las dependencias necesarias.",
   "hub.confirm_catalog_install_other": "¿Quieres instalar {0} elementos del catálogo HMY? Se incluirán las dependencias necesarias.",
   "hub.catalog_install_finished": "Ha finalizado la instalación del catálogo.",

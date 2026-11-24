@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../src/hubTypes.ts', import.meta.url), 'utf8');
 const javascript = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { catalogInstallItems, selectCatalogItems, defaultSelection, updateSelection } = await import('data:text/javascript;base64,' + Buffer.from(javascript).toString('base64'));
+const { catalogInstallItems, catalogInstallProgress, selectCatalogItems, defaultSelection, updateSelection } = await import('data:text/javascript;base64,' + Buffer.from(javascript).toString('base64'));
 
 test('Shift selects the visible range, and Ctrl adds or removes individual rows', () => {
   const visible = ['a', 'b', 'c', 'd'];
@@ -45,4 +45,14 @@ test('install-all selections remain independent for each tool', () => {
   assert.deepEqual(defaultSelection({ tools: [tool, { id: 'claude', artifacts: [artifact('base', 'conflict')] }] }), {
     codex: ['base', 'dependent', 'present'], claude: []
   });
+});
+
+test('catalog batch progress reports only finished items while the operation is running', () => {
+  assert.equal(catalogInstallProgress(undefined), undefined);
+  assert.equal(catalogInstallProgress({ busy: false, installProgress: { completed: 3, total: 3 } }), undefined);
+  assert.equal(catalogInstallProgress({ busy: true, installProgress: null }), undefined);
+  assert.equal(catalogInstallProgress({ busy: true, installProgress: { completed: 0, total: 0 } }), undefined);
+  assert.deepEqual(catalogInstallProgress({ busy: true, installProgress: { completed: 0, total: 4 } }), { completed: 0, total: 4, percent: 0 });
+  assert.deepEqual(catalogInstallProgress({ busy: true, installProgress: { completed: 2.5, total: 4 } }), { completed: 2, total: 4, percent: 63 });
+  assert.deepEqual(catalogInstallProgress({ busy: true, installProgress: { completed: 9, total: 4 } }), { completed: 4, total: 4, percent: 100 });
 });

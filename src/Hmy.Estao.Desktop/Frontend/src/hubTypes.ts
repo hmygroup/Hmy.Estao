@@ -19,7 +19,9 @@ export interface HubState {
   busy: boolean; phase: string; progress: string; connected: boolean; connection: string;
   tools: HubTool[]; review: HubReview | null; results: HubResult[];
   deviceCode: { code: string; verificationUrl: string } | null; error: string | null;
+  installProgress?: HubInstallProgress | null;
 }
+export interface HubInstallProgress { completed: number; total: number }
 export interface HubCommand { action: string; harnessId?: string; reviewId?: string; selection?: Record<string, string[]>; skillId?: string; itemIds?: string[]; catalogCommit?: string }
 
 export interface HubSkillOccurrence { toolId: string; path: string; shared: boolean; hash: string | null; error?: string | null }
@@ -52,6 +54,14 @@ export function catalogInstallItems(items: HubSkill[], tools: HubTool[], selecte
     (!selection || selection.has(item.id)) &&
     (itemType(item) === "cli" || ["skill", "instruction", "mcp"].includes(itemType(item)) &&
       tools.some(tool => item.compatibleTools.includes(tool.id))));
+}
+
+/** Progress of a running catalog batch, or undefined when none is running. Counts only finished items. */
+export function catalogInstallProgress(state?: Pick<HubState, "busy" | "installProgress">): { completed: number; total: number; percent: number } | undefined {
+  const progress = state?.busy ? state.installProgress : undefined;
+  if (!progress || !(progress.total > 0)) return undefined;
+  const completed = Math.min(progress.total, Math.max(0, progress.completed));
+  return { completed: Math.floor(completed), total: progress.total, percent: Math.round(completed / progress.total * 100) };
 }
 
 export function selectCatalogItems(visible: string[], previous: string[], anchor: string | undefined, clicked: string, shift: boolean, control: boolean): string[] {

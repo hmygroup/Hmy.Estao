@@ -1,5 +1,5 @@
 import { useState, type MouseEvent } from "react";
-import { catalogInstallItems, detectedTools, filterSkills, hasToolInventory, isCurated, itemType, localizedCategory, localizedDescription, selectCatalogItems, showHubConnect, skillCategories, skillToolStatus, type CatalogItemType, type HubCommand, type HubSkill, type HubState, type HubTool, type SkillStatus, type SkillView } from "./hubTypes";
+import { catalogInstallItems, catalogInstallProgress, detectedTools, filterSkills, hasToolInventory, isCurated, itemType, localizedCategory, localizedDescription, selectCatalogItems, showHubConnect, skillCategories, skillToolStatus, type CatalogItemType, type HubCommand, type HubSkill, type HubState, type HubTool, type SkillStatus, type SkillView } from "./hubTypes";
 import { currentLanguage, t, plural, message } from "./i18n";
 
 export default function HubSkillBrowser({ state, busy, run }: { state?: HubState; busy: boolean; run: (command: HubCommand) => Promise<void> }) {
@@ -45,6 +45,7 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
     void run({ action: "install-catalog", itemIds: installItems.map(item => item.id), catalogCommit });
   };
   const progress = message(state?.progressMessage) || t("hub.working");
+  const batch = catalogInstallProgress(state);
 
   return <section className="hub-browser" aria-label={t("hub.browser")}>
     <div className="hub-browser-heading">
@@ -88,6 +89,11 @@ export default function HubSkillBrowser({ state, busy, run }: { state?: HubState
       </div>}
       </div>
     </div>
+    {batch && <div className="hub-install-progress" role="progressbar" aria-label={t("hub.install_progress_label")}
+      aria-valuemin={0} aria-valuemax={batch.total} aria-valuenow={batch.completed} aria-valuetext={t("hub.install_progress", batch.completed, batch.total)}>
+      <div className="hub-install-progress-text"><span>{progress}</span><span>{t("hub.install_progress", batch.completed, batch.total)}</span></div>
+      <div className="hub-install-progress-track" aria-hidden="true"><div className="hub-install-progress-fill" style={{ width: `${batch.percent}%` }} /></div>
+    </div>}
     {catalogFilter && showHubConnect(state) && <div className="hub-auth-notice" role="status">
       <span>{message(state?.connectionMessage) || t("hub.connect_required")}</span>
       <button type="button" className="primary" disabled={busy} onClick={() => void run({ action: "connect" })}>{t("hub.connect")}</button>

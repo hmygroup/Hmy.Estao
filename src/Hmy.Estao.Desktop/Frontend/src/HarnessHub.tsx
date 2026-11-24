@@ -10,6 +10,10 @@ export default function HarnessHub({ onStatusChange }: { onStatusChange?: (statu
   const [sending, setSending] = useState(false);
   const [selection, setSelection] = useState<Record<string, string[]>>({});
   const pending = useRef(false);
+  // Bumped by every command so a poll started earlier cannot publish a stale idle state
+  // and briefly re-enable Install/Update buttons while an installation is starting.
+  const generation = useRef(0);
+  const commandInFlight = useRef(false);
   const initialCheckRequested = useRef(false);
   const reviewSection = useRef<HTMLElement>(null);
 
@@ -26,6 +30,7 @@ export default function HarnessHub({ onStatusChange }: { onStatusChange?: (statu
     const load = async () => {
       if (pending.current) return;
       pending.current = true;
+      const started = generation.current;
       try {
         let next = await getHubState();
         if (!alive) return;
@@ -34,8 +39,8 @@ export default function HarnessHub({ onStatusChange }: { onStatusChange?: (statu
           await hubCommand({ action: "check" });
           next = await getHubState();
         }
-        if (alive) setState(next);
-      } catch (e) { if (alive) setError(errorText(e)); }
+        if (alive && started === generation.current) setState(next);
+      } catch (e) { if (alive && started === generation.current) setError(errorText(e)); }
       finally { pending.current = false; }
     };
     void load();
@@ -44,10 +49,24 @@ export default function HarnessHub({ onStatusChange }: { onStatusChange?: (statu
   }, []);
 
   const run = async (request: HubCommand) => {
+    // Cancel must stay available; every other action waits for the previous command to be accepted.
+    if (request.action !== "cancel" && commandInFlight.current) return;
+    const tracked = request.action !== "cancel";
+    if (tracked) commandInFlight.current = true;
+    generation.current++;
     setSending(true); setError("");
-    try { await hubCommand(request); setState(await getHubState()); }
-    catch (e) { setError(errorText(e)); }
-    finally { setSending(false); }
+    try {
+      await hubCommand(request);
+      const next = await getHubState();
+      generation.current++;
+      setState(next);
+    }
+    catch (e) {
+      setError(errorText(e));
+      // Restore the controls from the native state after a rejected command.
+      try { const next = await getHubState(); generation.current++; setState(next); } catch { /* the next poll retries */ }
+    }
+    finally { if (tracked) commandInFlight.current = false; setSending(false); }
   };
   const checkingAuthorization = !state || state.checkingAuthorization === true;
   const busy = sending || !state || state.busy || checkingAuthorization;
