@@ -30,6 +30,18 @@ public static class UsageWindowCatalog
         return Weekly;
     }
 
+    /// <summary>
+    /// The window summarised in the taskbar overlay. It is normally the first
+    /// (session) window, but an exhausted weekly limit blocks usage regardless
+    /// of the session, so it takes precedence with its own reset time.
+    /// </summary>
+    public static RateWindow? OverlayWindow(IReadOnlyList<RateWindow> windows) =>
+        windows.FirstOrDefault(window => window.PercentUsed >= 1 && IsWeekly(window))
+            ?? windows.FirstOrDefault();
+
+    private static bool IsWeekly(RateWindow window) =>
+        ContainsAny(Normalize(window.Id), Normalize(window.Title), "weekly", "week", "sevenday", "7day");
+
     public static string DisplayLabel(TimeSpan range)
     {
         if (range <= FiveHours) return $"{Math.Max(1, (int)Math.Round(range.TotalHours))}h";

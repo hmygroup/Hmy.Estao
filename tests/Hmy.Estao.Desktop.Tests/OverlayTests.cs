@@ -94,6 +94,35 @@ public sealed class OverlayTests
         Assert.Contains("42", overlay.AccessibleDescription);
     });
 
+    [Theory]
+    [InlineData("codex", "Codex")]
+    [InlineData("claude", "Claude")]
+    public void ExhaustedWeeklyLimitOverridesSessionUsage(string provider, string name) => OnSta(() =>
+    {
+        using var overlay = new ProviderOverlay();
+        var config = ConfigStore.Normalize(ConfigStore.CreateDefaultConfig());
+        config.TaskbarOverlay.Enabled = false;
+        foreach (var p in config.Providers) p.Enabled = p.Id == provider;
+        config.TaskbarOverlay.ProviderIds = [provider];
+        var weeklyReset = DateTimeOffset.UtcNow.AddDays(3);
+        var snapshot = new UsageSnapshot(provider, name, "test", DateTimeOffset.UtcNow,
+            [new RateWindow("session", "Session", .37, DateTimeOffset.UtcNow.AddHours(2)),
+             new RateWindow("weekly", "Weekly", 1, weeklyReset)]);
+
+        overlay.UpdateUsage(config, [snapshot]);
+
+        Assert.Contains("100", overlay.AccessibleDescription);
+        Assert.DoesNotContain("37", overlay.AccessibleDescription);
+        Assert.Contains(UsagePresentation.Reset(weeklyReset)!, overlay.AccessibleDescription);
+    });
+
+    [Fact]
+    public void WeeklyBelowLimitKeepsSessionUsage()
+    {
+        var session = new RateWindow("session", "Session", .37, null);
+        Assert.Same(session, UsageWindowCatalog.OverlayWindow([session, new RateWindow("weekly", "Weekly", .99, null)]));
+    }
+
     [Fact]
     public void DisabledProvidersNeverAppearInOverlay() => OnSta(() =>
     {

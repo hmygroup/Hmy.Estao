@@ -93,7 +93,7 @@ internal sealed class ProviderOverlay : Form
             .Select(p =>
             {
                 var snapshot = _snapshots.FirstOrDefault(s => s.Provider == p.Id);
-                var window = snapshot?.Windows.FirstOrDefault();
+                var window = snapshot is null ? null : UsageWindowCatalog.OverlayWindow(snapshot.Windows);
                 var title = ProviderCatalog.DisplayName(p.Id);
                 var percentage = window?.PercentUsed is double value ? Math.Clamp(value, 0, 1).ToString("P0", DesktopLocalization.Culture) : "—";
                 var reset = overlay.ShowResetTime ? UsagePresentation.Reset(window?.ResetAt) : null;
