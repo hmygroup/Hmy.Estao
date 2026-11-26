@@ -250,6 +250,8 @@ public sealed class HarnessHubSessionTests
         Assert.True(File.Exists(Path.Combine(adapter.SkillsRoot, "base", "SKILL.md")));
         Assert.Equal(installAll, File.Exists(Path.Combine(adapter.SkillsRoot, "unrelated", "SKILL.md")));
         Assert.Contains(fixture.InstructionContent, await File.ReadAllTextAsync(HubInstructionInstaller.Destination(adapter)));
+        var instruction = Assert.Single(session.State.Skills!, item => item.ItemType == "instruction");
+        Assert.Equal(new[] { "codex", "claude", "copilot" }, instruction.Occurrences.Select(copy => copy.ToolId));
         var config = await HubMcpConfiguration.ReadAsync(adapter, default);
         Assert.Equal(installAll, File.Exists(config.Executable("utility")));
     }
@@ -867,6 +869,18 @@ public sealed class HarnessHubSessionTests
     {
         using var fixture = new Fixture { IncludeFileItems = true, IncludeOpenCode = true,
             InstructionContent = "---\nname: tfvc-workspaces\ndescription: TFVC workspace rules.\ndescriptions:\n  es: Reglas TFVC.\n---\n# TFVC\nCheck out before editing.\n" };
+        var codex = fixture.Adapter("codex");
+        var content = Encoding.UTF8.GetBytes(fixture.InstructionContent);
+        await HubInstructionInstaller.InstallAsync(codex, "database-instructions", content, fixture.Directory, default);
+        var codexOverride = Path.Combine(codex.Profile, "AGENTS.override.md");
+        await File.WriteAllTextAsync(codexOverride, "Active personal guidance");
+        var claude = fixture.Adapter("claude");
+        await HubInstructionInstaller.InstallAsync(claude, "database-instructions", content, fixture.Directory, default);
+        var skillDirectory = Path.Combine(claude.SkillsRoot, "database-instructions");
+        Directory.CreateDirectory(skillDirectory);
+        await File.WriteAllTextAsync(Path.Combine(skillDirectory, "SKILL.md"),
+            "---\nname: database-instructions\ndescription: A local skill.\n---\n");
+
         using var session = fixture.Session();
         session.Command(new("check")); await session.CurrentOperation;
         var instruction = Assert.Single(session.State.Skills!, item => item.ItemType == "instruction");
@@ -874,6 +888,9 @@ public sealed class HarnessHubSessionTests
         Assert.Equal("Reglas TFVC.", instruction.Descriptions!["es"]);
         Assert.Equal("tfvc-workspaces", instruction.Name);
         Assert.True(instruction.Installable);
+        Assert.Equal(new HubSkillOccurrence("claude", HubInstructionInstaller.Destination(claude), false, null),
+            Assert.Single(instruction.Occurrences));
+        Assert.Contains(session.State.Skills!, item => item.Id == "local:database-instructions" && item.ItemType == "skill");
         fixture.Requests.Clear();
         session.Command(new("install-instruction", SkillId: instruction.Id)); await session.CurrentOperation;
         Assert.Null(session.State.Error);
@@ -886,6 +903,14 @@ public sealed class HarnessHubSessionTests
             Assert.Contains("Check out before editing.", text);
             Assert.DoesNotContain("description:", text);
         }
+        var installed = Assert.Single(session.State.Skills!, item => item.Id == instruction.Id).Occurrences;
+        Assert.Equal(HarnessAdapter.Ids, installed.Select(copy => copy.ToolId));
+        Assert.Equal(codexOverride, installed[0].Path);
+        Assert.All(installed, copy => Assert.Equal(HubInstructionInstaller.Destination(fixture.Adapter(copy.ToolId)), copy.Path));
+
+        File.Delete(HubInstructionInstaller.Destination(claude));
+        session.Command(new("check")); await session.CurrentOperation;
+        Assert.DoesNotContain(Assert.Single(session.State.Skills!, item => item.Id == instruction.Id).Occurrences, copy => copy.ToolId == "claude");
         Assert.Throws<ArgumentException>(() => session.Command(new("install-instruction", SkillId: "example-template")));
         Assert.Throws<ArgumentException>(() => session.Command(new("install-instruction", SkillId: "sample")));
     }

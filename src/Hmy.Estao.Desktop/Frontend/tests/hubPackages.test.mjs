@@ -148,6 +148,22 @@ test('instruction actions omit installation guidance while file exports retain t
   assert.match(file, /class="hub-helper"/);
 });
 
+test('instructions show per-provider indicators and installed file paths', () => {
+  const tools = [{ id: 'claude', name: 'Claude Code', detected: true }, { id: 'codex', name: 'OpenAI Codex', detected: true }];
+  const instruction = { id: 'rules', name: 'Rules', itemType: 'instruction', inLibrary: true, curated: true,
+    installable: true, compatibleTools: ['claude', 'codex'],
+    occurrences: [{ toolId: 'claude', path: 'C:\\profile\\.claude\\CLAUDE.md', shared: false, hash: null }] };
+  for (const Browser of [HubSkillBrowser, LibraryBrowser]) {
+    const html = renderToStaticMarkup(React.createElement(Browser, {
+      state: { tools, skills: [instruction] }, busy: false, run: async () => {},
+    }));
+    assert.match(html, /class="hub-tool-indicators"/);
+    assert.match(html, /Claude Code: present/);
+    assert.match(html, /Installed in <code>C:\\profile\\.claude\\CLAUDE\.md<\/code>/);
+    assert.match(html, /OpenAI Codex: missing/);
+  }
+});
+
 for (const type of ['mcp', 'cli']) test(`missing ${type} renders Install rather than Update`, () => {
   const tools = type === 'cli' ? [] : [{ id: 'claude', name: 'Claude Code', detected: true, status: '', error: null }];
   const html = render(type, tools, false, LibraryBrowser);

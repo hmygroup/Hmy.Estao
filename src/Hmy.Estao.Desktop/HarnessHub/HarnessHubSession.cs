@@ -188,11 +188,19 @@ internal sealed class HarnessHubSession : IDisposable
         if (targets.Length == 0) throw new InvalidOperationException("No tools are installed.").WithUserMessage("hub.no_tools");
         var results = new List<HubResult>();
         var bytes = await _source.ReadCatalogFileAsync(_token!, item.Source!, commit, ct, accessVerified: true);
-        await InstallInstructionForToolsAsync(item, bytes, targets, result =>
+        try
         {
-            results.Add(result);
-            Update(s => s with { Results = results.ToArray() });
-        }, ct);
+            await InstallInstructionForToolsAsync(item, bytes, targets, result =>
+            {
+                results.Add(result);
+                Update(s => s with { Results = results.ToArray() });
+            }, ct);
+        }
+        finally
+        {
+            await UpdateToolInventoryAsync(CancellationToken.None);
+            Update(s => s with { Skills = MergeInventory() });
+        }
     }
 
     private async Task InstallInstructionForToolsAsync(HubSkill item, byte[] bytes, IReadOnlyList<HubTool> targets,
@@ -738,8 +746,7 @@ internal sealed class HarnessHubSession : IDisposable
             item => _packageInstaller.FindCli(new(item, item, "", true, true, [], [], ItemType: "cli")));
 
     private IReadOnlyList<HubSkill> MergeInventory() => MergeSkills(_localSkills,
-        _librarySkills.Where(item => item.ItemType is not ("mcp" or "cli"))).Concat(_toolItems)
-        .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        _librarySkills.Where(item => item.ItemType is not ("mcp" or "cli" or "instruction")).Concat(_toolItems));
 
     private async Task UpdateRepositoryLibraryAsync(CancellationToken ct)
     {

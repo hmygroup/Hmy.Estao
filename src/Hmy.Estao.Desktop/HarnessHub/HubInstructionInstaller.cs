@@ -6,6 +6,10 @@ namespace Hmy.Estao.Desktop.HarnessHub;
 
 internal static class HubInstructionInstaller
 {
+    private const string BlockPrefix = "<!-- estao-instruction:";
+    private const string StartSuffix = ":start -->";
+    private const string EndSuffix = ":end -->";
+
     public static string Destination(HarnessAdapter adapter) => Path.Combine(adapter.Profile, adapter.Id switch
     {
         "codex" => File.Exists(Path.Combine(adapter.Profile, "AGENTS.override.md")) &&
@@ -16,12 +20,46 @@ internal static class HubInstructionInstaller
         _ => throw new ArgumentException("Unknown instruction target.")
     });
 
+    internal static async Task<IReadOnlyCollection<string>> ReadInstalledIdsAsync(string path, CancellationToken ct)
+    {
+        InstallerPaths.CheckLocal(path);
+        FileStream stream;
+        try { stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous); }
+        catch (FileNotFoundException) { return []; }
+        catch (DirectoryNotFoundException) { return []; }
+        await using var file = stream;
+        if (file.Length > 16 * 1024 * 1024)
+            throw new IOException("Instruction file exceeds the safe read limit.");
+
+        using var reader = new StreamReader(file, new UTF8Encoding(true, true), detectEncodingFromByteOrderMarks: false);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        string? openId = null;
+        var hasBody = false;
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            if (line.StartsWith(BlockPrefix, StringComparison.Ordinal))
+            {
+                var marker = line.AsSpan(BlockPrefix.Length);
+                if (hasBody && openId is not null && marker.EndsWith(EndSuffix, StringComparison.Ordinal) &&
+                    marker[..^EndSuffix.Length].SequenceEqual(openId))
+                    ids.Add(openId);
+                openId = marker.EndsWith(StartSuffix, StringComparison.Ordinal) ? marker[..^StartSuffix.Length].ToString() : null;
+                hasBody = false;
+            }
+            else if (openId is not null && !string.IsNullOrWhiteSpace(line))
+            {
+                hasBody = true;
+            }
+        }
+        return ids;
+    }
+
     public static async Task InstallAsync(HarnessAdapter adapter, string id, byte[] content, string dataDirectory, CancellationToken ct)
     {
         InstallerPaths.Relative(id);
         if (id.Contains('/')) throw new InvalidDataException("Invalid instruction identity.");
         var body = InstructionDocument.Read(content).Body.Trim();
-        if (string.IsNullOrWhiteSpace(body) || body.Contains("<!-- estao-instruction:", StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(body) || body.Contains(BlockPrefix, StringComparison.Ordinal))
             throw new InvalidDataException("Invalid or empty instruction body.");
         // Coordinate with the skill installer's writes and recovery in other Hub windows.
         var lockDirectory = Path.Combine(dataDirectory, "harness-installer");
@@ -35,8 +73,8 @@ internal static class HubInstructionInstaller
         if (beforeHash is not null && InstallerPaths.Hash(before) != beforeHash)
             throw new IOException("Instructions changed while reading.").WithUserMessage("hub.review_changed");
         var existing = new UTF8Encoding(false, true).GetString(before);
-        var start = $"<!-- estao-instruction:{id}:start -->";
-        var end = $"<!-- estao-instruction:{id}:end -->";
+        var start = BlockPrefix + id + StartSuffix;
+        var end = BlockPrefix + id + EndSuffix;
         var block = start + "\n" + body + "\n" + end;
         var normalized = existing.Replace("\r\n", "\n", StringComparison.Ordinal);
         if (normalized.Contains(start, StringComparison.Ordinal) || normalized.Contains(end, StringComparison.Ordinal))

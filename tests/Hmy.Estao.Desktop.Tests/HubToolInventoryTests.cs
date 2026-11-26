@@ -76,6 +76,50 @@ public sealed class HubToolInventoryTests : IDisposable
         Assert.Empty(copy.Path);
     }
 
+    [Fact]
+    public async Task InstructionsRequireCompleteTaggedBlocksAndScanIndependentlyOfMcp()
+    {
+        var codex = Adapter("codex");
+        Directory.CreateDirectory(codex.Profile);
+        await File.WriteAllTextAsync(codex.McpPath, "[broken");
+        var path = HubInstructionInstaller.Destination(codex);
+        var text = """
+            <!-- estao-instruction:database:start -->
+            Personal guidance.
+            <!-- estao-instruction:database:end -->
+
+            <!-- estao-instruction:editor:start -->
+            More guidance.
+            <!-- estao-instruction:editor:end -->
+
+            <!-- estao-instruction:incomplete:start -->
+            Unclosed guidance.
+            <!-- estao-instruction:unrelated:end -->
+            """;
+        await File.WriteAllTextAsync(path, text.ReplaceLineEndings("\r\n"), System.Text.Encoding.UTF8);
+
+        var claude = Adapter("claude");
+        Directory.CreateDirectory(claude.Profile);
+        await File.WriteAllBytesAsync(HubInstructionInstaller.Destination(claude), [0xff]);
+        await File.WriteAllTextAsync(claude.McpPath, """{"mcpServers":{"database":{"command":"db"}}}""");
+        var result = await HubToolInventory.ScanAsync(["codex", "claude"], Adapter,
+            [Item("database", "instruction"), Item("editor", "instruction"), Item("incomplete", "instruction"), Item("database", "mcp")]);
+
+        foreach (var item in result.Where(item => item.ItemType == "instruction"))
+        {
+            var error = Assert.Single(item.Occurrences, copy => copy.ToolId == "claude");
+            Assert.Empty(error.Path);
+            Assert.NotNull(error.Error);
+            if (item.Id == "incomplete")
+                Assert.DoesNotContain(item.Occurrences, copy => copy.ToolId == "codex");
+            else
+                Assert.Equal(new HubSkillOccurrence("codex", path, false, null), Assert.Single(item.Occurrences, copy => copy.ToolId == "codex"));
+        }
+        var mcp = Assert.Single(result, item => item.ItemType == "mcp");
+        Assert.Equal(claude.McpPath, Assert.Single(mcp.Occurrences, copy => copy.ToolId == "claude").Path);
+        Assert.DoesNotContain("Personal guidance.", System.Text.Json.JsonSerializer.Serialize(result));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_home)) Directory.Delete(_home, true);

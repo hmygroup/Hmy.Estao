@@ -150,11 +150,16 @@ test('tool installation filters do not present exportable files as installed or 
   assert.deepEqual(filterSkills([file], tools, 'library', '', '', 'all'), [file]);
 });
 
-test('installable instruction items can be filtered by tool without appearing as installed skills', () => {
-  const instruction = skill('global', { curated: true, inLibrary: true, itemType: 'instruction', installable: true, compatibleTools: ['codex'] });
+test('instructions can be filtered by installation status and provider', () => {
+  const instruction = skill('global', { curated: true, inLibrary: true, itemType: 'instruction', installable: true, compatibleTools: ['codex', 'claude'] });
   assert.deepEqual(filterSkills([instruction], tools, 'library', '', 'codex', 'installable'), [instruction]);
   assert.deepEqual(filterSkills([instruction], tools, 'installed', '', '', 'all'), []);
-  assert.deepEqual(filterSkills([instruction], tools, 'library', '', '', 'missing'), []);
+  assert.deepEqual(filterSkills([instruction], tools, 'library', '', 'codex', 'missing'), [instruction]);
+  instruction.occurrences = [occurrence('codex', '/.codex/AGENTS.md')];
+  assert.deepEqual(filterSkills([instruction], tools, 'installed', '', 'codex', 'all'), [instruction]);
+  assert.deepEqual(filterSkills([instruction], tools, 'installed', '', 'claude', 'all'), []);
+  assert.deepEqual(filterSkills([instruction], tools, 'library', '', 'codex', 'missing'), []);
+  assert.deepEqual(filterSkills([instruction], tools, 'library', '', 'claude', 'missing'), [instruction]);
 });
 
 test('shared occurrences remain present and independently represented per tool', () => {
